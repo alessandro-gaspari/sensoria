@@ -1,0 +1,6 @@
+GIROSCOPIO
+
+Le coordinate ricevute dal giroscopio indicano le rotazioni sui vari assi: x, y e z.
+- Rotazione attorno all'asse X -> ROLL (ROLLIO)
+- Rotazione attorno all'asse Y -> PITCH (BECCHEGGIO)
+- Rotazione attorno all'asse Z -> YAW (IMBARDATA)

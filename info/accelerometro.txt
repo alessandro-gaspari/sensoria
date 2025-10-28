@@ -1,0 +1,7 @@
+ACCELEROMETRO
+
+Le coordinate inviate dall'accelerometro indicano lo spostamento rispetto agli assi.
+- Spostamento "destra/sinistra" sull'asse x -> movimento laterale
+- Spostamento "avanti/indietro" sull'asse y -> movimento avanti/indietro
+- Spostamento "salto/impatto" sull'asse z  -> movimento verticale
+

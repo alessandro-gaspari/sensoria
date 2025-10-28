@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensoria Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🏃 Sensoria Dashboard</h1>
+                <div class="header-info">
+                    <span class="status-indicator" id="connection-status">
+                        <span class="dot"></span>
+                        Connessione
+                    </span>
+                    <span class="sensor-count" id="sensor-count">0 Sensori</span>
+                    <button class="btn btn-secondary" onclick="clearAllData()">Pulisci Dati</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Sensori Grid -->
+        <div class="sensors-grid" id="sensors-grid">
+            <!-- I sensori verranno aggiunti dinamicamente qui -->
+        </div>
+
+        <!-- Messaggio "Nessun sensore" -->
+        <div class="empty-state" id="empty-state">
+            <div class="empty-icon">📡</div>
+            <h2>Nessun sensore connesso</h2>
+            <p>Avvia lo streaming dall'app Flutter per visualizzare i dati in tempo reale</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

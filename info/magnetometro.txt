@@ -1,0 +1,9 @@
+MAGNETOMETRO:
+
+Misura variazioni del campo magnetico rispetto al campo magnetico terrestre,
+cercando anomalie da oggetti magnetici. Serve quindi a indicare verso che direzione sei orientato rispetto al Nord.
+Il magnetometro invia 3 coordinate (x,y,z) che indicano sempre dove si trova il Nord. 
+Combinando le 3 componenti otteniamo un vettore 3D che punta a Nord.
+
+Combinando queste coordinate con accelerometro e giroscopio si può trovare l'orientamento assoluto,
+correggendo gli errori del giroscopio e stabilizzando la posizione.
