@@ -22,81 +22,106 @@ class StreamingManager extends ChangeNotifier {
 
   // ⭐ AGGIUNGI: Attiva il sensore prima di leggere
   Future<void> startStreaming({
-    required BluetoothDevice device,
-    required String deviceName,
-    required BluetoothService service,
-    required BluetoothCharacteristic characteristic,
-  }) async {
-    final deviceId = device.remoteId.toString();
-    
-    if (_activeStreams.containsKey(deviceId)) {
-      debugPrint('⚠️ Streaming già attivo per $deviceName');
-      return;
-    }
-    
-    try {
-      debugPrint('🎬 Avvio streaming per $deviceName...');
-      
-      // ⭐ CERCA UNA CARATTERISTICA DI CONTROLLO (WRITE)
-      BluetoothCharacteristic? controlChar;
-      for (var char in service.characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          controlChar = char;
-          debugPrint('✅ Trovata caratteristica controllo: ${char.uuid}');
-          break;
-        }
-      }
-      
-      // ⭐ INVIA COMANDO START (prova diversi comandi)
-      if (controlChar != null) {
-        try {
-          // Prova comando START generico
-          await controlChar.write([0x01], withoutResponse: true);
-          debugPrint('📤 Comando START inviato');
-          await Future.delayed(Duration(milliseconds: 200));
-        } catch (e) {
-          debugPrint('⚠️ Errore invio comando: $e');
-        }
-      }
-      
-      // Abilita notifiche
-      await characteristic.setNotifyValue(true);
-      debugPrint('✅ Notifiche abilitate per $deviceName');
-      
-      _counters[deviceId] = 0;
-      
-      // Resto del codice uguale...
-      final subscription = characteristic.lastValueStream.listen(
-        (value) {
-          _counters[deviceId] = (_counters[deviceId] ?? 0) + 1;
-          
-          debugPrint('📦 [$deviceName] Pacchetto ${_counters[deviceId]}: ${value.length} bytes - RAW: $value');
-          
-          if (value.length >= 20) {
-            final imuData = _parseIMUData(value);
-            _sendDataToServer(deviceName, imuData);
-            
-            debugPrint('📡 [$deviceName] Packet ${_counters[deviceId]}: '
-                'Accel(${imuData['accel_x']}, ${imuData['accel_y']}, ${imuData['accel_z']})');
-          } else {
-            debugPrint('⚠️ [$deviceName] Pacchetto troppo corto: ${value.length} bytes');
-          }
-        },
-        onError: (error) {
-          debugPrint('❌ Errore stream $deviceName: $error');
-        },
-        cancelOnError: false,
-      );
-      
-      _activeStreams[deviceId] = subscription;
-      notifyListeners();
-      
-      debugPrint('✅ Streaming avviato per $deviceName (ID: $deviceId)');
-    } catch (e) {
-      debugPrint('❌ Errore avvio streaming $deviceName: $e');
-      rethrow;
-    }
+  required BluetoothDevice device,
+  required String deviceName,
+  required BluetoothService service,
+  required BluetoothCharacteristic characteristic,
+}) async {
+  final deviceId = device.remoteId.toString();
+  
+  if (_activeStreams.containsKey(deviceId)) {
+    debugPrint('⚠️ Streaming già attivo per $deviceName');
+    return;
   }
+  
+  try {
+    debugPrint('🎬 Avvio streaming per $deviceName...');
+    
+    // ⭐ CERCA CARATTERISTICA DI CONTROLLO (Write)
+    BluetoothCharacteristic? controlChar;
+    for (var char in service.characteristics) {
+      if (char.properties.write || char.properties.writeWithoutResponse) {
+        controlChar = char;
+        debugPrint('✅ Trovata caratteristica controllo: ${char.uuid}');
+        break;
+      }
+    }
+    
+    // ⭐ Se non c'è nello stesso service, cerca negli altri
+    if (controlChar == null) {
+      debugPrint('🔍 Cerco caratteristica write in altri servizi...');
+      final allServices = await device.discoverServices();
+      for (var svc in allServices) {
+        for (var char in svc.characteristics) {
+          if ((char.properties.write || char.properties.writeWithoutResponse) && 
+              char.uuid.toString().contains('1cac0003')) {
+            controlChar = char;
+            debugPrint('✅ Trovata in altro servizio: ${char.uuid}');
+            break;
+          }
+        }
+        if (controlChar != null) break;
+      }
+    }
+    
+    // ⭐ INVIA COMANDO START
+    if (controlChar != null) {
+      try {
+        // Prova diversi comandi START
+        await controlChar.write([0x01], withoutResponse: true);
+        debugPrint('📤 Comando START [0x01] inviato');
+        await Future.delayed(Duration(milliseconds: 300));
+        
+        // Prova anche questo comando alternativo
+        await controlChar.write([0x53, 0x54, 0x41, 0x52, 0x54], withoutResponse: true); // "START" in ASCII
+        debugPrint('📤 Comando START ASCII inviato');
+        await Future.delayed(Duration(milliseconds: 300));
+      } catch (e) {
+        debugPrint('⚠️ Errore invio comando: $e');
+      }
+    } else {
+      debugPrint('⚠️ Nessuna caratteristica write trovata!');
+    }
+    
+    // Abilita notifiche
+    await characteristic.setNotifyValue(true);
+    debugPrint('✅ Notifiche abilitate per $deviceName');
+    
+    _counters[deviceId] = 0;
+    
+    // Sottoscrivi allo stream
+    final subscription = characteristic.lastValueStream.listen(
+      (value) {
+        _counters[deviceId] = (_counters[deviceId] ?? 0) + 1;
+        
+        debugPrint('📦 [$deviceName] Pacchetto ${_counters[deviceId]}: ${value.length} bytes - RAW: $value');
+        
+        if (value.length >= 20) {
+          final imuData = _parseIMUData(value);
+          _sendDataToServer(deviceName, imuData);
+          
+          debugPrint('📡 [$deviceName] Packet ${_counters[deviceId]}: '
+              'Accel(${imuData['accel_x']}, ${imuData['accel_y']}, ${imuData['accel_z']})');
+        } else if (value.isNotEmpty) {
+          debugPrint('⚠️ [$deviceName] Pacchetto troppo corto: ${value.length} bytes');
+        }
+      },
+      onError: (error) {
+        debugPrint('❌ Errore stream $deviceName: $error');
+      },
+      cancelOnError: false,
+    );
+    
+    _activeStreams[deviceId] = subscription;
+    notifyListeners();
+    
+    debugPrint('✅ Streaming avviato per $deviceName (ID: $deviceId)');
+  } catch (e) {
+    debugPrint('❌ Errore avvio streaming $deviceName: $e');
+    rethrow;
+  }
+}
+
 
   
   // Ferma streaming per un dispositivo
