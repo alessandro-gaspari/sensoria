@@ -488,7 +488,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-
+                                  
                                   // PULSANTE CONNESSIONE RAPIDA
                                   Material(
                                     color: Colors.transparent,
@@ -503,12 +503,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                               }
                                               
                                               try {
-                                                // ⭐ CORREZIONE: usa il metodo corretto
                                                 await devicesProvider.connectDevice(device);
-                                                
-                                                // ⭐ AGGIUNGI: aggiorna lo stato
-                                                setState(() {});
-                                                
                                                 _showMessage('$deviceName connesso!');
                                               } catch (e) {
                                                 _showMessage('Errore: ${e.toString().replaceAll('Exception: ', '')}');
@@ -535,7 +530,6 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                       ),
                                     ),
                                   ),
-
                                 ],
                               ),
                             ),

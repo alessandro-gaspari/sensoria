@@ -280,14 +280,14 @@ Future<void> _startStreaming() async {
         
         // Cerca caratteristiche IMU (notify/indicate)
 
-        if ((props.notify || props.indicate) && _imuCharacteristic == null) {
-          // ⭐ SKIP le prime 2 caratteristiche, prendi la TERZA (1cac0004)
-          if (characteristic.uuid.toString().contains('1cac0004')) {
-            _imuService = service;
-            _imuCharacteristic = characteristic;
-            debugPrint('  ✅ SELEZIONATA COME IMU CHAR\n');
-          }
+      if ((props.notify || props.indicate) && _imuCharacteristic == null) {
+        // ⭐ SKIP le prime 2 caratteristiche, prendi la TERZA (1cac0004)
+        if (characteristic.uuid.toString().contains('1cac0004')) {
+          _imuService = service;
+          _imuCharacteristic = characteristic;
+          debugPrint('  ✅ SELEZIONATA COME IMU CHAR\n');
         }
+      }
 
       }
     }
