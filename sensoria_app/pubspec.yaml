@@ -1,0 +1,37 @@
+name: sensoria_cs
+description: "App Sensoria per streaming di dati"
+publish_to: 'none'
+
+version: 1.0.0+1
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  flutter_blue_plus: ^1.32.12
+  geolocator: ^13.0.2
+  provider: ^6.1.2
+  shared_preferences: ^2.2.2
+  material_symbols_icons: ^4.2874.0
+  http: ^1.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.1
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/icona sensoria.png"
+  adaptive_icon_background: "#000000" 
+  adaptive_icon_foreground: "assets/icon/icona sensoria.png"
+  remove_alpha_ios: true
