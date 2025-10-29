@@ -102,23 +102,47 @@ function updateSensorStatus(sensorName, status) {
 // Renderizza tutti i sensori
 function renderSensors() {
     const grid = document.getElementById('sensors-grid');
-    const emptyState = document.getElementById('empty-state');
-    const sensorCount = document.getElementById('sensor-count');
-    
-    const sensorNames = Object.keys(sensors);
-    
-    if (sensorNames.length === 0) {
-        grid.innerHTML = '';
-        emptyState.classList.add('visible');
-        sensorCount.textContent = '0 Sensori';
-        return;
+    grid.innerHTML = '';
+
+    // Prendi al massimo 6 sensori
+    const sensorNames = Object.keys(sensors).slice(0, 6);
+
+    sensorNames.forEach(name => {
+        const readings = sensors[name];
+        const latest = readings && readings.length > 0 ? readings[readings.length-1] : {};
+        let rows = '';
+
+        // Mostra ogni valore ricevuto
+        for (const key in latest) {
+            if (key !== "timestamp") {
+                rows += `<div class="sensor-data-row"><b>${key}:</b> ${latest[key]}</div>`;
+            }
+        }
+
+        grid.innerHTML += `
+            <div class="sensor-col">
+                <div class="sensor-header">${name}</div>
+                <div>${rows || "<i>Nessun dato</i>"}</div>
+            </div>
+        `;
+    });
+
+    // Se meno di 6 sensori, mostra colonne vuote
+    for (let i = sensorNames.length; i < 6; i++) {
+        grid.innerHTML += `<div class="sensor-col"><div class="sensor-header">Slot libero</div></div>`;
     }
-    
-    emptyState.classList.remove('visible');
-    sensorCount.textContent = `${sensorNames.length} ${sensorNames.length === 1 ? 'Sensore' : 'Sensori'}`;
-    
-    grid.innerHTML = sensorNames.map(name => createSensorCard(name)).join('');
 }
+
+// Polling continuo ogni 2 s (o mantieni WebSocket)
+setInterval(async () => {
+    const resp = await fetch('/api/sensors');
+    const data = await resp.json();
+    sensors = data.sensors || {};
+    renderSensors();
+}, 2000);
+
+document.addEventListener('DOMContentLoaded', renderSensors);
+
 
 // Crea la card di un sensore
 function createSensorCard(sensorName) {
