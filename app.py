@@ -49,7 +49,7 @@ def receive_data():
         data = request.json
         sensor_name = data.get('sensor_name', 'Unknown')
         
-        # Aggiorna i dati del sensore
+        # 🔧 Correzione: nome dizionario completo
         if sensor_name not in sensors_data:
             sensors_data[sensor_name] = []
         
@@ -66,15 +66,15 @@ def receive_data():
             'mag_z': data.get('mag_z'),
         }
         
-        # Mantieni solo gli ultimi 100 campioni per sensore
         sensors_data[sensor_name].append(sensor_reading)
+        
+        # Mantiene solo gli ultimi 100 dati
         if len(sensors_data[sensor_name]) > 100:
             sensors_data[sensor_name].pop(0)
         
-        # Aggiorna stato sensore
         sensors_status[sensor_name] = 'connected'
         
-        # Invia aggiornamento in tempo reale via WebSocket
+        # Aggiornamento in tempo reale via WebSocket
         socketio.emit('sensor_update', {
             'sensor_name': sensor_name,
             'data': sensor_reading
@@ -84,6 +84,7 @@ def receive_data():
         
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
+
 
 @app.route('/api/sensor/<sensor_name>/status', methods=['POST'])
 def update_sensor_status(sensor_name):
@@ -106,6 +107,7 @@ def update_sensor_status(sensor_name):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
+
 @app.route('/api/clear', methods=['POST'])
 def clear_data():
     """Pulisce tutti i dati dei sensori"""
@@ -118,6 +120,7 @@ def clear_data():
     
     return jsonify({'status': 'success', 'message': 'All data cleared'}), 200
 
+
 @socketio.on('connect')
 def handle_connect():
     """Gestisce nuova connessione WebSocket"""
@@ -128,10 +131,12 @@ def handle_connect():
         'timestamp': datetime.now().isoformat()
     })
 
+
 @socketio.on('disconnect')
 def handle_disconnect():
     """Gestisce disconnessione WebSocket"""
     print('Client disconnected')
+
 
 @socketio.on('request_data')
 def handle_data_request(data):
@@ -143,6 +148,7 @@ def handle_data_request(data):
             'data': sensors_data[sensor_name],
             'status': sensors_status.get(sensor_name, 'disconnected')
         })
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
