@@ -5,41 +5,30 @@ import 'dart:async';
 import 'dart:convert';
 
 class ConnectedDevicesProvider extends ChangeNotifier {
-  // Mappa: deviceId (String) -> deviceName (String)
   final Map<String, String> _deviceNames = {};
-  
-  // Mappa: deviceId (String) -> iconType (String)
   final Map<String, String> _deviceIcons = {};
-  
-  // Mappa: deviceId (String) -> BluetoothDevice
   final Map<String, BluetoothDevice> _connectedDevices = {};
-  
-  // Mappa: deviceId (String) -> StreamSubscription
   final Map<String, StreamSubscription<BluetoothConnectionState>> _connectionSubscriptions = {};
+
+  Map<String, BluetoothDevice> get connectedDevices => Map.from(_connectedDevices);
+  Map<String, String> get deviceNames => Map.from(_deviceNames);
+  static const int maxDevices = 6;
+
+  int get connectedCount => _connectedDevices.length;
+  bool get canConnectMore => _connectedDevices.length < maxDevices;
 
   ConnectedDevicesProvider() {
     _loadDevices();
   }
-
-  // Getter
-  int get connectedCount => _connectedDevices.length;
-  
-  bool get canConnectMore => _connectedDevices.length < 6;
   
   String getDeviceName(BluetoothDevice device) {
     final deviceId = device.remoteId.toString();
-    
-    // Se ha un nome personalizzato salvato, usalo
     if (_deviceNames.containsKey(deviceId)) {
       return _deviceNames[deviceId]!;
     }
-    
-    // Altrimenti usa il nome del dispositivo Bluetooth
     if (device.platformName.isNotEmpty) {
       return device.platformName;
     }
-    
-    // Fallback: nome generico
     return 'Dispositivo ${_connectedDevices.length + 1}';
   }
   
@@ -52,7 +41,6 @@ class ConnectedDevicesProvider extends ChangeNotifier {
     return _connectedDevices.containsKey(device.remoteId.toString());
   }
 
-  // Connetti dispositivo
   Future<void> connectDevice(BluetoothDevice device) async {
     if (!canConnectMore) {
       throw Exception('Massimo 6 sensori raggiunto');
@@ -65,17 +53,15 @@ class ConnectedDevicesProvider extends ChangeNotifier {
       
       _connectedDevices[deviceId] = device;
       
-      // Se non ha un nome personalizzato, assegna nome default
       if (!_deviceNames.containsKey(deviceId)) {
         _deviceNames[deviceId] = device.platformName.isNotEmpty 
             ? device.platformName 
             : 'Dispositivo ${_connectedDevices.length}';
       }
       
-      // Monitora disconnessioni automatiche
       _connectionSubscriptions[deviceId] = device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
-          debugPrint('🔌 Dispositivo disconnesso automaticamente: $deviceId');
+          debugPrint('🔌 Dispositivo disconnesso: $deviceId');
           _connectedDevices.remove(deviceId);
           _connectionSubscriptions[deviceId]?.cancel();
           _connectionSubscriptions.remove(deviceId);
@@ -87,19 +73,17 @@ class ConnectedDevicesProvider extends ChangeNotifier {
       await _saveDevices();
       notifyListeners();
       
-      debugPrint('✅ Dispositivo connesso: ${_deviceNames[deviceId]}');
+      debugPrint('✅ Connesso: ${_deviceNames[deviceId]}');
     } catch (e) {
       debugPrint('❌ Errore connessione: $e');
       throw Exception('Impossibile connettere');
     }
   }
 
-  // Disconnetti dispositivo
   Future<void> disconnectDevice(BluetoothDevice device) async {
     final deviceId = device.remoteId.toString();
     
     try {
-      // Cancella subscription
       _connectionSubscriptions[deviceId]?.cancel();
       _connectionSubscriptions.remove(deviceId);
       
@@ -108,13 +92,12 @@ class ConnectedDevicesProvider extends ChangeNotifier {
       await _saveDevices();
       notifyListeners();
       
-      debugPrint('🔌 Dispositivo disconnesso: $deviceId');
+      debugPrint('🔌 Disconnesso: $deviceId');
     } catch (e) {
       debugPrint('❌ Errore disconnessione: $e');
     }
   }
 
-  // Aggiorna nome dispositivo
   void updateDeviceName(BluetoothDevice device, String newName) {
     final deviceId = device.remoteId.toString();
     _deviceNames[deviceId] = newName;
@@ -122,16 +105,14 @@ class ConnectedDevicesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Aggiorna icona dispositivo
   void updateDeviceIcon(BluetoothDevice device, String iconType) {
     final deviceId = device.remoteId.toString();
     _deviceIcons[deviceId] = iconType;
     _saveDevices();
     notifyListeners();
-    debugPrint('💾 Icona salvata: $iconType per $deviceId');
+    debugPrint('💾 Icona salvata: $iconType');
   }
 
-  // Disconnetti tutti
   Future<void> disconnectAll() async {
     for (var device in _connectedDevices.values) {
       try {
@@ -139,7 +120,7 @@ class ConnectedDevicesProvider extends ChangeNotifier {
         _connectionSubscriptions[deviceId]?.cancel();
         await device.disconnect();
       } catch (e) {
-        debugPrint('❌ Errore disconnessione $device: $e');
+        debugPrint('❌ Errore: $e');
       }
     }
     _connectionSubscriptions.clear();
@@ -148,41 +129,34 @@ class ConnectedDevicesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Salva su SharedPreferences
   Future<void> _saveDevices() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      
-      // Salva solo nomi e icone (NON dispositivi connessi)
       await prefs.setString('device_names', jsonEncode(_deviceNames));
       await prefs.setString('device_icons', jsonEncode(_deviceIcons));
-      
-      debugPrint('✅ Dispositivi salvati: ${_connectedDevices.length} connessi');
+      debugPrint('✅ Salvati: ${_connectedDevices.length} dispositivi');
     } catch (e) {
       debugPrint('❌ Errore salvataggio: $e');
     }
   }
 
-  // Carica da SharedPreferences
   Future<void> _loadDevices() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       
-      // Carica nomi
       final namesJson = prefs.getString('device_names');
       if (namesJson != null) {
         final namesMap = jsonDecode(namesJson) as Map<String, dynamic>;
         _deviceNames.addAll(namesMap.map((k, v) => MapEntry(k, v.toString())));
       }
       
-      // Carica icone
       final iconsJson = prefs.getString('device_icons');
       if (iconsJson != null) {
         final iconsMap = jsonDecode(iconsJson) as Map<String, dynamic>;
         _deviceIcons.addAll(iconsMap.map((k, v) => MapEntry(k, v.toString())));
       }
       
-      debugPrint('✅ Dati caricati: ${_deviceNames.length} nomi, ${_deviceIcons.length} icone');
+      debugPrint('✅ Caricati: ${_deviceNames.length} nomi, ${_deviceIcons.length} icone');
       notifyListeners();
     } catch (e) {
       debugPrint('❌ Errore caricamento: $e');

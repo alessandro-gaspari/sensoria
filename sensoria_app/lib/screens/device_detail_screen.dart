@@ -31,7 +31,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   BluetoothService? _imuService;
   BluetoothCharacteristic? _imuCharacteristic;
 
-  // Mappa emoji per tipo icona
   final Map<String, String> _emojiMap = {
     'leg': '🦿',
     'foot': '🧦',
@@ -44,7 +43,6 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   @override
   void initState() {
     super.initState();
-    // ⭐ SALVA il riferimento nel initState
     _streamingManager = Provider.of<StreamingManager>(context, listen: false);
     
     _connectionSubscription = widget.device.connectionState.listen((state) {
@@ -59,13 +57,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
   @override
   void dispose() {
     _connectionSubscription?.cancel();
-    
-    // ⭐ USA il riferimento salvato, NON chiamare Provider.of
-    _streamingManager?.stopStreaming(
-      widget.device.remoteId.toString(),
-      _imuCharacteristic,
-    );
-    
+    _streamingManager?.stopStreaming(widget.device.remoteId.toString());
     super.dispose();
   }
 
@@ -166,66 +158,53 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     );
   }
 
-Future<void> _connectToDevice() async {
-  setState(() => _isConnecting = true);
+  Future<void> _connectToDevice() async {
+    setState(() => _isConnecting = true);
 
-  try {
-    final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
-    final deviceName = devicesProvider.getDeviceName(widget.device);
-    
-    // ⭐ Se non è già connesso, connetti E ASPETTA
-    if (!devicesProvider.isConnected(widget.device)) {
-      await devicesProvider.connectDevice(widget.device);
-    }
-    
-    // ⭐ ASPETTA che il dispositivo sia effettivamente connesso
-    await Future.delayed(const Duration(milliseconds: 100));
-    
-    // ⭐ Verifica stato connessione
-    final connectionState = await widget.device.connectionState.first;
-    if (connectionState != BluetoothConnectionState.connected) {
-      throw Exception('Dispositivo non connesso');
-    }
-    
-    debugPrint('✅ Connesso a $deviceName');
-
-    // ⭐ ORA discover dei servizi
-    _services = await widget.device.discoverServices();
-    debugPrint('✅ Trovati ${_services.length} servizi');
-
-    // Cerca servizio e caratteristica IMU
-    for (var service in _services) {
-      debugPrint('📦 Service: ${service.uuid}');
-      for (var characteristic in service.characteristics) {
-        debugPrint('  📍 Characteristic: ${characteristic.uuid}');
-        if (characteristic.properties.notify || characteristic.properties.indicate) {
-          _imuService = service;
-          _imuCharacteristic = characteristic;
-          debugPrint('✅ Trovata caratteristica IMU: ${characteristic.uuid}');
-          break;
-        }
+    try {
+      final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
+      final deviceName = devicesProvider.getDeviceName(widget.device);
+      
+      if (!devicesProvider.isConnected(widget.device)) {
+        await devicesProvider.connectDevice(widget.device);
       }
-      if (_imuCharacteristic != null) break;
+      
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      final connectionState = await widget.device.connectionState.first;
+      if (connectionState != BluetoothConnectionState.connected) {
+        throw Exception('Dispositivo non connesso');
+      }
+      
+      debugPrint('✅ Connesso a $deviceName');
+
+      _services = await widget.device.discoverServices();
+      debugPrint('✅ Trovati ${_services.length} servizi');
+
+      for (var service in _services) {
+        for (var characteristic in service.characteristics) {
+          if (characteristic.properties.notify || characteristic.properties.indicate) {
+            _imuService = service;
+            _imuCharacteristic = characteristic;
+            debugPrint('✅ Trovata caratteristica IMU: ${characteristic.uuid}');
+            break;
+          }
+        }
+        if (_imuCharacteristic != null) break;
+      }
+
+      setState(() {});
+      _showMessage('Connesso a $deviceName');
+    } catch (e) {
+      _showMessage('Errore di connessione: $e');
+      debugPrint('❌ Errore connessione: $e');
+    } finally {
+      if (mounted) setState(() => _isConnecting = false);
     }
-
-    setState(() {});
-    _showMessage('Connesso a $deviceName');
-  } catch (e) {
-    _showMessage('Errore di connessione: $e');
-    debugPrint('❌ Errore connessione: $e');
-  } finally {
-    if (mounted) setState(() => _isConnecting = false);
   }
-}
-
-
 
   Future<void> _disconnectFromDevice() async {
     debugPrint('🔌 DISCONNESSIONE');
-    
-    // Ferma streaming prima
-    final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-    await streamingManager.stopStreaming(widget.device.remoteId.toString(), _imuCharacteristic);
     
     try {
       await widget.device.disconnect();
@@ -241,104 +220,85 @@ Future<void> _connectToDevice() async {
     }
   }
 
-Future<void> _startStreaming() async {
-  if (!_isConnected) {
-    _showMessage('Connetti prima il dispositivo');
-    return;
-  }
-
-  // ⭐ FORZA SEMPRE IL DISCOVERY (rimuovi if)
-  try {
-    debugPrint('🔍 Discovery servizi...');
-    _services = await widget.device.discoverServices();
-    debugPrint('✅ Trovati ${_services.length} servizi\n');
-    
-    // Reset caratteristica
-    _imuService = null;
-    _imuCharacteristic = null;
-    
-    // STAMPA TUTTI I SERVIZI
-    for (var service in _services) {
-      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      debugPrint('📦 SERVICE: ${service.uuid}');
-      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-      
-      for (var characteristic in service.characteristics) {
-        final props = characteristic.properties;
-        debugPrint('  📍 CHAR: ${characteristic.uuid}');
-        debugPrint('     ├─ Read: ${props.read}');
-        debugPrint('     ├─ Write: ${props.write}');
-        debugPrint('     ├─ WriteWithoutResponse: ${props.writeWithoutResponse}');
-        debugPrint('     ├─ Notify: ${props.notify}');
-        debugPrint('     └─ Indicate: ${props.indicate}\n');
-        
-        // SKIP battery service
-        if (service.uuid.toString().toLowerCase() == '180f') {
-          debugPrint('  ⚠️  Battery service - IGNORATO\n');
-          continue;
-        }
-        
-        // Cerca caratteristiche IMU (notify/indicate)
-
-      if ((props.notify || props.indicate) && _imuCharacteristic == null) {
-        // ⭐ SKIP le prime 2 caratteristiche, prendi la TERZA (1cac0004)
-        if (characteristic.uuid.toString().contains('1cac0004')) {
-          _imuService = service;
-          _imuCharacteristic = characteristic;
-          debugPrint('  ✅ SELEZIONATA COME IMU CHAR\n');
-        }
-      }
-
-      }
+  Future<void> _startStreaming() async {
+    if (!_isConnected) {
+      _showMessage('Connetti prima il dispositivo');
+      return;
     }
-    
-    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-    
-    setState(() {});
-  } catch (e) {
-    _showMessage('Errore discovery servizi: $e');
-    debugPrint('❌ Errore discovery: $e');
-    return;
+
+    try {
+      debugPrint('🔍 Discovery servizi...');
+      _services = await widget.device.discoverServices();
+      debugPrint('✅ Trovati ${_services.length} servizi\n');
+      
+      _imuService = null;
+      _imuCharacteristic = null;
+      
+      for (var service in _services) {
+        debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        debugPrint('📦 SERVICE: ${service.uuid}');
+        debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        
+        for (var characteristic in service.characteristics) {
+          final props = characteristic.properties;
+          debugPrint('  📍 CHAR: ${characteristic.uuid}');
+          debugPrint('     ├─ Read: ${props.read}');
+          debugPrint('     ├─ Write: ${props.write}');
+          debugPrint('     ├─ WriteWithoutResponse: ${props.writeWithoutResponse}');
+          debugPrint('     ├─ Notify: ${props.notify}');
+          debugPrint('     └─ Indicate: ${props.indicate}\n');
+          
+          if (service.uuid.toString().toLowerCase() == '180f') {
+            debugPrint('  ⚠️  Battery service - IGNORATO\n');
+            continue;
+          }
+          
+          if ((props.notify || props.indicate) && _imuCharacteristic == null) {
+            if (characteristic.uuid.toString().contains('1cac0002')) {
+              _imuService = service;
+              _imuCharacteristic = characteristic;
+              debugPrint('  ✅ SELEZIONATA COME IMU CHAR\n');
+            }
+          }
+        }
+      }
+      
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      
+      setState(() {});
+    } catch (e) {
+      _showMessage('Errore discovery servizi: $e');
+      debugPrint('❌ Errore discovery: $e');
+      return;
+    }
+
+    if (_imuService == null || _imuCharacteristic == null) {
+      _showMessage('Caratteristica IMU non trovata');
+      debugPrint('❌ Nessuna caratteristica IMU trovata');
+      return;
+    }
+
+    debugPrint('🚀 Avvio stream con characteristic: ${_imuCharacteristic!.uuid}');
+
+    try {
+      final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+      final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
+      final deviceName = devicesProvider.getDeviceName(widget.device);
+
+      await streamingManager.startStreaming(widget.device, deviceName);
+      
+      _showMessage('Streaming avviato');
+    } catch (e) {
+      debugPrint('❌ Errore streaming: $e');
+      _showMessage('Errore: $e');
+    }
   }
-
-  // Controlla se hai trovato la caratteristica
-  if (_imuService == null || _imuCharacteristic == null) {
-    _showMessage('Caratteristica IMU non trovata');
-    debugPrint('❌ Nessuna caratteristica IMU trovata');
-    return;
-  }
-
-  debugPrint('🚀 Avvio stream con characteristic: ${_imuCharacteristic!.uuid}');
-
-  try {
-    final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-    final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
-    final deviceName = devicesProvider.getDeviceName(widget.device);
-
-    await streamingManager.startStreaming(
-      device: widget.device,
-      deviceName: deviceName,
-      service: _imuService!,
-      characteristic: _imuCharacteristic!,
-    );
-    
-    _showMessage('Streaming avviato');
-  } catch (e) {
-    debugPrint('❌ Errore streaming: $e');
-    _showMessage('Errore: $e');
-  }
-}
-
-
 
   Future<void> _stopStreaming() async {
     debugPrint('🛑 STOP streaming');
     
     final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-    await streamingManager.stopStreaming(
-      widget.device.remoteId.toString(),
-      _imuCharacteristic,
-    );
+    await streamingManager.stopStreaming(widget.device.remoteId.toString());
     
     _showMessage('Streaming fermato');
   }
@@ -374,7 +334,6 @@ Future<void> _startStreaming() async {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // Card dispositivo
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(20),
@@ -386,7 +345,6 @@ Future<void> _startStreaming() async {
                 ),
                 child: Column(
                   children: [
-                    // EMOJI CON MATITA EDIT
                     Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -404,7 +362,6 @@ Future<void> _startStreaming() async {
                             ),
                           ),
                         ),
-                        // MATITA EDIT
                         Positioned(
                           top: -4,
                           right: -4,
@@ -433,7 +390,6 @@ Future<void> _startStreaming() async {
                                           mainAxisSize: MainAxisSize.min,
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            // NOME
                                             const Text(
                                               'Nome personalizzato',
                                               style: TextStyle(
@@ -458,7 +414,6 @@ Future<void> _startStreaming() async {
                                               ),
                                             ),
                                             const SizedBox(height: 20),
-                                            // ICONE
                                             const Text(
                                               'Scegli icona',
                                               style: TextStyle(
@@ -582,7 +537,6 @@ Future<void> _startStreaming() async {
                     ),
                     const SizedBox(height: 20),
                     
-                    // STATO CONNESSIONE
                     Container(
                       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
                       decoration: BoxDecoration(
@@ -622,7 +576,6 @@ Future<void> _startStreaming() async {
                       ),
                     ),
                     
-                    // STREAMING INDICATOR
                     if (isStreaming) ...[
                       const SizedBox(height: 12),
                       Container(
@@ -661,7 +614,6 @@ Future<void> _startStreaming() async {
               
               const SizedBox(height: 16),
               
-              // PULSANTI
               if (_isConnecting)
                 const CircularProgressIndicator(
                   color: Color.fromRGBO(151, 201, 62, 1),
@@ -710,9 +662,7 @@ Future<void> _startStreaming() async {
                     ),
                   ],
                 ),
-              
             ],
-            
           ),
         ),
       ),

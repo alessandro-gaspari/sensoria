@@ -1,124 +1,199 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:provider/provider.dart';
-import 'screens/scanner_screen.dart';
 import 'providers/connected_devices_provider.dart';
 import 'streaming_manager.dart';
+import 'screens/scanner_screen.dart';
 
-void main() {
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => ConnectedDevicesProvider()),
-        ChangeNotifierProvider(create: (_) => StreamingManager()),
-      ],
-      child: const SensoriaBleScannerApp(),
-    ),
-  );
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Disabilita BLE in release mode se necessario
+  FlutterBluePlus.setLogLevel(LogLevel.info);
+  
+  runApp(const MyApp());
 }
 
-class SensoriaBleScannerApp extends StatelessWidget {
-  const SensoriaBleScannerApp({Key? key}) : super(key: key);
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Sensoria',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorScheme: ColorScheme.dark(
-          primary: const Color.fromRGBO(151, 201, 62, 1),
-          secondary: const Color.fromRGBO(151, 201, 62, 0.8),
-          tertiary: const Color.fromRGBO(151, 201, 62, 0.6),
-          surface: const Color(0xFF0F0F0F),
-          surfaceContainerHighest: const Color.fromRGBO(89, 89, 92, 0.3),
-          surfaceContainer: const Color(0xFF121212),
-          onPrimary: const Color(0xFF000000),
-          onSecondary: const Color(0xFF000000),
-          onSurface: const Color(0xFFE8E8E8),
-          onSurfaceVariant: const Color.fromRGBO(89, 89, 92, 1),
-          outline: const Color.fromRGBO(89, 89, 92, 0.5),
-          error: const Color(0xFFFF4444),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (context) => ConnectedDevicesProvider(),
+          lazy: false,
         ),
-        scaffoldBackgroundColor: const Color(0xFF0A0A0A),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF0F0F0F),
-          foregroundColor: Color.fromRGBO(151, 201, 62, 1),
-          elevation: 0,
-          centerTitle: true,
+        ChangeNotifierProvider(
+          create: (context) => StreamingManager(),
+          lazy: false,
         ),
-        cardTheme: const CardThemeData(
-          color: Color(0xFF1A1A1A),
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-            side: BorderSide(
-              color: Color.fromRGBO(89, 89, 92, 0.3),
-              width: 1,
+      ],
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Sensoria',
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          primaryColor: const Color.fromRGBO(151, 201, 62, 1),
+          scaffoldBackgroundColor: const Color(0xFF0F0F0F),
+          
+          // AppBar Theme
+          appBarTheme: const AppBarTheme(
+            backgroundColor: Color(0xFF1A1A1A),
+            elevation: 0,
+            centerTitle: true,
+            titleTextStyle: TextStyle(
+              color: Color.fromRGBO(151, 201, 62, 1),
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
+            iconTheme: IconThemeData(
+              color: Color.fromRGBO(151, 201, 62, 1),
             ),
           ),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
-            foregroundColor: const Color(0xFF000000),
+          
+          // Elevated Button Theme
+          elevatedButtonTheme: ElevatedButtonThemeData(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
+              foregroundColor: const Color(0xFF000000),
+              disabledBackgroundColor: const Color.fromRGBO(89, 89, 92, 0.3),
+              disabledForegroundColor: const Color.fromRGBO(89, 89, 92, 1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 0,
+              textStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+            ),
+          ),
+          
+          // Outlined Button Theme
+          outlinedButtonTheme: OutlinedButtonThemeData(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
+              side: const BorderSide(
+                color: Color.fromRGBO(151, 201, 62, 1),
+                width: 2,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 0,
+              textStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 20),
+            ),
+          ),
+          
+          // Text Button Theme
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+              foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
+              textStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          
+          // Input Decoration Theme
+          inputDecorationTheme: InputDecorationTheme(
+            filled: true,
+            fillColor: const Color(0xFF1A1A1A),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Color.fromRGBO(89, 89, 92, 0.3),
+              ),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Color.fromRGBO(89, 89, 92, 0.3),
+              ),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(
+                color: Color.fromRGBO(151, 201, 62, 1),
+                width: 2,
+              ),
+            ),
+            hintStyle: const TextStyle(
+              color: Color.fromRGBO(89, 89, 92, 0.7),
+              fontSize: 14,
+            ),
+            labelStyle: const TextStyle(
+              color: Color.fromRGBO(151, 201, 62, 1),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          
+          // Dialog Theme
+          dialogTheme: DialogThemeData(
+            backgroundColor: const Color(0xFF1A1A1A),
             elevation: 0,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(
+                color: Color.fromRGBO(89, 89, 92, 0.3),
+              ),
             ),
-            textStyle: const TextStyle(
-              fontSize: 16,
+            titleTextStyle: const TextStyle(
+              color: Color.fromRGBO(151, 201, 62, 1),
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+            contentTextStyle: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+            ),
+          ),
+          
+          // Snackbar Theme
+          snackBarTheme: const SnackBarThemeData(
+            backgroundColor: Color.fromRGBO(151, 201, 62, 1),
+            contentTextStyle: TextStyle(
+              color: Color(0xFF000000),
+              fontSize: 14,
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.8,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(Radius.circular(12)),
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+          
+          // Scrollbar Theme
+          scrollbarTheme: ScrollbarThemeData(
+            thumbColor: MaterialStateProperty.all(
+              const Color.fromRGBO(151, 201, 62, 0.5),
+            ),
+            trackColor: MaterialStateProperty.all(
+              const Color.fromRGBO(89, 89, 92, 0.1),
             ),
           ),
-        ),
-        textTheme: const TextTheme(
-          displayLarge: TextStyle(
-            fontSize: 32,
-            fontWeight: FontWeight.w700,
+          
+          // Progress Indicator Theme
+          progressIndicatorTheme: const ProgressIndicatorThemeData(
             color: Color.fromRGBO(151, 201, 62, 1),
-            letterSpacing: -0.5,
-          ),
-          titleLarge: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: Color.fromRGBO(151, 201, 62, 1),
-            letterSpacing: 0.15,
-          ),
-          titleMedium: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFFE8E8E8),
-            letterSpacing: 0.15,
-          ),
-          bodyLarge: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w400,
-            color: Color(0xFFE8E8E8),
-            letterSpacing: 0.5,
-          ),
-          bodyMedium: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w400,
-            color: Color.fromRGBO(89, 89, 92, 1),
-            letterSpacing: 0.25,
-          ),
-          labelSmall: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: Color.fromRGBO(89, 89, 92, 1),
-            letterSpacing: 0.5,
+            linearMinHeight: 4,
           ),
         ),
-        iconTheme: const IconThemeData(
-          color: Color.fromRGBO(151, 201, 62, 1),
-          size: 24,
-        ),
+        home: const ScannerScreen(),
       ),
-      home: const ScannerScreen(),
     );
   }
 }
