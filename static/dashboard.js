@@ -143,9 +143,9 @@ function createSensorCard(name, data) {
 // Emoji sensore
 function getSensorEmoji(name) {
     const n = name.toLowerCase();
-    if (n.includes('ginocchio') || n.includes('knee')) return '🦵';
-    if (n.includes('piede') || n.includes('foot')) return '🦶';
-    if (n.includes('braccio') || n.includes('arm')) return '💪';
+    if (n.includes('ginocchio') || n.includes('knee') || n.includes('gamba')) return '🦿';
+    if (n.includes('piede') || n.includes('foot') || n.includes('calzino') || n.includes('calzini') || n.includes('socks')) return '🧦';
+    if (n.includes('braccio') || n.includes('arm')) return '🦾';
     return '📱';
 }
 
