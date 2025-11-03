@@ -2,15 +2,14 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 from datetime import datetime
-import json
 import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'sensoria_secret_key_2024'
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# Variabili globali per memorizzare i dati
+# ⭐ Memorizza SOLO l'ultima lettura per ogni sensore
 sensors_data = {}
 sensors_status = {}
 
@@ -43,16 +42,11 @@ def get_sensor(sensor_name):
 @app.route('/api/data', methods=['POST'])
 def receive_data():
     """Riceve i dati dall'app Flutter"""
-    global sensors_data, sensors_status
-    
     try:
         data = request.json
         sensor_name = data.get('sensor_name', 'Unknown')
         
-        # 🔧 Correzione: nome dizionario completo
-        if sensor_name not in sensors_data:
-            sensors_data[sensor_name] = []
-        
+        # ⭐ Salva SOLO l'ultima lettura (non lista)
         sensor_reading = {
             'timestamp': datetime.now().isoformat(),
             'accel_x': data.get('accel_x'),
@@ -66,47 +60,38 @@ def receive_data():
             'mag_z': data.get('mag_z'),
         }
         
-        sensors_data[sensor_name].append(sensor_reading)
-        
-        # Mantiene solo gli ultimi 100 dati
-        if len(sensors_data[sensor_name]) > 100:
-            sensors_data[sensor_name].pop(0)
-        
+        sensors_data[sensor_name] = sensor_reading
         sensors_status[sensor_name] = 'connected'
         
-        # Aggiornamento in tempo reale via WebSocket
+        # ⭐ Aggiornamento IMMEDIATO via WebSocket
         socketio.emit('sensor_update', {
             'sensor_name': sensor_name,
             'data': sensor_reading
-        }, broadcast=True)
+        }, namespace='/')
         
-        return jsonify({'status': 'success', 'message': 'Data received'}), 200
+        return jsonify({'status': 'success'}), 200
         
     except Exception as e:
+        print(f'❌ Error: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 400
-
 
 @app.route('/api/sensor/<sensor_name>/status', methods=['POST'])
 def update_sensor_status(sensor_name):
     """Aggiorna lo stato di connessione di un sensore"""
-    global sensors_status
-    
     try:
         data = request.json
         status = data.get('status', 'disconnected')
         sensors_status[sensor_name] = status
         
-        # Notifica via WebSocket
         socketio.emit('sensor_status_update', {
             'sensor_name': sensor_name,
             'status': status,
             'timestamp': datetime.now().isoformat()
-        }, broadcast=True)
+        }, namespace='/')
         
         return jsonify({'status': 'success'}), 200
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
-
 
 @app.route('/api/clear', methods=['POST'])
 def clear_data():
@@ -116,27 +101,24 @@ def clear_data():
     sensors_data = {}
     sensors_status = {}
     
-    socketio.emit('data_cleared', {}, broadcast=True)
+    socketio.emit('data_cleared', {}, namespace='/')
     
     return jsonify({'status': 'success', 'message': 'All data cleared'}), 200
-
 
 @socketio.on('connect')
 def handle_connect():
     """Gestisce nuova connessione WebSocket"""
-    print('Client connected')
+    print('✅ Client connesso')
     emit('connection_response', {
         'status': 'connected',
-        'sensors': list(sensors_data.keys()),
+        'sensors': sensors_data,
         'timestamp': datetime.now().isoformat()
     })
-
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Gestisce disconnessione WebSocket"""
-    print('Client disconnected')
-
+    print('❌ Client disconnesso')
 
 @socketio.on('request_data')
 def handle_data_request(data):
@@ -148,7 +130,6 @@ def handle_data_request(data):
             'data': sensors_data[sensor_name],
             'status': sensors_status.get(sensor_name, 'disconnected')
         })
-
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
