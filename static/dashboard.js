@@ -11,8 +11,9 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-var FILTER_ALPHA = 0.25;
-var BUFFER_SIZE = 3;
+var FILTER_ALPHA = 0.95;  // 95% gyro, 5% accel (complementary filter)
+var BUFFER_SIZE = 2;
+var DELTA_T = 0.01;  // 10ms @ 100Hz
 
 var sensors = {};
 var isConnected = false;
@@ -28,6 +29,10 @@ var filteredPitchSup = 0;
 var filteredPitchInf = 0;
 var calibrationOffset = 0;
 var isCalibrated = false;
+
+// ⭐ State del complementary filter
+var lastFilteredPitchSup = 0;
+var lastFilteredPitchInf = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -75,17 +80,19 @@ function addToBuffer(buffer, value, maxSize) {
     if (buffer.length > maxSize) buffer.shift();
 }
 
-function advancedFilter(newValue, filteredValue, alpha, buffer, bufferSize) {
-    addToBuffer(buffer, newValue, bufferSize);
-    var bufferAverage = getBufferAverage(buffer);
-    var filtered = alpha * bufferAverage + (1 - alpha) * filteredValue;
+// ⭐ NUOVO: Complementary Filter con Gyro Y
+function complementaryFilter(accelPitch, gyroPitch, filteredValue, alpha) {
+    // θ(t) = α * (θ(t-Δt) + ω_y(t) * Δt) + (1-α) * θ_accel(t)
+    // 95% gyro integrato, 5% accelerometro (per drift compensation)
+    var filtered = alpha * (filteredValue + gyroPitch * DELTA_T) + (1 - alpha) * accelPitch;
     return filtered;
 }
 
-// ⭐ USA P3 (asse Z)
-function calculatePitch(ax, ay, az) {
-    var pitch3 = Math.atan2(az, Math.sqrt(ax * ax + ay * ay)) * (180 / Math.PI);
-    return pitch3;
+// ⭐ Calcola pitch da accelerometro (solo asse Y)
+function calculateAccelPitch(ay, az) {
+    // Pitch = atan2(ay, az)
+    var pitch = Math.atan2(ay, az) * (180 / Math.PI);
+    return pitch;
 }
 
 function initializeSocketListeners() {
@@ -134,16 +141,32 @@ function initializeSocketListeners() {
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
-        var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_y, convertedData.accel_z);
+        
+        // ⭐ Calcola pitch da accelerometro
+        var accelPitch = calculateAccelPitch(convertedData.accel_y, convertedData.accel_z);
         
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            filteredPitchSup = advancedFilter(pitch, filteredPitchSup, FILTER_ALPHA, pitchSupBuffer, BUFFER_SIZE);
-            console.log('[SUP] P3:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchSup.toFixed(1) + '°');
+            // ⭐ Complementary filter: 95% gyro Y + 5% accelerometro
+            filteredPitchSup = complementaryFilter(
+                accelPitch, 
+                convertedData.gyro_y, 
+                filteredPitchSup, 
+                FILTER_ALPHA
+            );
+            
+            console.log('[SUP] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s → Filtered:' + filteredPitchSup.toFixed(1) + '°');
         }
         
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            filteredPitchInf = advancedFilter(pitch, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE);
-            console.log('[INF] P3:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchInf.toFixed(1) + '°');
+            // ⭐ Complementary filter: 95% gyro Y + 5% accelerometro
+            filteredPitchInf = complementaryFilter(
+                accelPitch, 
+                convertedData.gyro_y, 
+                filteredPitchInf, 
+                FILTER_ALPHA
+            );
+            
+            console.log('[INF] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s → Filtered:' + filteredPitchInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -170,22 +193,20 @@ function initializeSocketListeners() {
 
 function calibrateKnee() {
     console.log('📍 CALIBRAZIONE');
-    console.log('   Sup P3: ' + filteredPitchSup.toFixed(2) + '°');
-    console.log('   Inf P3: ' + filteredPitchInf.toFixed(2) + '°');
+    console.log('   Sup: ' + filteredPitchSup.toFixed(2) + '°');
+    console.log('   Inf: ' + filteredPitchInf.toFixed(2) + '°');
     
-    // ⭐ IMPORTANTE: Salva la DIFFERENZA attualen come offset
     calibrationOffset = filteredPitchSup - filteredPitchInf;
     isCalibrated = true;
     
     console.log('✅ CALIBRATO');
-    console.log('   Differenza offset: ' + calibrationOffset.toFixed(1) + '°');
+    console.log('   Offset: ' + calibrationOffset.toFixed(1) + '°');
     
     updateKneeAngleDisplay();
-    alert('✅ Calibrato!\nDifferenza offset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
+    alert('✅ Calibrato!\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
 }
 
 function getKneeAngle() {
-    // ⭐ FORMULA CORRETTA: differenza tra i due sensori
     var currentDifference = filteredPitchSup - filteredPitchInf;
     var relativeAngle = currentDifference - calibrationOffset;
     return Math.round(relativeAngle);
@@ -275,7 +296,7 @@ function createSensorCardFast(sensorName, data) {
         '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span> g</div>' +
         '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span> g</div>' +
         '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span> °/s</div>' +
-        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #ff6666;">' + gyroY + '</span> ❌</div>' +
+        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #97c93e; font-weight: 600;">' + gyroY + '</span> ✓</div>' +
         '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span> °/s</div>' +
         '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span> µT</div>' +
         '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span> µT</div>' +
@@ -364,7 +385,7 @@ function renderSensors() {
             '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span> g</div>' +
             '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span> g</div>' +
             '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span> °/s</div>' +
-            '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #ff6666;">' + gyroY + '</span> ❌</div>' +
+            '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #97c93e; font-weight: 600;">' + gyroY + '</span> ✓</div>' +
             '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span> °/s</div>' +
             '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span> µT</div>' +
             '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span> µT</div>' +
