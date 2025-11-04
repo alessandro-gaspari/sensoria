@@ -21,7 +21,7 @@
     
     <div class="dashboard-container">
         
-        <!-- ⭐ NUOVO: Display angolo ginocchio -->
+        <!-- ⭐ Display angolo ginocchio -->
         <div id="knee-angle-display" style="margin-bottom: 20px;"></div>
         
         <div id="empty-state" class="visible">
@@ -31,7 +31,21 @@
         
         <div id="sensors-grid"></div>
         
-        <div style="margin-top: 40px; text-align: center;">
+        <div style="margin-top: 40px; text-align: center; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+            <button onclick="calibrateKnee()" style="
+                background-color: #97c93e;
+                color: #000;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            " onmouseover="this.style.backgroundColor='#6fa52d'" onmouseout="this.style.backgroundColor='#97c93e'">
+                📍 Calibra Ginocchio
+            </button>
+            
             <button onclick="clearAllData()" style="
                 background-color: #ff4444;
                 color: white;
@@ -42,7 +56,7 @@
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.2s ease;
-            ">
+            " onmouseover="this.style.backgroundColor='#cc0000'" onmouseout="this.style.backgroundColor='#ff4444'">
                 🗑️ Pulisci Dati
             </button>
         </div>
