@@ -75,6 +75,20 @@
     margin: 0 auto;
 }
 
+.sensor-value {
+    font-family: 'Courier New', monospace;
+    color: #97c93e;
+    font-weight: 600;
+    margin-right: 4px;
+}
+
+.sensor-unit {
+    font-size: 11px;
+    color: #666;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+}
+
+
 /* Griglia sensori */
 #sensors-grid {
     display: grid;

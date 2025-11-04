@@ -1,5 +1,5 @@
-// Connessione SocketIO ULTRA-VELOCE
-const socket = io({
+// Connessione Socket.IO ULTRA-VELOCE
+var socket = io({
     reconnection: true,
     reconnectionDelay: 100,
     reconnectionDelayMax: 1000,
@@ -8,14 +8,21 @@ const socket = io({
     upgrade: false,
 });
 
+// ⭐ NUOVO: Scale factor Sensoria
+// Accelerometro: range ±8g, 16-bit = 32768 / 8g = 4096 LSB/g
+// Giroscopio: range ±500°/s, 16-bit = 32768 / 500°/s = 65.54 LSB/°/s
+var S_ACC = 4096;      // LSB/g
+var S_GYRO = 65.54;    // LSB/°/s
+var S_MAG = 0.3;       // µT/LSB (magnetometro)
+
 // Stato applicazione
-let sensors = {};
-let isConnected = false;
-let frameCount = 0;
-let lastFrameTime = Date.now();
-let currentFps = 0;
-let lastDataTime = Date.now();
-let heartbeatTimer;
+var sensors = {};
+var isConnected = false;
+var frameCount = 0;
+var lastFrameTime = Date.now();
+var currentFps = 0;
+var lastDataTime = Date.now();
+var heartbeatTimer;
 
 // Inizializzazione
 document.addEventListener('DOMContentLoaded', function() {
@@ -43,6 +50,22 @@ function startFpsCounter() {
         frameCount = 0;
         lastFrameTime = now;
     }, 1000);
+}
+
+// ⭐ NUOVO: Funzioni di conversione
+function convertAccelerometerRaw(raw) {
+    // a_g = raw_acc / S_acc
+    return raw / S_ACC;
+}
+
+function convertGyroscopeRaw(raw) {
+    // ω_deg/s = raw_gyro / S_gyro
+    return raw / S_GYRO;
+}
+
+function convertMagnetometerRaw(raw) {
+    // B_µT = raw_mag * S_mag
+    return raw * S_MAG;
 }
 
 // Inizializza listener WebSocket
@@ -78,8 +101,22 @@ function initializeSocketListeners() {
         var sensorName = data.sensor_name;
         var sensorData = data.data;
         
-        sensors[sensorName] = sensorData;
-        updateSensorDirectly(sensorName, sensorData);
+        // ⭐ NUOVO: Converti i dati raw in unità fisiche
+        var convertedData = {
+            timestamp: sensorData.timestamp,
+            accel_x: convertAccelerometerRaw(sensorData.accel_x),
+            accel_y: convertAccelerometerRaw(sensorData.accel_y),
+            accel_z: convertAccelerometerRaw(sensorData.accel_z),
+            gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
+            gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
+            gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
+            mag_x: convertMagnetometerRaw(sensorData.mag_x),
+            mag_y: convertMagnetometerRaw(sensorData.mag_y),
+            mag_z: convertMagnetometerRaw(sensorData.mag_z),
+        };
+        
+        sensors[sensorName] = convertedData;
+        updateSensorDirectly(sensorName, convertedData);
     });
 
     socket.on('sensor_disconnected', function(data) {
@@ -110,12 +147,18 @@ function updateSensorDirectly(sensorName, data) {
     
     // Velocissimo: solo update dei valori
     var valueElements = sensorCard.querySelectorAll('.sensor-value');
+    var unitsElements = sensorCard.querySelectorAll('.sensor-unit');
+    
     var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
+    var units = ['g', 'g', 'g', '°/s', '°/s', '°/s', 'µT', 'µT', 'µT'];
     
     for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
         var value = data[fields[i]];
         if (value !== undefined) {
-            valueElements[i].textContent = value.toFixed(2);
+            valueElements[i].textContent = value.toFixed(3);
+            if (unitsElements[i]) {
+                unitsElements[i].textContent = units[i];
+            }
         }
     }
     
@@ -155,30 +198,30 @@ function createSensorCardFast(sensorName, data) {
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
-    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(2) : '---';
-    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(2) : '---';
-    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(2) : '---';
-    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(2) : '---';
-    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(2) : '---';
-    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(2) : '---';
-    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(2) : '---';
-    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(2) : '---';
-    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(2) : '---';
+    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
+    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
+    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
+    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
+    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
+    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
+    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
     
     template.innerHTML = 
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
             '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
             '<div class="status-indicator active"></div>' +
         '</div>' +
-        '<div class="sensor-data-row"><b>Accel X:</b> <span class="sensor-value">' + accelX + '</span></div>' +
-        '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span></div>' +
-        '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span></div>' +
-        '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
-        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
-        '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
-        '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span></div>' +
-        '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span></div>' +
-        '<div class="sensor-data-row"><b>Mag Z:</b> <span class="sensor-value">' + magZ + '</span></div>' +
+        '<div class="sensor-data-row"><b>Accel X:</b> <span class="sensor-value">' + accelX + '</span> <span class="sensor-unit">g</span></div>' +
+        '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span> <span class="sensor-unit">g</span></div>' +
+        '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span> <span class="sensor-unit">g</span></div>' +
+        '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span> <span class="sensor-unit">°/s</span></div>' +
+        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value">' + gyroY + '</span> <span class="sensor-unit">°/s</span></div>' +
+        '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span> <span class="sensor-unit">°/s</span></div>' +
+        '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span> <span class="sensor-unit">µT</span></div>' +
+        '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span> <span class="sensor-unit">µT</span></div>' +
+        '<div class="sensor-data-row"><b>Mag Z:</b> <span class="sensor-value">' + magZ + '</span> <span class="sensor-unit">µT</span></div>' +
         '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;">' +
             '<span class="sensor-timestamp">--:--:--</span>' +
         '</div>';
@@ -265,30 +308,30 @@ function renderSensors() {
         card.className = 'sensor-col connected';
         card.setAttribute('data-sensor', name);
         
-        var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(2) : '---';
-        var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(2) : '---';
-        var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(2) : '---';
-        var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(2) : '---';
-        var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(2) : '---';
-        var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(2) : '---';
-        var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(2) : '---';
-        var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(2) : '---';
-        var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(2) : '---';
+        var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
+        var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
+        var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
+        var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
+        var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
+        var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
+        var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+        var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+        var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
         
         card.innerHTML =
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
                 '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
                 '<div class="status-indicator"></div>' +
             '</div>' +
-            '<div class="sensor-data-row"><b>Accel X:</b> <span class="sensor-value">' + accelX + '</span></div>' +
-            '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span></div>' +
-            '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span></div>' +
-            '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
-            '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
-            '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
-            '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span></div>' +
-            '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span></div>' +
-            '<div class="sensor-data-row"><b>Mag Z:</b> <span class="sensor-value">' + magZ + '</span></div>' +
+            '<div class="sensor-data-row"><b>Accel X:</b> <span class="sensor-value">' + accelX + '</span> <span class="sensor-unit">g</span></div>' +
+            '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span> <span class="sensor-unit">g</span></div>' +
+            '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span> <span class="sensor-unit">g</span></div>' +
+            '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span> <span class="sensor-unit">°/s</span></div>' +
+            '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value">' + gyroY + '</span> <span class="sensor-unit">°/s</span></div>' +
+            '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span> <span class="sensor-unit">°/s</span></div>' +
+            '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span> <span class="sensor-unit">µT</span></div>' +
+            '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span> <span class="sensor-unit">µT</span></div>' +
+            '<div class="sensor-data-row"><b>Mag Z:</b> <span class="sensor-value">' + magZ + '</span> <span class="sensor-unit">µT</span></div>' +
             '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;">' +
                 '<span class="sensor-timestamp">--:--:--</span>' +
             '</div>';
