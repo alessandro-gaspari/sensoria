@@ -11,9 +11,10 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-var FILTER_ALPHA = 0.95;  // 95% gyro, 5% accel (complementary filter)
-var BUFFER_SIZE = 2;
-var DELTA_T = 0.01;  // 10ms @ 100Hz
+// ⭐ EQUILIBRATO: 60% gyro, 40% accel
+var FILTER_ALPHA = 0.60;
+var DELTA_T = 0.01;
+var GYRO_DEADZONE = 20;  // Ignora gyro sotto 20°/s
 
 var sensors = {};
 var isConnected = false;
@@ -23,16 +24,10 @@ var currentFps = 0;
 var lastDataTime = Date.now();
 var heartbeatTimer;
 
-var pitchSupBuffer = [];
-var pitchInfBuffer = [];
 var filteredPitchSup = 0;
 var filteredPitchInf = 0;
 var calibrationOffset = 0;
 var isCalibrated = false;
-
-// ⭐ State del complementary filter
-var lastFilteredPitchSup = 0;
-var lastFilteredPitchInf = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -68,29 +63,20 @@ function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-function getBufferAverage(buffer) {
-    if (buffer.length === 0) return 0;
-    var sum = 0;
-    for (var i = 0; i < buffer.length; i++) sum += buffer[i];
-    return sum / buffer.length;
-}
-
-function addToBuffer(buffer, value, maxSize) {
-    buffer.push(value);
-    if (buffer.length > maxSize) buffer.shift();
-}
-
-// ⭐ NUOVO: Complementary Filter con Gyro Y
+// ⭐ Complementary Filter con DEADZONE su Gyro
 function complementaryFilter(accelPitch, gyroPitch, filteredValue, alpha) {
-    // θ(t) = α * (θ(t-Δt) + ω_y(t) * Δt) + (1-α) * θ_accel(t)
-    // 95% gyro integrato, 5% accelerometro (per drift compensation)
-    var filtered = alpha * (filteredValue + gyroPitch * DELTA_T) + (1 - alpha) * accelPitch;
-    return filtered;
+    // Se gyro sotto deadzone, usa solo accelerometro
+    if (Math.abs(gyroPitch) < GYRO_DEADZONE) {
+        // Fermo: 100% accelerometro
+        return 0.3 * accelPitch + 0.7 * filteredValue;
+    } else {
+        // In movimento: 60% gyro integrato + 40% accel
+        return alpha * (filteredValue + gyroPitch * DELTA_T) + (1 - alpha) * accelPitch;
+    }
 }
 
-// ⭐ Calcola pitch da accelerometro (solo asse Y)
+// ⭐ Calcola pitch da accelerometro
 function calculateAccelPitch(ay, az) {
-    // Pitch = atan2(ay, az)
     var pitch = Math.atan2(ay, az) * (180 / Math.PI);
     return pitch;
 }
@@ -141,12 +127,10 @@ function initializeSocketListeners() {
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
-        
-        // ⭐ Calcola pitch da accelerometro
         var accelPitch = calculateAccelPitch(convertedData.accel_y, convertedData.accel_z);
+        var isMoving = Math.abs(convertedData.gyro_y) > GYRO_DEADZONE;
         
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            // ⭐ Complementary filter: 95% gyro Y + 5% accelerometro
             filteredPitchSup = complementaryFilter(
                 accelPitch, 
                 convertedData.gyro_y, 
@@ -154,11 +138,11 @@ function initializeSocketListeners() {
                 FILTER_ALPHA
             );
             
-            console.log('[SUP] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s → Filtered:' + filteredPitchSup.toFixed(1) + '°');
+            var modeStr = isMoving ? 'GYRO' : 'ACCEL';
+            console.log('[SUP] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s [' + modeStr + '] → Filtered:' + filteredPitchSup.toFixed(1) + '°');
         }
         
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            // ⭐ Complementary filter: 95% gyro Y + 5% accelerometro
             filteredPitchInf = complementaryFilter(
                 accelPitch, 
                 convertedData.gyro_y, 
@@ -166,7 +150,8 @@ function initializeSocketListeners() {
                 FILTER_ALPHA
             );
             
-            console.log('[INF] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s → Filtered:' + filteredPitchInf.toFixed(1) + '°');
+            var modeStr = isMoving ? 'GYRO' : 'ACCEL';
+            console.log('[INF] Accel:' + accelPitch.toFixed(1) + '° | GyroY:' + convertedData.gyro_y.toFixed(1) + '°/s [' + modeStr + '] → Filtered:' + filteredPitchInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -180,8 +165,6 @@ function initializeSocketListeners() {
 
     socket.on('data_cleared', function() {
         sensors = {};
-        pitchSupBuffer = [];
-        pitchInfBuffer = [];
         filteredPitchSup = 0;
         filteredPitchInf = 0;
         calibrationOffset = 0;
@@ -200,10 +183,10 @@ function calibrateKnee() {
     isCalibrated = true;
     
     console.log('✅ CALIBRATO');
-    console.log('   Offset: ' + calibrationOffset.toFixed(1) + '°');
+    console.log('   Differenza: ' + calibrationOffset.toFixed(1) + '°');
     
     updateKneeAngleDisplay();
-    alert('✅ Calibrato!\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
+    alert('✅ Calibrato!\nDifferenza: ' + calibrationOffset.toFixed(1) + '°');
 }
 
 function getKneeAngle() {
@@ -418,8 +401,6 @@ function clearAllData() {
     fetch('/api/clear', { method: 'POST' })
         .then(function() {
             sensors = {};
-            pitchSupBuffer = [];
-            pitchInfBuffer = [];
             filteredPitchSup = 0;
             filteredPitchInf = 0;
             calibrationOffset = 0;
