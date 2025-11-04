@@ -10,8 +10,10 @@ var socket = io({
 var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
-var FILTER_ALPHA = 0.15;
-var BUFFER_SIZE = 5;
+
+// ⭐ ULTRA-STRONG FILTER
+var FILTER_ALPHA = 0.08;  // 8% nuovi dati, 92% vecchi (molto stabile)
+var BUFFER_SIZE = 10;      // Media su 10 campioni
 
 var sensors = {};
 var isConnected = false;
@@ -81,13 +83,11 @@ function advancedFilter(newValue, filteredValue, alpha, buffer, bufferSize) {
     return filtered;
 }
 
-// ⭐ SENZA GYRO Y - Solo 3 assi possibili
-function calculateAllPitches(ax, ay, az) {
-    var pitch1 = Math.atan2(ax, Math.sqrt(ay * ay + az * az)) * (180 / Math.PI);
-    var pitch2 = Math.atan2(ay, Math.sqrt(ax * ax + az * az)) * (180 / Math.PI);
-    var pitch3 = Math.atan2(az, Math.sqrt(ax * ax + ay * ay)) * (180 / Math.PI);
-    
-    return {p1: pitch1, p2: pitch2, p3: pitch3};
+// ⭐ CALCOLA PITCH - USA AZ COME PRINCIPALE (ASSE PIÙ STABILE PER GINOCCHIO)
+function calculatePitch(ax, ay, az) {
+    // Pitch dal Z: più stabile per movimento ginocchio
+    var pitch = Math.atan2(ay, Math.sqrt(ax * ax + az * az)) * (180 / Math.PI);
+    return pitch;
 }
 
 function initializeSocketListeners() {
@@ -136,18 +136,16 @@ function initializeSocketListeners() {
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
-        var pitches = calculateAllPitches(convertedData.accel_x, convertedData.accel_y, convertedData.accel_z);
+        var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_y, convertedData.accel_z);
         
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            // ⭐ USA P3 (asse Z) - PROVA ANCHE P1 SE NON FUNZIONA
-            filteredPitchSup = advancedFilter(pitches.p3, filteredPitchSup, FILTER_ALPHA, pitchSupBuffer, BUFFER_SIZE);
-            console.log('[SUP] P1:' + pitches.p1.toFixed(0) + '° | P2:' + pitches.p2.toFixed(0) + '° | P3:' + pitches.p3.toFixed(0) + '° → Filtered:' + filteredPitchSup.toFixed(1) + '°');
+            filteredPitchSup = advancedFilter(pitch, filteredPitchSup, FILTER_ALPHA, pitchSupBuffer, BUFFER_SIZE);
+            console.log('[SUP] Raw:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchSup.toFixed(1) + '° [Buffer: ' + pitchSupBuffer.length + '/' + BUFFER_SIZE + ']');
         }
         
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            // ⭐ USA P3 (asse Z) - PROVA ANCHE P1 SE NON FUNZIONA
-            filteredPitchInf = advancedFilter(pitches.p3, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE);
-            console.log('[INF] P1:' + pitches.p1.toFixed(0) + '° | P2:' + pitches.p2.toFixed(0) + '° | P3:' + pitches.p3.toFixed(0) + '° → Filtered:' + filteredPitchInf.toFixed(1) + '°');
+            filteredPitchInf = advancedFilter(pitch, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE);
+            console.log('[INF] Raw:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchInf.toFixed(1) + '° [Buffer: ' + pitchInfBuffer.length + '/' + BUFFER_SIZE + ']');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -173,19 +171,23 @@ function initializeSocketListeners() {
 }
 
 function calibrateKnee() {
-    console.log('📍 Calibra: Sup=' + filteredPitchSup.toFixed(1) + '° | Inf=' + filteredPitchInf.toFixed(1) + '°');
+    console.log('📍 CALIBRAZIONE');
+    console.log('   Sup Raw: ' + filteredPitchSup.toFixed(2) + '°');
+    console.log('   Inf Raw: ' + filteredPitchInf.toFixed(2) + '°');
     
-    if (pitchSupBuffer.length < 2 || pitchInfBuffer.length < 2) {
-        alert('⏳ Attendi stabilizzazione');
+    if (pitchSupBuffer.length < 5 || pitchInfBuffer.length < 5) {
+        alert('⏳ Attendi che i buffer si riempiano (attualmente: ' + pitchSupBuffer.length + '/' + BUFFER_SIZE + ')');
         return;
     }
     
     calibrationOffset = filteredPitchSup - filteredPitchInf;
     isCalibrated = true;
     
-    console.log('✅ Calibrato! Offset: ' + calibrationOffset.toFixed(1) + '°');
+    console.log('✅ CALIBRATO');
+    console.log('   Offset: ' + calibrationOffset.toFixed(1) + '°');
+    
     updateKneeAngleDisplay();
-    alert('✅ Calibrato! Offset: ' + calibrationOffset.toFixed(1) + '°');
+    alert('✅ Calibrato!\n\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio a 90° e controlla i gradi!');
 }
 
 function getKneeAngle() {
@@ -199,20 +201,22 @@ function updateKneeAngleDisplay() {
     if (!kneeAngleEl) return;
     
     if (!sensors || Object.keys(sensors).length < 2) {
-        kneeAngleEl.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">⏳ Sensori...</div>';
+        kneeAngleEl.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">⏳ Attendi sensori...</div>';
         return;
     }
     
     var kneeAngle = getKneeAngle();
     var statusText = isCalibrated ? '✓ Calibrato' : '✗ Non calibrato';
     var statusColor = isCalibrated ? '#97c93e' : '#ff9500';
+    var bufferStatus = (pitchSupBuffer.length + pitchInfBuffer.length) / 2;
     
     kneeAngleEl.innerHTML =
         '<div style="background: linear-gradient(135deg, #97c93e 0%, #6fa52d 100%); border-radius: 12px; padding: 20px; text-align: center; color: #000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">' +
             '<div style="font-size: 12px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
             '<div style="font-size: 72px; font-weight: 700; margin: 8px 0; font-family: monospace;">' + kneeAngle + '°</div>' +
+            '<div style="font-size: 10px; opacity: 0.7;">Buffer: ' + Math.round(bufferStatus) + '/' + BUFFER_SIZE + ' | Stabilità: ' + (Math.round(bufferStatus * 100 / BUFFER_SIZE)) + '%</div>' +
             '<div style="font-size: 11px; opacity: 0.8;"><span style="color: ' + statusColor + '; font-weight: 700;">' + statusText + '</span></div>' +
-            '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.5); border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 12px; width: 100%;">📍 Calibra</button>' +
+            '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.5); border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 12px; width: 100%;">📍 Calibra (dritto)</button>' +
         '</div>';
 }
 
@@ -278,7 +282,7 @@ function createSensorCardFast(sensorName, data) {
         '<div class="sensor-data-row"><b>Accel Y:</b> <span class="sensor-value">' + accelY + '</span> g</div>' +
         '<div class="sensor-data-row"><b>Accel Z:</b> <span class="sensor-value">' + accelZ + '</span> g</div>' +
         '<div class="sensor-data-row"><b>Gyro X:</b> <span class="sensor-value">' + gyroX + '</span> °/s</div>' +
-        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #ff6666; font-weight: 700;">' + gyroY + '</span> ❌</div>' +
+        '<div class="sensor-data-row"><b>Gyro Y:</b> <span class="sensor-value" style="color: #ff6666; font-weight: 700;">' + gyroY + '</span> ❌ IGNORATO</div>' +
         '<div class="sensor-data-row"><b>Gyro Z:</b> <span class="sensor-value">' + gyroZ + '</span> °/s</div>' +
         '<div class="sensor-data-row"><b>Mag X:</b> <span class="sensor-value">' + magX + '</span> µT</div>' +
         '<div class="sensor-data-row"><b>Mag Y:</b> <span class="sensor-value">' + magY + '</span> µT</div>' +
