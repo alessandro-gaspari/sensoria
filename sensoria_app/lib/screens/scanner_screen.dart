@@ -8,6 +8,7 @@ import 'device_detail_screen.dart';
 import '../models/sensoria_device_type.dart';
 import '../providers/connected_devices_provider.dart';
 import '../streaming_manager.dart';
+import 'tracking_screen.dart';
 
 enum GpsSignalQuality { excellent, good, poor }
 
@@ -205,167 +206,73 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
   }
 
   Widget _buildStreamingControls(ConnectedDevicesProvider devicesProvider) {
-    final streamingManager = Provider.of<StreamingManager>(context);
-    final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
-    
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: const Color.fromRGBO(89, 89, 92, 0.3),
-          width: 1,
+  final streamingManager = Provider.of<StreamingManager>(context);
+  final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
+  
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 70),
+        child: SizedBox(
+          height: 56,
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: hasActiveStreams
+                ? null
+                : () async {
+                    try {
+                      final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+                      
+                      await streamingManager.startAllStreaming(
+                        devicesProvider.connectedDevices,
+                        devicesProvider.deviceNames,
+                      );
+                      
+                      _showMessage('✅ Streaming avviato!');
+                      
+                      if (mounted) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const TrackingScreen(),
+                          ),
+                        );
+                      }
+                    } catch (e) {
+                      _showMessage('❌ Errore: $e');
+                    }
+                  },
+            icon: const Icon(Icons.play_arrow, size: 22),
+            label: const Text(
+              'AVVIA TRACKING',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                color: Color.fromRGBO(151, 201, 62, 1),
+              ),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
+              side: const BorderSide(
+                color: Color.fromRGBO(151, 201, 62, 1),
+                width: 2,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 0,
+              shadowColor: Colors.transparent,
+            ),
+          ),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.settings_input_antenna,
-                color: Color.fromRGBO(151, 201, 62, 1),
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'Controllo Streaming',
-                style: TextStyle(
-                  color: Color.fromRGBO(151, 201, 62, 1),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
-                ),
-              ),
-              const Spacer(),
-              if (hasActiveStreams)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: const Color.fromRGBO(151, 201, 62, 0.2),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: const Color.fromRGBO(151, 201, 62, 0.4),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 6,
-                        height: 6,
-                        decoration: const BoxDecoration(
-                          color: Color.fromRGBO(151, 201, 62, 1),
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${streamingManager.streamingStatus.length} ATTIVI',
-                        style: const TextStyle(
-                          color: Color.fromRGBO(151, 201, 62, 1),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-          
-          const SizedBox(height: 12),
-          
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: hasActiveStreams
-                        ? null
-                        : () async {
-                            try {
-                              final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-                              await streamingManager.startAllStreaming(
-                                devicesProvider.connectedDevices,
-                                devicesProvider.deviceNames,
-                              );
-                              _showMessage('✅ Streaming avviato!');
-                            } catch (e) {
-                              _showMessage('❌ Errore: $e');
-                            }
-                          },
-                    icon: const Icon(Icons.play_arrow, size: 20),
-                    label: const Text(
-                      'START',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: hasActiveStreams
-                          ? const Color.fromRGBO(89, 89, 92, 0.3)
-                          : const Color.fromRGBO(151, 201, 62, 1),
-                      foregroundColor: hasActiveStreams
-                          ? const Color.fromRGBO(89, 89, 92, 1)
-                          : const Color(0xFF000000),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-              ),
-              
-              const SizedBox(width: 10),
-              
-              Expanded(
-                child: SizedBox(
-                  height: 48,
-                  child: ElevatedButton.icon(
-                    onPressed: !hasActiveStreams
-                        ? null
-                        : () async {
-                            final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-                            await streamingManager.stopAll();
-                            _showMessage('🛑 Streaming fermato');
-                          },
-                    icon: const Icon(Icons.stop, size: 20),
-                    label: const Text(
-                      'STOP',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: !hasActiveStreams
-                          ? const Color.fromRGBO(89, 89, 92, 0.3)
-                          : const Color(0xFFFF4444),
-                      foregroundColor: !hasActiveStreams
-                          ? const Color.fromRGBO(89, 89, 92, 1)
-                          : Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
+    ),
+  );
+}
+
 
   @override
   void dispose() {

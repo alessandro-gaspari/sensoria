@@ -631,31 +631,22 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               else
                 Column(
                   children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton.icon(
-                        onPressed: isStreaming ? _stopStreaming : _startStreaming,
-                        icon: Icon(isStreaming ? Icons.stop : Icons.play_arrow),
-                        label: Text(isStreaming ? 'STOP STREAM' : 'START STREAM'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isStreaming
-                              ? const Color(0xFFFF4444)
-                              : const Color.fromRGBO(151, 201, 62, 1),
-                        ),
-                      ),
-                    ),
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
                       height: 48,
                       child: OutlinedButton.icon(
                         onPressed: _disconnectFromDevice,
-                        icon: const Icon(Icons.power_settings_new),
-                        label: const Text('DISCONNETTI'),
+                        icon: const Icon(Icons.power_settings_new, color: Color(0xFFFF4444),),
+                        label: const Text('DISCONNETTI',
+                          style: TextStyle(
+                            color: Color(0xFFFF4444)
+                          )
+
+                        ),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(
-                            color: Color.fromRGBO(151, 201, 62, 1),
+                            color: Color(0xFFFF4444),
                           ),
                         ),
                       ),
