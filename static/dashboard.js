@@ -8,14 +8,14 @@ var socket = io({
     upgrade: false,
 });
 
-// ⭐ Scale factor Sensoria
-var S_ACC = 4096;      // LSB/g
-var S_GYRO = 65.54;    // LSB/°/s
-var S_MAG = 0.3;       // µT/LSB
+// Scale factor Sensoria
+var S_ACC = 4096;
+var S_GYRO = 65.54;
+var S_MAG = 0.3;
 
-// ⭐ NUOVO: Parametri per inclinazione
-var ALPHA = 0.98;      // Complementary filter weight (0.98 = 98% giroscopio, 2% accelerometro)
-var DELTA_T = 0.01;    // 10ms (100Hz)
+// Parametri per inclinazione
+var ALPHA = 0.98;
+var DELTA_T = 0.01;
 
 // Stato applicazione
 var sensors = {};
@@ -26,11 +26,14 @@ var currentFps = 0;
 var lastDataTime = Date.now();
 var heartbeatTimer;
 
-// ⭐ NUOVO: State per inclinazione
-var sensorStates = {};  // Traccia angoli calcolati e offset di calibrazione
-var calibrationOffsets = {};  // Offset per calibrazione iniziale
+// State per inclinazione
+var sensorStates = {};
+var calibrationOffsets = {
+    sup: 0,    // Offset per sensore superiore
+    inf: 0,    // Offset per sensore inferiore
+    knee: 0    // Offset totale ginocchio
+};
 
-// Inizializzazione
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
@@ -42,7 +45,7 @@ function resetHeartbeat() {
     clearTimeout(heartbeatTimer);
     
     heartbeatTimer = setTimeout(function() {
-        console.warn('Heartbeat fallito - possibile disconnessione sensore');
+        console.warn('Heartbeat fallito');
     }, 2000);
 }
 
@@ -56,7 +59,6 @@ function startFpsCounter() {
     }, 1000);
 }
 
-// ⭐ Funzioni di conversione
 function convertAccelerometerRaw(raw) {
     return raw / S_ACC;
 }
@@ -69,8 +71,7 @@ function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ NUOVO: Calcola pitch dall'accelerometro
-// pitch = atan2(ax, sqrt(ay² + az²)) * (180/π)
+// ⭐ Calcola pitch dall'accelerometro
 function calculatePitchFromAccel(ax, ay, az) {
     var sqrtYZ = Math.sqrt(ay * ay + az * az);
     var pitchRad = Math.atan2(ax, sqrtYZ);
@@ -78,38 +79,35 @@ function calculatePitchFromAccel(ax, ay, az) {
     return pitchDeg;
 }
 
-// ⭐ NUOVO: Complementary filter per inclinazione robusta
-// θ(t) = α * (θ(t-Δt) + ωx(t)*Δt) + (1-α) * θ_acc(t)
-function updatePitchWithComplementaryFilter(sensorName, ax, ay, az, gyroX) {
+// ⭐ CORRETTO: Complementary filter per inclinazione
+function updatePitchWithComplementaryFilter(sensorId, ax, ay, az, gyroX) {
     // Inizializza state se non esiste
-    if (!sensorStates[sensorName]) {
-        sensorStates[sensorName] = {
+    if (!sensorStates[sensorId]) {
+        sensorStates[sensorId] = {
             pitch: calculatePitchFromAccel(ax, ay, az),
             lastTime: Date.now()
         };
-        return sensorStates[sensorName].pitch;
+        console.log('[' + sensorId + '] Initialized pitch: ' + sensorStates[sensorId].pitch.toFixed(1));
+        return sensorStates[sensorId].pitch;
     }
     
-    var state = sensorStates[sensorName];
+    var state = sensorStates[sensorId];
     
-    // Calcola pitch da accelerometro
     var pitchAcc = calculatePitchFromAccel(ax, ay, az);
     
-    // Calcola Δt reale
     var now = Date.now();
     var deltaT = (now - state.lastTime) / 1000;
     state.lastTime = now;
     
-    // Applica complementary filter
+    // Complementary filter
     var pitchFiltered = ALPHA * (state.pitch + gyroX * deltaT) + (1 - ALPHA) * pitchAcc;
     
-    // Salva per prossima iterazione
     state.pitch = pitchFiltered;
     
     return pitchFiltered;
 }
 
-// ⭐ NUOVO: Calcola angolo ginocchio da due sensori
+// ⭐ CORRETTO: Calcola angolo ginocchio da due sensori
 function calculateKneeAngle(supData, infData) {
     if (!supData || !infData) return null;
     
@@ -133,23 +131,50 @@ function calculateKneeAngle(supData, infData) {
     return kneeAngle;
 }
 
-// ⭐ NUOVO: Calibrazione (settare quando ginocchio è dritto)
-function calibrateKneeAngle(supData, infData) {
-    var angle = calculateKneeAngle(supData, infData);
-    calibrationOffsets.knee = angle || 0;
-    console.log('Calibrazione ginocchio: offset = ' + calibrationOffsets.knee.toFixed(2) + '°');
+// ⭐ CORRETTO: Calibrazione - salva gli offset attuali
+function calibrateKnee() {
+    var supData = null;
+    var infData = null;
+    
+    for (var name in sensors) {
+        var n = name.toLowerCase();
+        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
+            supData = sensors[name];
+        }
+        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
+            infData = sensors[name];
+        }
+    }
+    
+    if (!supData || !infData) {
+        alert('Impossibile calibrare: attendi i dati da entrambi i sensori');
+        return;
+    }
+    
+    // Calcola pitch corrente per entrambi
+    var pitchSup = calculatePitchFromAccel(supData.accel_x, supData.accel_y, supData.accel_z);
+    var pitchInf = calculatePitchFromAccel(infData.accel_x, infData.accel_y, infData.accel_z);
+    var currentAngle = pitchSup - pitchInf;
+    
+    // Salva come offset
+    calibrationOffsets.knee = currentAngle;
+    
+    console.log('✅ Calibrazione ginocchio: offset = ' + calibrationOffsets.knee.toFixed(1) + '°');
+    
+    // Aggiorna display immediato
+    updateKneeAngleDisplay();
 }
 
-// ⭐ NUOVO: Ottieni angolo ginocchio calibrato
+// ⭐ CORRETTO: Ottieni angolo ginocchio calibrato
 function getCalibratedKneeAngle(supData, infData) {
     var angle = calculateKneeAngle(supData, infData);
     if (angle === null) return null;
     
-    var calibratedAngle = angle - (calibrationOffsets.knee || 0);
-    return calibratedAngle;
+    // Sottrai offset e arrotonda a intero
+    var calibratedAngle = angle - calibrationOffsets.knee;
+    return Math.round(calibratedAngle);  // ⭐ ARROTONDA A INTERO
 }
 
-// Inizializza listener WebSocket
 function initializeSocketListeners() {
     socket.on('connect', function() {
         console.log('Connesso al server');
@@ -181,7 +206,6 @@ function initializeSocketListeners() {
         var sensorName = data.sensor_name;
         var sensorData = data.data;
         
-        // Converti i dati raw
         var convertedData = {
             timestamp: sensorData.timestamp,
             accel_x: convertAccelerometerRaw(sensorData.accel_x),
@@ -198,7 +222,7 @@ function initializeSocketListeners() {
         sensors[sensorName] = convertedData;
         updateSensorDirectly(sensorName, convertedData);
         
-        // ⭐ NUOVO: Calcola angolo ginocchio
+        // Aggiorna angolo ginocchio
         updateKneeAngleDisplay();
     });
 
@@ -215,17 +239,17 @@ function initializeSocketListeners() {
         console.log('Dati puliti');
         sensors = {};
         sensorStates = {};
+        calibrationOffsets = { sup: 0, inf: 0, knee: 0 };  // ⭐ Resetta offset
         renderSensors();
         resetHeartbeat();
     });
 }
 
-// ⭐ NUOVO: Aggiorna display angolo ginocchio
+// ⭐ CORRETTO: Aggiorna display angolo ginocchio
 function updateKneeAngleDisplay() {
     var supData = null;
     var infData = null;
     
-    // Cerca sensori ginocchio superiore e inferiore
     for (var name in sensors) {
         var n = name.toLowerCase();
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
@@ -246,39 +270,16 @@ function updateKneeAngleDisplay() {
     
     var kneeAngle = getCalibratedKneeAngle(supData, infData);
     
+    // ⭐ ARROTONDATO A INTERO, DISPLAY PIU' GRANDE
     kneeAngleEl.innerHTML =
         '<div style="background: linear-gradient(135deg, #97c93e 0%, #6fa52d 100%); border-radius: 12px; padding: 20px; text-align: center; color: #000;">' +
             '<div style="font-size: 14px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
-            '<div style="font-size: 48px; font-weight: 700; margin: 8px 0;">' + kneeAngle.toFixed(1) + '°</div>' +
+            '<div style="font-size: 64px; font-weight: 700; margin: 12px 0;">' + kneeAngle + '°</div>' +
             '<div style="font-size: 12px; opacity: 0.8;">Inclinazione relativa</div>' +
-            '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.2); border: none; border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer;">Calibra (ginocchio dritto)</button>' +
+            '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 10px 20px; background: rgba(0,0,0,0.3); border: none; border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 13px;">📍 Calibra (ginocchio dritto)</button>' +
         '</div>';
 }
 
-// ⭐ NUOVO: Funzione per calibrare
-function calibrateKnee() {
-    var supData = null;
-    var infData = null;
-    
-    for (var name in sensors) {
-        var n = name.toLowerCase();
-        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            supData = sensors[name];
-        }
-        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            infData = sensors[name];
-        }
-    }
-    
-    if (supData && infData) {
-        calibrateKneeAngle(supData, infData);
-        updateKneeAngleDisplay();
-    } else {
-        alert('Impossibile calibrare: attendi i dati da entrambi i sensori');
-    }
-}
-
-// Ultra-ottimizzato: aggiorna sensore al massimo di velocità
 function updateSensorDirectly(sensorName, data) {
     var sensorCard = document.querySelector('[data-sensor="' + sensorName + '"]');
     
@@ -501,6 +502,7 @@ function clearAllData() {
         .then(function() {
             sensors = {};
             sensorStates = {};
+            calibrationOffsets = { sup: 0, inf: 0, knee: 0 };
             renderSensors();
             console.log('Dati puliti');
         })
