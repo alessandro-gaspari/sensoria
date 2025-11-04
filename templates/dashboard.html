@@ -4,40 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sensoria Dashboard</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/dashboard.css">
 </head>
-<body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
-                <h1>🏃 Sensoria Dashboard</h1>
-                <div class="header-info">
-                    <span class="status-indicator" id="connection-status">
-                        <span class="dot"></span>
-                        Connessione
-                    </span>
-                    <span class="sensor-count" id="sensor-count">0 Sensori</span>
-                    <button class="btn btn-secondary" onclick="clearAllData()">Pulisci Dati</button>
-                </div>
+<body style="background-color: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
+    
+    <!-- Header -->
+    <div class="dashboard-header">
+        <h1 class="dashboard-title">📊 Sensoria Dashboard</h1>
+        <!-- ⭐ NUOVO: Wrapper per info -->
+        <div class="dashboard-info">
+            <div id="connection-status">
+                <span class="dot"></span> Connesso
             </div>
-        </header>
-
-        <!-- Sensori Grid -->
-        <div class="sensors-grid" id="sensors-grid">
-            <!-- Aggiunta delle 6 colonne tramite js -->
-        </div>
-
-        <!-- Messaggio "Nessun sensore" -->
-        <div class="empty-state" id="empty-state">
-            <div class="empty-icon">📡</div>
-            <h2>Nessun sensore connesso</h2>
-            <p>Avvia lo streaming dall'app Flutter per visualizzare i dati in tempo reale</p>
+            <div id="sensor-count">0 Sensori</div>
+            <div id="fps-counter">0 Hz</div>
         </div>
     </div>
-
-    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+    
+    <!-- Container -->
+    <div class="dashboard-container">
+        
+        <!-- Empty state -->
+        <div id="empty-state" class="visible">
+            <h2>🔍 Nessun sensore connesso</h2>
+            <p>Avvia l'app per iniziare lo streaming dei dati</p>
+        </div>
+        
+        <!-- Griglia sensori -->
+        <div id="sensors-grid"></div>
+        
+        <!-- Pulsante pulizia -->
+        <div style="margin-top: 40px; text-align: center;">
+            <button onclick="clearAllData()" style="
+                background-color: #ff4444;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            ">
+                🗑️ Pulisci Dati
+            </button>
+        </div>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="/static/dashboard.js"></script>
 </body>
 </html>
