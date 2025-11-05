@@ -31,21 +31,42 @@ def receive_data():
     try:
         data = request.json
         sensor_name = data.get('sensor_name', 'Unknown')
+
         sensor_reading = {
             'timestamp': datetime.now().isoformat(),
-            'accel_x': data.get('accel_x'),
-            'accel_y': data.get('accel_y'),
-            'accel_z': data.get('accel_z'),
-            'gyro_x': data.get('gyro_x'),
-            'gyro_y': data.get('gyro_y'),
-            'gyro_z': data.get('gyro_z'),
-            'mag_x': data.get('mag_x'),
-            'mag_y': data.get('mag_y'),
-            'mag_z': data.get('mag_z'),
+            'accel_x_ms2': data.get('accel_x_ms2'),
+            'accel_y_ms2': data.get('accel_y_ms2'),
+            'accel_z_ms2': data.get('accel_z_ms2'),
+            'gyro_x_dps': data.get('gyro_x_dps'),
+            'gyro_y_dps': data.get('gyro_y_dps'),
+            'gyro_z_dps': data.get('gyro_z_dps'),
+            'mag_x_uT': data.get('mag_x_uT'),
+            'mag_y_uT': data.get('mag_y_uT'),
+            'mag_z_uT': data.get('mag_z_uT'),
         }
+
+        # Fallback compatibilità
+        if sensor_reading['accel_x_ms2'] is None and data.get('accel_x') is not None:
+            sensor_reading['accel_x_ms2'] = data.get('accel_x')
+            sensor_reading['accel_y_ms2'] = data.get('accel_y')
+            sensor_reading['accel_z_ms2'] = data.get('accel_z')
+        if sensor_reading['gyro_x_dps'] is None and data.get('gyro_x') is not None:
+            sensor_reading['gyro_x_dps'] = data.get('gyro_x')
+            sensor_reading['gyro_y_dps'] = data.get('gyro_y')
+            sensor_reading['gyro_z_dps'] = data.get('gyro_z')
+        if sensor_reading['mag_x_uT'] is None and data.get('mag_x') is not None:
+            sensor_reading['mag_x_uT'] = data.get('mag_x')
+            sensor_reading['mag_y_uT'] = data.get('mag_y')
+            sensor_reading['mag_z_uT'] = data.get('mag_z')
+
         sensors_data[sensor_name] = sensor_reading
         sensors_status[sensor_name] = 'connected'
-        socketio.emit('sensor_update', {'sensor_name': sensor_name, 'data': sensor_reading})
+
+        socketio.emit('sensor_update', {
+            'sensor_name': sensor_name,
+            'data': sensor_reading
+        })
+
         return jsonify({'status': 'success'}), 200
     except Exception as e:
         print(f'❌ Error: {e}')

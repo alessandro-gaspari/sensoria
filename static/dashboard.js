@@ -9,8 +9,6 @@ var currentFps = 0;
 var kneeAngle = 0;
 var calibrated = false;
 
-const MAG_SCALE = 1; // rimosso doppio 0.3
-
 document.addEventListener('DOMContentLoaded', function() {
   initializeSocketListeners();
   fetchInitialData();
@@ -29,12 +27,8 @@ function startFpsCounter() {
 }
 
 function initializeSocketListeners() {
-  socket.on('connect', function() {
-    isConnected = true; updateConnectionStatus(true);
-  });
-  socket.on('disconnect', function() {
-    isConnected = false; updateConnectionStatus(false);
-  });
+  socket.on('connect', function() { isConnected = true; updateConnectionStatus(true); });
+  socket.on('disconnect', function() { isConnected = false; updateConnectionStatus(false); });
 
   socket.on('connection_response', function(data) {
     sensors = data.sensors || {};
@@ -52,11 +46,15 @@ function initializeSocketListeners() {
     const d = payload.data || {};
     const conv = {
       timestamp: d.timestamp,
-      mag_x: d.mag_x != null ? d.mag_x * MAG_SCALE : undefined,
-      mag_y: d.mag_y != null ? d.mag_y * MAG_SCALE : undefined,
-      mag_z: d.mag_z != null ? d.mag_z * MAG_SCALE : undefined,
-      accel_x: d.accel_x, accel_y: d.accel_y, accel_z: d.accel_z,
-      gyro_x: d.gyro_x, gyro_y: d.gyro_y, gyro_z: d.gyro_z,
+      ax: d.accel_x_ms2 ?? d.accel_x,
+      ay: d.accel_y_ms2 ?? d.accel_y,
+      az: d.accel_z_ms2 ?? d.accel_z,
+      gx: d.gyro_x_dps ?? d.gyro_x,
+      gy: d.gyro_y_dps ?? d.gyro_y,
+      gz: d.gyro_z_dps ?? d.gyro_z,
+      mx: d.mag_x_uT   ?? d.mag_x,
+      my: d.mag_y_uT   ?? d.mag_y,
+      mz: d.mag_z_uT   ?? d.mag_z,
     };
     sensors[name] = conv;
     updateSensorDirectly(name, conv);
@@ -118,22 +116,25 @@ function renderSensors() {
     card.className = 'sensor-col connected';
     card.setAttribute('data-sensor', name);
 
-    var mx = (data.mag_x !== undefined) ? (data.mag_x).toFixed(3) : '---';
-    var my = (data.mag_y !== undefined) ? (data.mag_y).toFixed(3) : '---';
-    var mz = (data.mag_z !== undefined) ? (data.mag_z).toFixed(3) : '---';
-
     card.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
         '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
       '</div>' +
-      '<div style="background:#1a1a2a;padding:8px;border-radius:4px;margin:8px 0;border:2px solid #88a;">' +
-        '<div style="font-size:12px;color:#88a;margin-bottom:8px;font-weight:600;">🧲 MAGNETOMETRO</div>' +
-        '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">' + mx + '</span></div>' +
-        '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">' + my + '</span></div>' +
-        '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">' + mz + '</span></div>' +
+      '<div class="sensor-grid" style="background:#1a1a2a;padding:8px;border-radius:4px;margin:8px 0;border:2px solid #88a;">' +
+        '<div class="sensor-row" data-k="ax"><b>AX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
+        '<div class="sensor-row" data-k="ay"><b>AY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
+        '<div class="sensor-row" data-k="az"><b>AZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
+        '<div class="sensor-row" data-k="gx"><b>GX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
+        '<div class="sensor-row" data-k="gy"><b>GY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
+        '<div class="sensor-row" data-k="gz"><b>GZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
+        '<div class="sensor-row" data-k="mx"><b>MX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
+        '<div class="sensor-row" data-k="my"><b>MY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
+        '<div class="sensor-row" data-k="mz"><b>MZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
       '</div>' +
       '<div style="margin-top:12px;font-size:11px;color:#666;text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+
     grid.appendChild(card);
+    updateSensorDirectly(name, data);
   });
 
   for (var i = toShow.length; i < 6; i++) {
@@ -150,12 +151,26 @@ function updateSensorDirectly(sensorName, data) {
   var sensorCard = document.querySelector('[data-sensor="' + sensorName + '"]');
   if (!sensorCard) return;
 
-  var valueElements = sensorCard.querySelectorAll('.sensor-value');
-  var fields = ['mag_x','mag_y','mag_z'];
-  for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
-    var v = data[fields[i]];
-    if (v !== undefined) valueElements[i].textContent = v.toFixed(3);
-  }
+  const rows = [
+    { key: 'ax', unit: 'm/s²' },
+    { key: 'ay', unit: 'm/s²' },
+    { key: 'az', unit: 'm/s²' },
+    { key: 'gx', unit: '°/s' },
+    { key: 'gy', unit: '°/s' },
+    { key: 'gz', unit: '°/s' },
+    { key: 'mx', unit: 'µT' },
+    { key: 'my', unit: 'µT' },
+    { key: 'mz', unit: 'µT' },
+  ];
+
+  rows.forEach(r => {
+    const row = sensorCard.querySelector('.sensor-row[data-k="'+r.key+'"] .sensor-value');
+    if (!row) return;
+    const v = data[r.key];
+    if (v !== undefined && v !== null && !Number.isNaN(v)) {
+      row.textContent = Number(v).toFixed(2);
+    }
+  });
 
   var timestampEl = sensorCard.querySelector('.sensor-timestamp');
   if (timestampEl && data.timestamp) {

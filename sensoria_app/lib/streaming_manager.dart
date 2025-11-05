@@ -5,44 +5,39 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 
+// Fattori di conversione (aggiorna con i tuoi valori reali)
+const double ACC_LSB_PER_G = 16384.0; // ±2g
+const double G = 9.80665;
+const double GYRO_LSB_PER_DPS = 131.0; // ±250 dps
+const double MAG_UT_PER_LSB = 0.30;    // esempio, verifica
+
 class StreamingManager extends ChangeNotifier {
-  // Endpoints server (opzionali)
   static const String serverUrl = 'https://sensoria-dashboard.onrender.com/api/data';
   static const String serverAngleUrl = 'https://sensoria-dashboard.onrender.com/api/knee_angle';
 
-  // Target frequenza locale
   static const int targetHz = 100;
   static const int intervalMs = 1000 ~/ targetHz;
 
-  // Stato connessioni/stream
   final Map<String, BluetoothDevice> _connected = {};
   final Map<String, String> _deviceNames = {}; // id -> nome
   final Map<String, StreamSubscription<List<int>>> _activeStreams = {};
   final Map<String, BluetoothCharacteristic> _rxChars = {};
   final Map<String, DateTime> _lastSampleTime = {};
 
-  // Identificazione sup/inf
   String? supId;
   String? infId;
 
-  // Orientazioni fuse (pitch in gradi)
   final Map<String, double> _pitchDeg = {};
   final Map<String, double> _rollDeg = {};
 
-  // Parametri filtro complementare (aggiorna se conosci scale reali)
-  static const double alpha = 0.02;        // peso accelerometro
-  static const double gyroDegPerLSB = 1.0; // fattore di scala giroscopio
-  static const double accelGPerLSB = 1.0;  // fattore di scala accelerometro
+  static const double alpha = 0.02;
 
-  // Calibrazione
   double _calibrationOffsetDeg = 0.0;
   bool _isCalibrated = false;
 
-  // Stream angolo ginocchio (gradi interi)
   final _kneeAngleCtrl = StreamController<int>.broadcast();
   Stream<int> get kneeAngleStream => _kneeAngleCtrl.stream;
 
-  // Streaming status per UI
   final _streamingStatusCtrl = StreamController<Map<String, bool>>.broadcast();
   Stream<Map<String, bool>> get streamingStatusStream => _streamingStatusCtrl.stream;
 
@@ -50,18 +45,18 @@ class StreamingManager extends ChangeNotifier {
       Map.fromEntries(_activeStreams.keys.map((id) => MapEntry(id, true)));
 
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
+  bool isDevicestreaming(String deviceId) => isStreamingDevice(deviceId); // alias
   bool isConnected(String deviceId) => _connected.containsKey(deviceId);
   List<BluetoothDevice> getConnectedDevices() => _connected.values.toList();
   String getName(String deviceId) => _deviceNames[deviceId] ?? 'Unknown';
 
-  // Connessione
   Future<void> connectToDevice(BluetoothDevice device, {String? friendlyName}) async {
     final id = device.remoteId.toString();
     if (_connected.containsKey(id)) return;
     await device.connect(autoConnect: false);
     _connected[id] = device;
 
-    final sysName = device.name; // String sincrona
+    final sysName = device.name; // String
     _deviceNames[id] = friendlyName ?? (sysName.isNotEmpty ? sysName : 'Unknown');
 
     notifyListeners();
@@ -88,7 +83,6 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Avvio streaming
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
     await startAllStreaming({device.remoteId.toString(): device}, {device.remoteId.toString(): deviceName});
   }
@@ -135,8 +129,8 @@ class StreamingManager extends ChangeNotifier {
 
       final sub = rx.lastValueStream.listen(
         (bytes) => _onPacket(id, name, bytes),
-        onError: (_) => _cleanup(id),
-        onDone: () => _cleanup(id),
+        onError: (_) { _cleanup(id); _notifyStreamingStatus(); },
+        onDone: () { _cleanup(id); _notifyStreamingStatus(); },
       );
       _activeStreams[id] = sub;
       _notifyStreamingStatus();
@@ -146,7 +140,6 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Ticker per calcolo e invio angolo
   void _startTicker() {
     _ticker?.cancel();
     _ticker = Timer.periodic(const Duration(milliseconds: intervalMs), (_) {
@@ -159,7 +152,7 @@ class StreamingManager extends ChangeNotifier {
       final intDeg = rel.round();
 
       if (!_kneeAngleCtrl.isClosed) _kneeAngleCtrl.add(intDeg);
-      _sendKneeAngle(intDeg); // opzionale, non blocca
+      _sendKneeAngle(intDeg);
     });
   }
 
@@ -202,7 +195,6 @@ class StreamingManager extends ChangeNotifier {
     super.dispose();
   }
 
-  // Packet parsing + fusione
   void _onPacket(String id, String name, List<int> data) {
     if (data.length < 20) return;
 
@@ -217,13 +209,25 @@ class StreamingManager extends ChangeNotifier {
     final gxRaw = i16(8);
     final gyRaw = i16(10);
     final gzRaw = i16(12);
+    final mxRaw = i16(14);
+    final myRaw = i16(16);
+    final mzRaw = i16(18);
 
-    final ax = axRaw * accelGPerLSB;
-    final ay = ayRaw * accelGPerLSB;
-    final az = azRaw * accelGPerLSB;
+    final ax_g = axRaw / ACC_LSB_PER_G;
+    final ay_g = ayRaw / ACC_LSB_PER_G;
+    final az_g = azRaw / ACC_LSB_PER_G;
 
-    final gxDeg = gxRaw * gyroDegPerLSB;
-    final gyDeg = gyRaw * gyroDegPerLSB;
+    final ax_ms2 = ax_g * G;
+    final ay_ms2 = ay_g * G;
+    final az_ms2 = az_g * G;
+
+    final gx_dps = gxRaw / GYRO_LSB_PER_DPS;
+    final gy_dps = gyRaw / GYRO_LSB_PER_DPS;
+    final gz_dps = gzRaw / GYRO_LSB_PER_DPS;
+
+    final mx_uT = mxRaw * MAG_UT_PER_LSB;
+    final my_uT = myRaw * MAG_UT_PER_LSB;
+    final mz_uT = mzRaw * MAG_UT_PER_LSB;
 
     final now = DateTime.now();
     final dt = _lastSampleTime[id] != null
@@ -231,12 +235,17 @@ class StreamingManager extends ChangeNotifier {
         : (1.0 / targetHz);
     _lastSampleTime[id] = now;
 
-    final accelPitch = math.atan2(-ax, math.sqrt(ay * ay + az * az)) * 180.0 / math.pi;
-    final gyroPitch = (_pitchDeg[id] ?? 0.0) + gyDeg * dt;
+    final accelPitch = math.atan2(-ax_ms2, math.sqrt(ay_ms2 * ay_ms2 + az_ms2 * az_ms2)) * 180.0 / math.pi;
+    final gyroPitch = (_pitchDeg[id] ?? 0.0) + gy_dps * dt;
     final fused = (1 - alpha) * gyroPitch + alpha * accelPitch;
     _pitchDeg[id] = fused;
 
-    _sendRaw(id, name, axRaw, ayRaw, azRaw, gxRaw, gyRaw, gzRaw); // opzionale
+    _sendRaw(
+      id, name,
+      ax_ms2, ay_ms2, az_ms2,
+      gx_dps, gy_dps, gz_dps,
+      mx_uT, my_uT, mz_uT,
+    );
   }
 
   bool _isSup(String n) => RegExp(r'(sup|sopra|upper|quadricipite|thigh)').hasMatch(n);
@@ -259,11 +268,11 @@ class StreamingManager extends ChangeNotifier {
     }
   }
 
-  // Invio opzionale (non blocca)
   Future<void> _sendRaw(
     String id, String name,
-    int ax, int ay, int az,
-    int gx, int gy, int gz,
+    double ax_ms2, double ay_ms2, double az_ms2,
+    double gx_dps, double gy_dps, double gz_dps,
+    double mx_uT, double my_uT, double mz_uT,
   ) async {
     try {
       unawaited(http.post(
@@ -271,8 +280,9 @@ class StreamingManager extends ChangeNotifier {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'sensor_name': name,
-          'accel_x': ax, 'accel_y': ay, 'accel_z': az,
-          'gyro_x': gx, 'gyro_y': gy, 'gyro_z': gz,
+          'accel_x_ms2': ax_ms2, 'accel_y_ms2': ay_ms2, 'accel_z_ms2': az_ms2,
+          'gyro_x_dps': gx_dps,  'gyro_y_dps': gy_dps,  'gyro_z_dps': gz_dps,
+          'mag_x_uT': mx_uT,     'mag_y_uT': my_uT,     'mag_z_uT': mz_uT,
         }),
       ));
     } catch (_) {}
