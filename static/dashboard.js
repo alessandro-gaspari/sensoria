@@ -11,16 +11,10 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-// ⭐ SMOOTHING BUFFERS - 20 campioni
+// ⭐ SMOOTHING BUFFERS - Solo Gyro
 var smoothBufferSupGX = [];
-var smoothBufferSupMX = [];
-var smoothBufferSupMY = [];
-var smoothBufferSupMZ = [];
 var smoothBufferInfGX = [];
-var smoothBufferInfMX = [];
-var smoothBufferInfMY = [];
-var smoothBufferInfMZ = [];
-var SMOOTH_WINDOW = 20;
+var SMOOTH_WINDOW = 10;
 
 var sensors = {};
 var isConnected = false;
@@ -84,20 +78,6 @@ function smoothValue(buffer, value) {
     return sum / buffer.length;
 }
 
-// ⭐ CALCOLA TILT DA MAGNETOMETRO (per correggere drift)
-function calculateTiltFromMag(mz, mx, my) {
-    var mag_total = Math.sqrt(mx*mx + my*my + mz*mz);
-    if (mag_total === 0) return 0;
-    var tilt = Math.acos(mz / mag_total) * (180 / Math.PI);
-    return tilt;
-}
-
-// ⭐ COMPLEMENTARY FILTER: 95% Gyro + 5% Magnetometro
-function complementaryFilter(gyroSmooth, magTilt, currentAngle) {
-    var filteredAngle = (0.95 * currentAngle) + (0.05 * magTilt);
-    return filteredAngle;
-}
-
 function initializeSocketListeners() {
     socket.on('connect', function() {
         console.log('✅ Connesso');
@@ -130,8 +110,8 @@ function initializeSocketListeners() {
         var now = Date.now();
         var deltaTime = (now - lastUpdateTime) / 1000;
         lastUpdateTime = now;
-        
-        // ⭐ CONVERTE RAW → UNITÀ FISICHE
+
+        // Converte raw
         var convertedData = {
             timestamp: sensorData.timestamp,
             accel_x: convertAccelerometerRaw(sensorData.accel_x),
@@ -149,43 +129,32 @@ function initializeSocketListeners() {
         
         var n = sensorName.toLowerCase();
         
-        // ⭐ SUP - GYRO SMOOTH + MAG per drift correction
+        // ⭐ SUP - SOLO GYRO INTEGRATO
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1) {
             var gx_smooth = smoothValue(smoothBufferSupGX, convertedData.gyro_x);
-            var mx_smooth = smoothValue(smoothBufferSupMX, convertedData.mag_x);
-            var my_smooth = smoothValue(smoothBufferSupMY, convertedData.mag_y);
-            var mz_smooth = smoothValue(smoothBufferSupMZ, convertedData.mag_z);
             
-            // Integra giroscopio
-            var gyroAngle = angleSup + (gx_smooth * deltaTime);
+            // Integra nel tempo
+            angleSup = angleSup + (gx_smooth * deltaTime);
             
-            // Calcola tilt da magnetometro
-            var magTilt = calculateTiltFromMag(mz_smooth, mx_smooth, my_smooth);
-            
-            // Complementary filter: 95% gyro + 5% mag
-            angleSup = complementaryFilter(gx_smooth, magTilt, gyroAngle);
-            
-            console.log('[SUP] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + gx_smooth.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' | MagTilt:' + magTilt.toFixed(1) + '° → ANGLE:' + angleSup.toFixed(1) + '°');
+            console.log('[SUP] GX:' + gx_smooth.toFixed(1) + '°/s (ΔT:' + deltaTime.toFixed(3) + 's) → ANGLE:' + angleSup.toFixed(1) + '°');
         }
         
-        // ⭐ INF - GYRO SMOOTH + MAG per drift correction
+        // ⭐ INF - SOLO GYRO INTEGRATO
+        // ⚠️ Se il sensore è capovolto, inverti il segno!
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1) {
             var gx_smooth = smoothValue(smoothBufferInfGX, convertedData.gyro_x);
-            var mx_smooth = smoothValue(smoothBufferInfMX, convertedData.mag_x);
-            var my_smooth = smoothValue(smoothBufferInfMY, convertedData.mag_y);
-            var mz_smooth = smoothValue(smoothBufferInfMZ, convertedData.mag_z);
             
-            // Integra giroscopio
-            var gyroAngle = angleInf + (gx_smooth * deltaTime);
+            // Inverti il segno se montato capovolto
+            angleInf = angleInf + (gx_smooth * deltaTime);
             
-            // Calcola tilt da magnetometro
-            var magTilt = calculateTiltFromMag(mz_smooth, mx_smooth, my_smooth);
-            
-            // Complementary filter: 95% gyro + 5% mag
-            angleInf = complementaryFilter(gx_smooth, magTilt, gyroAngle);
-            
-            console.log('[INF] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + gx_smooth.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' | MagTilt:' + magTilt.toFixed(1) + '° → ANGLE:' + angleInf.toFixed(1) + '°');
+            console.log('[INF] GX:' + gx_smooth.toFixed(1) + '°/s (ΔT:' + deltaTime.toFixed(3) + 's) → ANGLE:' + angleInf.toFixed(1) + '°');
         }
+        
+        // Calcola differenza
+        var currentDifference = angleSup - angleInf;
+        var relativeAngle = currentDifference - calibrationOffset;
+        
+        console.log('[KNEE] SUP:' + angleSup.toFixed(1) + '° - INF:' + angleInf.toFixed(1) + '° - Offset:' + calibrationOffset.toFixed(1) + '° = ' + relativeAngle.toFixed(1) + '°');
         
         updateSensorDirectly(sensorName, convertedData);
         updateKneeAngleDisplay();
@@ -198,13 +167,7 @@ function initializeSocketListeners() {
         calibrationOffset = 0;
         isCalibrated = false;
         smoothBufferSupGX = [];
-        smoothBufferSupMX = [];
-        smoothBufferSupMY = [];
-        smoothBufferSupMZ = [];
         smoothBufferInfGX = [];
-        smoothBufferInfMX = [];
-        smoothBufferInfMY = [];
-        smoothBufferInfMZ = [];
         renderSensors();
         resetHeartbeat();
     });
@@ -304,7 +267,7 @@ function createSensorCardFast(sensorName, data) {
             '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + ax + '</span> <b>Y:</b> <span class="sensor-value">' + ay + '</span> <b>Z:</b> <span class="sensor-value">' + az + '</span></div>' +
         '</div>' +
         '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #4f4;">' +
-            '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s)</div>' +
+            '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s) ⭐ USATO</div>' +
             '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + gx + '</span> <b>Y:</b> <span class="sensor-value">' + gy + '</span> <b>Z:</b> <span class="sensor-value">' + gz + '</span></div>' +
         '</div>' +
         '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #88a;">' +
@@ -390,7 +353,7 @@ function renderSensors() {
                 '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + ax + '</span> <b>Y:</b> <span class="sensor-value">' + ay + '</span> <b>Z:</b> <span class="sensor-value">' + az + '</span></div>' +
             '</div>' +
             '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #4f4;">' +
-                '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s)</div>' +
+                '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s) ⭐ USATO</div>' +
                 '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + gx + '</span> <b>Y:</b> <span class="sensor-value">' + gy + '</span> <b>Z:</b> <span class="sensor-value">' + gz + '</span></div>' +
             '</div>' +
             '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #88a;">' +
@@ -429,13 +392,7 @@ function clearAllData() {
             calibrationOffset = 0;
             isCalibrated = false;
             smoothBufferSupGX = [];
-            smoothBufferSupMX = [];
-            smoothBufferSupMY = [];
-            smoothBufferSupMZ = [];
             smoothBufferInfGX = [];
-            smoothBufferInfMX = [];
-            smoothBufferInfMY = [];
-            smoothBufferInfMZ = [];
             renderSensors();
         });
 }
