@@ -7,13 +7,7 @@ var socket = io({
     upgrade: false,
 });
 
-var S_ACC = 4096;
-var S_GYRO = 65.54;
 var S_MAG = 0.3;
-
-// ⭐ COMPLEMENTARY FILTER FORMULA: 98% Gyro + 2% Accel
-var GYRO_WEIGHT = 0.98;
-var ACCEL_WEIGHT = 0.02;
 
 var sensors = {};
 var isConnected = false;
@@ -23,12 +17,11 @@ var currentFps = 0;
 var lastDataTime = Date.now();
 var heartbeatTimer;
 
-// ⭐ STATO SENSORI
+// ⭐ STATO SENSORI - SOLO MAGNETOMETRO
 var angleSup = 0;  
 var angleInf = 0;
 var calibrationOffset = 0;
 var isCalibrated = false;
-var lastUpdateTime = Date.now();
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -52,36 +45,34 @@ function startFpsCounter() {
     }, 1000);
 }
 
-function convertAccelerometerRaw(raw) {
-    return raw / S_ACC;
-}
-
-function convertGyroscopeRaw(raw) {
-    return raw / S_GYRO;
-}
-
 function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ STEP 1: Calcola angolo da ACCELEROMETRO
-function calculateAccelAngle(ax, az) {
-    var angle = Math.atan2(ax, az) * (180 / Math.PI);
+// ⭐ FORMULA MAGNETOMETRO: Calcola heading (direzione) da MX, MY
+// Heading = atan2(MY, MX) in gradi
+function calculateMagAngle(mx, my) {
+    var angle = Math.atan2(my, mx) * (180 / Math.PI);
+    // Normalizza tra 0-360
+    if (angle < 0) angle += 360;
     return angle;
 }
 
-// ⭐ STEP 2: COMPLEMENTARY FILTER (98% Gyro + 2% Accel)
-function complementaryFilter(gyroX, ax, az, currentAngle, deltaTime) {
-    // Step 1a: Angolo da accelerometro
-    var accelAngle = calculateAccelAngle(ax, az);
+// ⭐ CALCOLA INCLINAZIONE da MZ (componente verticale)
+// Quando il sensore è dritto: MZ è massimo
+// Quando è inclinato: MZ diminuisce
+function calculateTiltFromMagZ(mz, mx, my) {
+    var mx_norm = mx / S_MAG;
+    var my_norm = my / S_MAG;
+    var mz_norm = mz / S_MAG;
     
-    // Step 1b: Angolo da giroscopio (integrazione)
-    var gyroAngle = currentAngle + (gyroX * deltaTime);
+    // Magnitudine totale del campo magnetico
+    var mag_total = Math.sqrt(mx_norm*mx_norm + my_norm*my_norm + mz_norm*mz_norm);
     
-    // Step 2: Fonde 98% Gyro + 2% Accel
-    var filteredAngle = (GYRO_WEIGHT * gyroAngle) + (ACCEL_WEIGHT * accelAngle);
+    // Inclinazione = arccos(MZ / mag_total)
+    var tilt = Math.acos(mz_norm / mag_total) * (180 / Math.PI);
     
-    return filteredAngle;
+    return tilt;
 }
 
 function initializeSocketListeners() {
@@ -113,54 +104,46 @@ function initializeSocketListeners() {
         
         var sensorName = data.sensor_name;
         var sensorData = data.data;
-        var now = Date.now();
-        var deltaTime = (now - lastUpdateTime) / 1000;
-        lastUpdateTime = now;
         
-        // ⭐ CONVERTE RAW → UNITÀ FISICHE
+        // ⭐ CONVERTE RAW → UNITÀ FISICHE (solo magnetometro)
         var convertedData = {
             timestamp: sensorData.timestamp,
-            accel_x: convertAccelerometerRaw(sensorData.accel_x),
-            accel_y: convertAccelerometerRaw(sensorData.accel_y),
-            accel_z: convertAccelerometerRaw(sensorData.accel_z),
-            gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
-            gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
-            gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
             mag_x: convertMagnetometerRaw(sensorData.mag_x),
             mag_y: convertMagnetometerRaw(sensorData.mag_y),
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
+            accel_x: sensorData.accel_x,
+            accel_y: sensorData.accel_y,
+            accel_z: sensorData.accel_z,
+            gyro_x: sensorData.gyro_x,
+            gyro_y: sensorData.gyro_y,
+            gyro_z: sensorData.gyro_z,
         };
         
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
         
-        // ⭐ STEP 1 + 2 + 3: Complementary Filter PER SUP
+        // ⭐ FORMULA MAGNETOMETRO: Calcola angolo
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1) {
-            angleSup = complementaryFilter(
-                convertedData.gyro_x, 
-                convertedData.accel_x, 
-                convertedData.accel_z, 
-                angleSup, 
-                deltaTime
-            );
+            // Prova con MX, MY (heading)
+            var headingSup = calculateMagAngle(convertedData.mag_x, convertedData.mag_y);
             
-            var accelAngleSup = calculateAccelAngle(convertedData.accel_x, convertedData.accel_z);
-            console.log('[SUP] Accel:' + accelAngleSup.toFixed(1) + '° + Gyro:' + convertedData.gyro_x.toFixed(1) + '°/s → ANGLE:' + angleSup.toFixed(1) + '°');
+            // Prova con MZ (tilt/inclinazione)
+            var tiltSup = calculateTiltFromMagZ(convertedData.mag_z, convertedData.mag_x, convertedData.mag_y);
+            
+            // Usa tilt come angolo principale
+            angleSup = tiltSup;
+            
+            console.log('[SUP] MX:' + convertedData.mag_x.toFixed(2) + ' MY:' + convertedData.mag_y.toFixed(2) + ' MZ:' + convertedData.mag_z.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '° HEADING:' + headingSup.toFixed(1) + '°');
         }
         
-        // ⭐ STEP 1 + 2 + 3: Complementary Filter PER INF
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1) {
-            angleInf = complementaryFilter(
-                convertedData.gyro_x, 
-                convertedData.accel_x, 
-                convertedData.accel_z, 
-                angleInf, 
-                deltaTime
-            );
+            var headingInf = calculateMagAngle(convertedData.mag_x, convertedData.mag_y);
+            var tiltInf = calculateTiltFromMagZ(convertedData.mag_z, convertedData.mag_x, convertedData.mag_y);
             
-            var accelAngleInf = calculateAccelAngle(convertedData.accel_x, convertedData.accel_z);
-            console.log('[INF] Accel:' + accelAngleInf.toFixed(1) + '° + Gyro:' + convertedData.gyro_x.toFixed(1) + '°/s → ANGLE:' + angleInf.toFixed(1) + '°');
+            angleInf = tiltInf;
+            
+            console.log('[INF] MX:' + convertedData.mag_x.toFixed(2) + ' MY:' + convertedData.mag_y.toFixed(2) + ' MZ:' + convertedData.mag_z.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '° HEADING:' + headingInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -178,7 +161,7 @@ function initializeSocketListeners() {
     });
 }
 
-// ⭐ STEP 4: CALIBRAZIONE
+// ⭐ CALIBRAZIONE
 function calibrateKnee() {
     console.log('📍 CALIBRAZIONE GINOCCHIO');
     console.log('   SUP: ' + angleSup.toFixed(2) + '°');
@@ -188,12 +171,11 @@ function calibrateKnee() {
     calibrationOffset = angleSup - angleInf;
     isCalibrated = true;
     
-    console.log('✅ CALIBRATO - Offset salvato: ' + calibrationOffset.toFixed(1) + '°');
+    console.log('✅ CALIBRATO - Offset: ' + calibrationOffset.toFixed(1) + '°');
     updateKneeAngleDisplay();
     alert('✅ Calibrato!\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
 }
 
-// ⭐ STEP 3: CALCOLA DIFFERENZA (Angolo reale ginocchio)
 function getKneeAngle() {
     var currentDifference = angleSup - angleInf;
     var relativeAngle = currentDifference - calibrationOffset;
@@ -230,12 +212,16 @@ function updateSensorDirectly(sensorName, data) {
     }
     
     var valueElements = sensorCard.querySelectorAll('.sensor-value');
-    var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
+    var fields = ['mag_x', 'mag_y', 'mag_z', 'accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z'];
     
     for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
         var value = data[fields[i]];
         if (value !== undefined) {
-            valueElements[i].textContent = value.toFixed(3);
+            if (fields[i].indexOf('mag') !== -1) {
+                valueElements[i].textContent = (value * 0.3).toFixed(3);
+            } else {
+                valueElements[i].textContent = value.toFixed(0);
+            }
         }
     }
     
@@ -243,15 +229,6 @@ function updateSensorDirectly(sensorName, data) {
     if (timestampEl && data.timestamp) {
         var date = new Date(data.timestamp);
         timestampEl.textContent = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0') + ':' + String(date.getSeconds()).padStart(2, '0');
-    }
-    
-    var statusIndicator = sensorCard.querySelector('.status-indicator');
-    if (statusIndicator) {
-        statusIndicator.classList.add('active');
-        if (statusIndicator.timeoutId) clearTimeout(statusIndicator.timeoutId);
-        statusIndicator.timeoutId = setTimeout(function() {
-            statusIndicator.classList.remove('active');
-        }, 50);
     }
 }
 
@@ -265,39 +242,19 @@ function createSensorCardFast(sensorName, data) {
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
-    // ⭐ MOSTRA TUTTI I DATI
-    var ax = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
-    var ay = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
-    var az = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
-    var gx = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
-    var gy = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
-    var gz = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
-    var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
-    var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
-    var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
+    var mx = (data.mag_x !== undefined) ? (data.mag_x * 0.3).toFixed(3) : '---';
+    var my = (data.mag_y !== undefined) ? (data.mag_y * 0.3).toFixed(3) : '---';
+    var mz = (data.mag_z !== undefined) ? (data.mag_z * 0.3).toFixed(3) : '---';
     
     template.innerHTML = 
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
             '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
-            '<div class="status-indicator active"></div>' +
         '</div>' +
-        '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
-            '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value">' + ax + '</span></div>' +
-            '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + ay + '</span></div>' +
-            '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value">' + az + '</span></div>' +
-        '</div>' +
-        '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
-            '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value" style="color: #4f4;">' + gx + '</span></div>' +
-            '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value" style="color: #4f4;">' + gy + '</span></div>' +
-            '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value" style="color: #4f4;">' + gz + '</span></div>' +
-        '</div>' +
-        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
-            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + mx + '</span></div>' +
-            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + my + '</span></div>' +
-            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + mz + '</span></div>' +
+        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0; border: 2px solid #88a;">' +
+            '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (STABILE)</div>' +
+            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span> µT</div>' +
+            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span> µT</div>' +
+            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span> µT</div>' +
         '</div>' +
         '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
     
@@ -306,12 +263,6 @@ function createSensorCardFast(sensorName, data) {
         emptySlot.replaceWith(template);
     } else {
         grid.appendChild(template);
-    }
-    
-    var emptyState = document.getElementById('empty-state');
-    if (Object.keys(sensors).length > 0 && emptyState) {
-        emptyState.classList.remove('visible');
-        grid.style.display = 'grid';
     }
 }
 
@@ -365,37 +316,19 @@ function renderSensors() {
         card.className = 'sensor-col connected';
         card.setAttribute('data-sensor', name);
         
-        var ax = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
-        var ay = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
-        var az = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
-        var gx = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
-        var gy = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
-        var gz = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
-        var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
-        var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
-        var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
+        var mx = (data.mag_x !== undefined) ? (data.mag_x * 0.3).toFixed(3) : '---';
+        var my = (data.mag_y !== undefined) ? (data.mag_y * 0.3).toFixed(3) : '---';
+        var mz = (data.mag_z !== undefined) ? (data.mag_z * 0.3).toFixed(3) : '---';
         
         card.innerHTML =
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
-                '<div class="sensor-header">' + emoji + ' ' + name + '</div><div class="status-indicator"></div>' +
+                '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
             '</div>' +
-            '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
-                '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value">' + ax + '</span></div>' +
-                '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + ay + '</span></div>' +
-                '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value">' + az + '</span></div>' +
-            '</div>' +
-            '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
-                '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value" style="color: #4f4;">' + gx + '</span></div>' +
-                '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value" style="color: #4f4;">' + gy + '</span></div>' +
-                '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value" style="color: #4f4;">' + gz + '</span></div>' +
-            '</div>' +
-            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
-                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + mx + '</span></div>' +
-                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + my + '</span></div>' +
-                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + mz + '</span></div>' +
+            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0; border: 2px solid #88a;">' +
+                '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (STABILE)</div>' +
+                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span> µT</div>' +
+                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span> µT</div>' +
+                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span> µT</div>' +
             '</div>' +
             '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
         grid.appendChild(card);
@@ -404,7 +337,7 @@ function renderSensors() {
     for (var i = sensorsToShow.length; i < 6; i++) {
         var slot = document.createElement('div');
         slot.className = 'sensor-col';
-        slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div><p style="text-align:center; color:#666; margin-top:20px;">In attesa...</p>';
+        slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div>';
         grid.appendChild(slot);
     }
     
@@ -416,7 +349,6 @@ function getSensorEmoji(name) {
     var n = name.toLowerCase();
     if (n.indexOf('ginocchio') !== -1 || n.indexOf('knee') !== -1) return '🦿';
     if (n.indexOf('piede') !== -1 || n.indexOf('foot') !== -1) return '🧦';
-    if (n.indexOf('braccio') !== -1 || n.indexOf('arm') !== -1) return '🦾';
     return '📱';
 }
 
