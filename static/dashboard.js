@@ -11,14 +11,16 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-// ⭐ SMOOTHING AGGRESSIVO - 20 campioni!
+// ⭐ SMOOTHING BUFFERS - 20 campioni
+var smoothBufferSupGX = [];
 var smoothBufferSupMX = [];
 var smoothBufferSupMY = [];
 var smoothBufferSupMZ = [];
+var smoothBufferInfGX = [];
 var smoothBufferInfMX = [];
 var smoothBufferInfMY = [];
 var smoothBufferInfMZ = [];
-var SMOOTH_WINDOW = 20;  // ⭐ AUMENTATO A 20!
+var SMOOTH_WINDOW = 20;
 
 var sensors = {};
 var isConnected = false;
@@ -32,6 +34,7 @@ var angleSup = 0;
 var angleInf = 0;
 var calibrationOffset = 0;
 var isCalibrated = false;
+var lastUpdateTime = Date.now();
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -67,7 +70,7 @@ function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ SMOOTHING AGGRESSIVO
+// ⭐ SMOOTHING
 function smoothValue(buffer, value) {
     buffer.push(value);
     if (buffer.length > SMOOTH_WINDOW) {
@@ -81,14 +84,18 @@ function smoothValue(buffer, value) {
     return sum / buffer.length;
 }
 
-// ⭐ CALCOLA TILT DA MAGNETOMETRO
-function calculateTiltFromMagZ(mz, mx, my) {
+// ⭐ CALCOLA TILT DA MAGNETOMETRO (per correggere drift)
+function calculateTiltFromMag(mz, mx, my) {
     var mag_total = Math.sqrt(mx*mx + my*my + mz*mz);
-    
     if (mag_total === 0) return 0;
-    
     var tilt = Math.acos(mz / mag_total) * (180 / Math.PI);
     return tilt;
+}
+
+// ⭐ COMPLEMENTARY FILTER: 95% Gyro + 5% Magnetometro
+function complementaryFilter(gyroSmooth, magTilt, currentAngle) {
+    var filteredAngle = (0.95 * currentAngle) + (0.05 * magTilt);
+    return filteredAngle;
 }
 
 function initializeSocketListeners() {
@@ -120,6 +127,9 @@ function initializeSocketListeners() {
         
         var sensorName = data.sensor_name;
         var sensorData = data.data;
+        var now = Date.now();
+        var deltaTime = (now - lastUpdateTime) / 1000;
+        lastUpdateTime = now;
         
         // ⭐ CONVERTE RAW → UNITÀ FISICHE
         var convertedData = {
@@ -139,28 +149,42 @@ function initializeSocketListeners() {
         
         var n = sensorName.toLowerCase();
         
-        // ⭐ SUP - SMOOTH AGGRESSIVO (20 campioni)
+        // ⭐ SUP - GYRO SMOOTH + MAG per drift correction
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1) {
+            var gx_smooth = smoothValue(smoothBufferSupGX, convertedData.gyro_x);
             var mx_smooth = smoothValue(smoothBufferSupMX, convertedData.mag_x);
             var my_smooth = smoothValue(smoothBufferSupMY, convertedData.mag_y);
             var mz_smooth = smoothValue(smoothBufferSupMZ, convertedData.mag_z);
             
-            var tilt = calculateTiltFromMagZ(mz_smooth, mx_smooth, my_smooth);
-            angleSup = tilt;
+            // Integra giroscopio
+            var gyroAngle = angleSup + (gx_smooth * deltaTime);
             
-            console.log('[SUP] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + convertedData.gyro_x.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '°');
+            // Calcola tilt da magnetometro
+            var magTilt = calculateTiltFromMag(mz_smooth, mx_smooth, my_smooth);
+            
+            // Complementary filter: 95% gyro + 5% mag
+            angleSup = complementaryFilter(gx_smooth, magTilt, gyroAngle);
+            
+            console.log('[SUP] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + gx_smooth.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' | MagTilt:' + magTilt.toFixed(1) + '° → ANGLE:' + angleSup.toFixed(1) + '°');
         }
         
-        // ⭐ INF - SMOOTH AGGRESSIVO (20 campioni)
+        // ⭐ INF - GYRO SMOOTH + MAG per drift correction
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1) {
+            var gx_smooth = smoothValue(smoothBufferInfGX, convertedData.gyro_x);
             var mx_smooth = smoothValue(smoothBufferInfMX, convertedData.mag_x);
             var my_smooth = smoothValue(smoothBufferInfMY, convertedData.mag_y);
             var mz_smooth = smoothValue(smoothBufferInfMZ, convertedData.mag_z);
             
-            var tilt = calculateTiltFromMagZ(mz_smooth, mx_smooth, my_smooth);
-            angleInf = tilt;
+            // Integra giroscopio
+            var gyroAngle = angleInf + (gx_smooth * deltaTime);
             
-            console.log('[INF] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + convertedData.gyro_x.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '°');
+            // Calcola tilt da magnetometro
+            var magTilt = calculateTiltFromMag(mz_smooth, mx_smooth, my_smooth);
+            
+            // Complementary filter: 95% gyro + 5% mag
+            angleInf = complementaryFilter(gx_smooth, magTilt, gyroAngle);
+            
+            console.log('[INF] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + gx_smooth.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' | MagTilt:' + magTilt.toFixed(1) + '° → ANGLE:' + angleInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -173,9 +197,11 @@ function initializeSocketListeners() {
         angleInf = 0;
         calibrationOffset = 0;
         isCalibrated = false;
+        smoothBufferSupGX = [];
         smoothBufferSupMX = [];
         smoothBufferSupMY = [];
         smoothBufferSupMZ = [];
+        smoothBufferInfGX = [];
         smoothBufferInfMX = [];
         smoothBufferInfMY = [];
         smoothBufferInfMZ = [];
@@ -402,9 +428,11 @@ function clearAllData() {
             angleInf = 0;
             calibrationOffset = 0;
             isCalibrated = false;
+            smoothBufferSupGX = [];
             smoothBufferSupMX = [];
             smoothBufferSupMY = [];
             smoothBufferSupMZ = [];
+            smoothBufferInfGX = [];
             smoothBufferInfMX = [];
             smoothBufferInfMY = [];
             smoothBufferInfMZ = [];
