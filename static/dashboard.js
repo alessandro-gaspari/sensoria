@@ -7,16 +7,18 @@ var socket = io({
     upgrade: false,
 });
 
+var S_ACC = 4096;
+var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-// ⭐ SMOOTHING BUFFERS
+// ⭐ SMOOTHING AGGRESSIVO - 20 campioni!
 var smoothBufferSupMX = [];
 var smoothBufferSupMY = [];
 var smoothBufferSupMZ = [];
 var smoothBufferInfMX = [];
 var smoothBufferInfMY = [];
 var smoothBufferInfMZ = [];
-var SMOOTH_WINDOW = 10;
+var SMOOTH_WINDOW = 20;  // ⭐ AUMENTATO A 20!
 
 var sensors = {};
 var isConnected = false;
@@ -53,11 +55,19 @@ function startFpsCounter() {
     }, 1000);
 }
 
+function convertAccelerometerRaw(raw) {
+    return raw / S_ACC;
+}
+
+function convertGyroscopeRaw(raw) {
+    return raw / S_GYRO;
+}
+
 function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ SMOOTHING - Media mobile su 10 campioni
+// ⭐ SMOOTHING AGGRESSIVO
 function smoothValue(buffer, value) {
     buffer.push(value);
     if (buffer.length > SMOOTH_WINDOW) {
@@ -72,7 +82,6 @@ function smoothValue(buffer, value) {
 }
 
 // ⭐ CALCOLA TILT DA MAGNETOMETRO
-// Tilt = arccos(MZ / magnitudine totale)
 function calculateTiltFromMagZ(mz, mx, my) {
     var mag_total = Math.sqrt(mx*mx + my*my + mz*mz);
     
@@ -112,25 +121,25 @@ function initializeSocketListeners() {
         var sensorName = data.sensor_name;
         var sensorData = data.data;
         
-        // ⭐ CONVERTE RAW → µT
+        // ⭐ CONVERTE RAW → UNITÀ FISICHE
         var convertedData = {
             timestamp: sensorData.timestamp,
+            accel_x: convertAccelerometerRaw(sensorData.accel_x),
+            accel_y: convertAccelerometerRaw(sensorData.accel_y),
+            accel_z: convertAccelerometerRaw(sensorData.accel_z),
+            gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
+            gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
+            gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
             mag_x: convertMagnetometerRaw(sensorData.mag_x),
             mag_y: convertMagnetometerRaw(sensorData.mag_y),
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
-            accel_x: sensorData.accel_x,
-            accel_y: sensorData.accel_y,
-            accel_z: sensorData.accel_z,
-            gyro_x: sensorData.gyro_x,
-            gyro_y: sensorData.gyro_y,
-            gyro_z: sensorData.gyro_z,
         };
         
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
         
-        // ⭐ SUP - SMOOTH tutti i 3 assi
+        // ⭐ SUP - SMOOTH AGGRESSIVO (20 campioni)
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1) {
             var mx_smooth = smoothValue(smoothBufferSupMX, convertedData.mag_x);
             var my_smooth = smoothValue(smoothBufferSupMY, convertedData.mag_y);
@@ -139,10 +148,10 @@ function initializeSocketListeners() {
             var tilt = calculateTiltFromMagZ(mz_smooth, mx_smooth, my_smooth);
             angleSup = tilt;
             
-            console.log('[SUP] MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '°');
+            console.log('[SUP] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + convertedData.gyro_x.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '°');
         }
         
-        // ⭐ INF - SMOOTH tutti i 3 assi
+        // ⭐ INF - SMOOTH AGGRESSIVO (20 campioni)
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1) {
             var mx_smooth = smoothValue(smoothBufferInfMX, convertedData.mag_x);
             var my_smooth = smoothValue(smoothBufferInfMY, convertedData.mag_y);
@@ -151,7 +160,7 @@ function initializeSocketListeners() {
             var tilt = calculateTiltFromMagZ(mz_smooth, mx_smooth, my_smooth);
             angleInf = tilt;
             
-            console.log('[INF] MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '°');
+            console.log('[INF] AX:' + convertedData.accel_x.toFixed(2) + ' AY:' + convertedData.accel_y.toFixed(2) + ' AZ:' + convertedData.accel_z.toFixed(2) + ' | GX:' + convertedData.gyro_x.toFixed(1) + ' GY:' + convertedData.gyro_y.toFixed(1) + ' GZ:' + convertedData.gyro_z.toFixed(1) + ' | MX:' + mx_smooth.toFixed(2) + ' MY:' + my_smooth.toFixed(2) + ' MZ:' + mz_smooth.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -224,7 +233,7 @@ function updateSensorDirectly(sensorName, data) {
     }
     
     var valueElements = sensorCard.querySelectorAll('.sensor-value');
-    var fields = ['mag_x', 'mag_y', 'mag_z'];
+    var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
     
     for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
         var value = data[fields[i]];
@@ -250,6 +259,12 @@ function createSensorCardFast(sensorName, data) {
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
+    var ax = (data.accel_x !== undefined) ? data.accel_x.toFixed(2) : '---';
+    var ay = (data.accel_y !== undefined) ? data.accel_y.toFixed(2) : '---';
+    var az = (data.accel_z !== undefined) ? data.accel_z.toFixed(2) : '---';
+    var gx = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(1) : '---';
+    var gy = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(1) : '---';
+    var gz = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(1) : '---';
     var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(2) : '---';
     var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(2) : '---';
     var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(2) : '---';
@@ -258,13 +273,19 @@ function createSensorCardFast(sensorName, data) {
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
             '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
         '</div>' +
-        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; border: 2px solid #88a;">' +
-            '<div style="font-size: 11px; color: #88a; margin-bottom: 6px; font-weight: 600;">🧲 MAGNETOMETRO (µT)</div>' +
-            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + mx + '</span></div>' +
-            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + my + '</span></div>' +
-            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + mz + '</span></div>' +
+        '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #8a8;">' +
+            '<div style="font-size: 10px; color: #8a8; font-weight: 600;">📊 ACCEL (g)</div>' +
+            '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + ax + '</span> <b>Y:</b> <span class="sensor-value">' + ay + '</span> <b>Z:</b> <span class="sensor-value">' + az + '</span></div>' +
         '</div>' +
-        '<div style="margin-top:8px; font-size:10px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+        '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #4f4;">' +
+            '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s)</div>' +
+            '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + gx + '</span> <b>Y:</b> <span class="sensor-value">' + gy + '</span> <b>Z:</b> <span class="sensor-value">' + gz + '</span></div>' +
+        '</div>' +
+        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #88a;">' +
+            '<div style="font-size: 10px; color: #88a; font-weight: 600;">🧲 MAG (µT)</div>' +
+            '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + mx + '</span> <b>Y:</b> <span class="sensor-value">' + my + '</span> <b>Z:</b> <span class="sensor-value">' + mz + '</span></div>' +
+        '</div>' +
+        '<div style="margin-top:6px; font-size:9px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
     
     var emptySlot = grid.querySelector('.sensor-col:not([data-sensor])');
     if (emptySlot) {
@@ -324,6 +345,12 @@ function renderSensors() {
         card.className = 'sensor-col connected';
         card.setAttribute('data-sensor', name);
         
+        var ax = (data.accel_x !== undefined) ? data.accel_x.toFixed(2) : '---';
+        var ay = (data.accel_y !== undefined) ? data.accel_y.toFixed(2) : '---';
+        var az = (data.accel_z !== undefined) ? data.accel_z.toFixed(2) : '---';
+        var gx = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(1) : '---';
+        var gy = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(1) : '---';
+        var gz = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(1) : '---';
         var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(2) : '---';
         var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(2) : '---';
         var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(2) : '---';
@@ -332,13 +359,19 @@ function renderSensors() {
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
                 '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
             '</div>' +
-            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; border: 2px solid #88a;">' +
-                '<div style="font-size: 11px; color: #88a; margin-bottom: 6px; font-weight: 600;">🧲 MAGNETOMETRO (µT)</div>' +
-                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + mx + '</span></div>' +
-                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + my + '</span></div>' +
-                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + mz + '</span></div>' +
+            '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #8a8;">' +
+                '<div style="font-size: 10px; color: #8a8; font-weight: 600;">📊 ACCEL (g)</div>' +
+                '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + ax + '</span> <b>Y:</b> <span class="sensor-value">' + ay + '</span> <b>Z:</b> <span class="sensor-value">' + az + '</span></div>' +
             '</div>' +
-            '<div style="margin-top:8px; font-size:10px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+            '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #4f4;">' +
+                '<div style="font-size: 10px; color: #4f4; font-weight: 600;">🌀 GYRO (°/s)</div>' +
+                '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + gx + '</span> <b>Y:</b> <span class="sensor-value">' + gy + '</span> <b>Z:</b> <span class="sensor-value">' + gz + '</span></div>' +
+            '</div>' +
+            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 6px 0; border-left: 3px solid #88a;">' +
+                '<div style="font-size: 10px; color: #88a; font-weight: 600;">🧲 MAG (µT)</div>' +
+                '<div class="sensor-data-row"><b>X:</b> <span class="sensor-value">' + mx + '</span> <b>Y:</b> <span class="sensor-value">' + my + '</span> <b>Z:</b> <span class="sensor-value">' + mz + '</span></div>' +
+            '</div>' +
+            '<div style="margin-top:6px; font-size:9px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
         grid.appendChild(card);
     });
     
