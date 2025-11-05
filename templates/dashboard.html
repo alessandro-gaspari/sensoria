@@ -24,15 +24,13 @@
         <!-- ⭐ Display angolo ginocchio -->
         <div id="knee-angle-display" style="margin-bottom: 20px;"></div>
         
-        <div id="empty-state" class="visible">
-            <h2>🔍 Nessun sensore connesso</h2>
-            <p>Avvia l'app per iniziare lo streaming dei dati</p>
-        </div>
+        <!-- ⭐ ELIMINATO: empty-state -->
         
+        <!-- ⭐ Grid sensori (vuoto all'inizio, poi popola automaticamente) -->
         <div id="sensors-grid"></div>
         
         <div style="margin-top: 40px; text-align: center; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
-            <button onclick="calibrateKnee()" style="
+            <button onclick="calibrateButton()" style="
                 background-color: #97c93e;
                 color: #000;
                 border: none;
