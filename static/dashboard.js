@@ -11,8 +11,8 @@ var S_GYRO = 65.54;
 
 // ⭐ CONFIG
 var SMOOTH_WINDOW = 15;
-var OUTLIER_THRESHOLD = 20;  // Scarta valori > 20°/s dalla media
-var CALIBRATION_SAMPLES = 100;  // Raccogli 100 campioni per bias
+var OUTLIER_THRESHOLD = 20;
+var CALIBRATION_SAMPLES = 100;
 
 // ⭐ STATO GLOBALE
 var sensors = {};
@@ -31,12 +31,14 @@ var calibSamplesSup = [];
 var calibSamplesInf = [];
 var gyroBiasSup = 0;
 var gyroBiasInf = 0;
-var isCalibrated = false;
-var calibrationOffsetKnee = 0;
+var biasCalibrationDone = false;
 
-// ⭐ ANGOLI ATTUALI
+// ⭐ ANGOLI ATTUALI (sempre integrati)
 var angleSup = 0;
 var angleInf = 0;
+
+// ⭐ CALIBRAZIONE ANGOLO GINOCCHIO
+var calibrationOffsetKnee = null;  // null = non calibrato
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -58,14 +60,13 @@ function convertGyroscopeRaw(raw) {
     return raw / S_GYRO;
 }
 
-// ⭐ SMOOTHING: Media mobile, scarta outliers
+// ⭐ SMOOTHING CON OUTLIER
 function smoothWithOutlierDetection(buffer, value) {
     if (buffer.length === 0) {
         buffer.push(value);
         return value;
     }
     
-    // Calcola media attuale
     var sum = 0;
     for (var i = 0; i < buffer.length; i++) {
         sum += buffer[i];
@@ -74,17 +75,15 @@ function smoothWithOutlierDetection(buffer, value) {
     
     // Scarta outliers
     if (Math.abs(value - avg) > OUTLIER_THRESHOLD) {
-        console.log('⚠️ OUTLIER SCARTATO: ' + value.toFixed(1) + '°/s (media: ' + avg.toFixed(1) + ')');
-        return avg;  // Ritorna media, non il picco
+        console.log('⚠️ OUTLIER: ' + value.toFixed(1) + '°/s (media: ' + avg.toFixed(1) + ')');
+        return avg;
     }
     
-    // Aggiungi al buffer
     buffer.push(value);
     if (buffer.length > SMOOTH_WINDOW) {
         buffer.shift();
     }
     
-    // Ricalcola media con il nuovo valore
     var newSum = 0;
     for (var i = 0; i < buffer.length; i++) {
         newSum += buffer[i];
@@ -92,10 +91,10 @@ function smoothWithOutlierDetection(buffer, value) {
     return newSum / buffer.length;
 }
 
-// ⭐ CALIBRAZIONE BIAS: Calcola media da 100 campioni
+// ⭐ CALIBRAZIONE BIAS: Esegui quando inizia
 function calibrateGyroBias() {
     if (calibSamplesSup.length < CALIBRATION_SAMPLES || calibSamplesInf.length < CALIBRATION_SAMPLES) {
-        console.log('⏳ Calibrazione: ' + Math.max(calibSamplesSup.length, calibSamplesInf.length) + '/' + CALIBRATION_SAMPLES);
+        console.log('⏳ Calibrazione bias: ' + Math.max(calibSamplesSup.length, calibSamplesInf.length) + '/' + CALIBRATION_SAMPLES);
         return false;
     }
     
@@ -112,10 +111,11 @@ function calibrateGyroBias() {
     console.log('   SUP: ' + gyroBiasSup.toFixed(2) + '°/s');
     console.log('   INF: ' + gyroBiasInf.toFixed(2) + '°/s');
     
-    isCalibrated = true;
+    biasCalibrationDone = true;
     calibSamplesSup = [];
     calibSamplesInf = [];
     
+    updateKneeAngleDisplay();
     return true;
 }
 
@@ -141,13 +141,13 @@ function initializeSocketListeners() {
         var deltaTime = (now - lastUpdateTime) / 1000;
         lastUpdateTime = now;
         
-        if (deltaTime > 0.5) deltaTime = 0.01;  // Proteggi da jump di tempo
+        if (deltaTime > 0.5) deltaTime = 0.01;
 
         var gx = convertGyroscopeRaw(sensorData.gyro_x);
         var n = sensorName.toLowerCase();
 
         // ⭐ FASE 1: Calibrazione bias (primi 100 campioni)
-        if (!isCalibrated) {
+        if (!biasCalibrationDone) {
             if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
                 calibSamplesSup.push(gx);
             }
@@ -159,28 +159,26 @@ function initializeSocketListeners() {
             if (calibSamplesSup.length >= CALIBRATION_SAMPLES && calibSamplesInf.length >= CALIBRATION_SAMPLES) {
                 calibrateGyroBias();
             }
-            return;  // Non processare fino a calibrazione completa
+            return;
         }
 
-        // ⭐ FASE 2: Smoothing + Outlier Detection
+        // ⭐ FASE 2: Processa dati (solo dopo bias calibrato)
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
             var gx_smooth = smoothWithOutlierDetection(smoothSup, gx);
             var gx_corrected = gx_smooth - gyroBiasSup;
             
-            // Integra nel tempo
             angleSup = angleSup + (gx_corrected * deltaTime);
             
-            console.log('[SUP] GX:' + gx.toFixed(1) + '°/s → Smooth:' + gx_smooth.toFixed(1) + ' → Corrected:' + gx_corrected.toFixed(1) + ' → Angle:' + angleSup.toFixed(1) + '°');
+            console.log('[SUP] Raw:' + gx.toFixed(1) + '°/s → Smooth:' + gx_smooth.toFixed(1) + ' → Corrected:' + gx_corrected.toFixed(1) + ' → Angle:' + angleSup.toFixed(1) + '°');
         }
 
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1) {
             var gx_smooth = smoothWithOutlierDetection(smoothInf, gx);
             var gx_corrected = gx_smooth - gyroBiasInf;
             
-            // Integra nel tempo
             angleInf = angleInf + (gx_corrected * deltaTime);
             
-            console.log('[INF] GX:' + gx.toFixed(1) + '°/s → Smooth:' + gx_smooth.toFixed(1) + ' → Corrected:' + gx_corrected.toFixed(1) + ' → Angle:' + angleInf.toFixed(1) + '°');
+            console.log('[INF] Raw:' + gx.toFixed(1) + '°/s → Smooth:' + gx_smooth.toFixed(1) + ' → Corrected:' + gx_corrected.toFixed(1) + ' → Angle:' + angleInf.toFixed(1) + '°');
         }
 
         updateKneeAngleDisplay();
@@ -191,53 +189,64 @@ function initializeSocketListeners() {
         sensors = {};
         angleSup = 0;
         angleInf = 0;
-        calibrationOffsetKnee = 0;
-        isCalibrated = false;
+        calibrationOffsetKnee = null;
+        biasCalibrationDone = false;
         calibSamplesSup = [];
         calibSamplesInf = [];
         smoothSup = [];
         smoothInf = [];
         renderSensors();
-        console.log('🔄 Dati cancellati, ricomincia calibrazione');
+        updateKneeAngleDisplay();
+        console.log('🔄 Reset completo');
     });
 }
 
 function calibrateKneeAngle() {
-    if (!isCalibrated) {
-        alert('❌ Calibra il bias prima! Tieni fermo per 2 secondi.');
+    if (!biasCalibrationDone) {
+        alert('❌ Aspetta la calibrazione del bias!\n\nTieni fermo per 2 secondi.');
         return;
     }
     
-    calibrationOffsetKnee = angleSup - angleInf;
+    // ⭐ AZZERA SUBITO gli angoli quando calibri!
+    calibrationOffsetKnee = {
+        sup: angleSup,
+        inf: angleInf
+    };
     
     console.log('📍 CALIBRAZIONE ANGOLO GINOCCHIO');
     console.log('   SUP: ' + angleSup.toFixed(2) + '°');
     console.log('   INF: ' + angleInf.toFixed(2) + '°');
-    console.log('   Offset: ' + calibrationOffsetKnee.toFixed(1) + '°');
     
     updateKneeAngleDisplay();
-    alert('✅ Angolo calibrato!\nOffset: ' + calibrationOffsetKnee.toFixed(1) + '°');
+    alert('✅ Angolo calibrato!\nOra i gradi partiranno da 0°');
 }
 
 function getKneeAngle() {
-    var diff = angleSup - angleInf;
-    var relativeAngle = diff - calibrationOffsetKnee;
-    return Math.round(relativeAngle);
+    if (calibrationOffsetKnee === null) {
+        return 0;
+    }
+    
+    var sup_relative = angleSup - calibrationOffsetKnee.sup;
+    var inf_relative = angleInf - calibrationOffsetKnee.inf;
+    
+    var kneeAngle = sup_relative - inf_relative;
+    
+    return Math.round(kneeAngle);
 }
 
 function updateKneeAngleDisplay() {
     var el = document.getElementById('knee-angle-display');
     if (!el) return;
     
-    var statusCal = isCalibrated ? '✓ Calibrato' : '⏳ Calibrando...';
-    var statusColor = isCalibrated ? '#97c93e' : '#ff9500';
-    var kneeAngle = isCalibrated ? getKneeAngle() : 0;
+    var statusBias = biasCalibrationDone ? '✓' : '⏳';
+    var statusCal = calibrationOffsetKnee !== null ? '✓' : '✗';
+    var kneeAngle = getKneeAngle();
     
     el.innerHTML =
         '<div style="background: linear-gradient(135deg, #97c93e 0%, #6fa52d 100%); border-radius: 12px; padding: 20px; text-align: center; color: #000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">' +
-            '<div style="font-size: 12px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
+            '<div style="font-size: 11px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
+            '<div style="font-size: 12px; opacity: 0.8; margin-bottom: 8px;">Bias: ' + statusBias + ' | Calibrato: ' + statusCal + '</div>' +
             '<div style="font-size: 72px; font-weight: 700; margin: 8px 0; font-family: monospace;">' + kneeAngle + '°</div>' +
-            '<div style="font-size: 11px; opacity: 0.8;"><span style="color: ' + statusColor + '; font-weight: 700;">' + statusCal + '</span></div>' +
             '<button onclick="calibrateKneeAngle()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.5); border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 12px; width: 100%;">📍 Calibra Angolo</button>' +
         '</div>';
 }
@@ -301,8 +310,8 @@ function clearAllData() {
             sensors = {};
             angleSup = 0;
             angleInf = 0;
-            calibrationOffsetKnee = 0;
-            isCalibrated = false;
+            calibrationOffsetKnee = null;
+            biasCalibrationDone = false;
             calibSamplesSup = [];
             calibSamplesInf = [];
             smoothSup = [];
