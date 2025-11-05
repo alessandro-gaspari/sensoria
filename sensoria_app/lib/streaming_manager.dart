@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
@@ -11,16 +11,25 @@ class StreamingManager extends ChangeNotifier {
   
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
-  final Map<String, Map<String, dynamic>?> _latestData = {}; // ⭐ CAMBIAMENTO: Map singolo, no buffer
+  final Map<String, Map<String, dynamic>?> _latestData = {};
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
   
+  // ⭐ CALLBACK PER TRACKING SCREEN
+  Function(String, int, int, int)? onGyroDataReceived;  // sensorName, gx, gy, gz
+
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
   
   Map<String, bool> get streamingStatus => Map.from(_activeStreams.map(
     (key, value) => MapEntry(key, true),
   ));
+
+  // ⭐ REGISTRA CALLBACK
+  void setGyroDataCallback(Function(String, int, int, int) callback) {
+    onGyroDataReceived = callback;
+    debugPrint('✅ Callback TrackingScreen registrato');
+  }
 
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
     await startAllStreaming(
@@ -108,7 +117,7 @@ class StreamingManager extends ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 200));
       
       _packetCounts[deviceId] = 0;
-      _latestData[deviceId] = null; // ⭐ CAMBIAMENTO: Nessun buffer
+      _latestData[deviceId] = null;
       _Hz[deviceId] = 0;
       _lastSendTime[deviceId] = DateTime.now();
       
@@ -127,7 +136,7 @@ class StreamingManager extends ChangeNotifier {
             try {
               final data = _parseIMUData(value);
               
-              // ⭐ CAMBIAMENTO: Salva SOLO l'ultimo dato
+              // ⭐ Salva l'ultimo dato
               _latestData[deviceId] = {
                 'timestamp': DateTime.now().toIso8601String(),
                 ...data,
@@ -179,47 +188,61 @@ class StreamingManager extends ChangeNotifier {
     _sendTimers[deviceId] = Timer.periodic(
       Duration(milliseconds: INTERVAL_MS),
       (timer) {
-        _sendData(deviceId, deviceName); // ⭐ CAMBIAMENTO: Chiama _sendData
+        _sendData(deviceId, deviceName);
       },
     );
   }
   
-  // ⭐ CAMBIAMENTO PRINCIPALE: Invia SOLO l'ultimo dato disponibile
+  // ⭐ INVIA DATI A TRACKING SCREEN E SERVER
   Future<void> _sendData(String deviceId, String deviceName) async {
     final latestData = _latestData[deviceId];
     
-    // Se non ci sono dati nuovi, non inviare nulla
     if (latestData == null) return;
     
-    // ⭐ IMPORTANTE: Azzera subito per evitare duplicati
     _latestData[deviceId] = null;
     
+    // ⭐ CHIAMA IL CALLBACK PER TRACKING SCREEN
+    if (onGyroDataReceived != null) {
+      onGyroDataReceived!(
+        deviceName,
+        latestData['gx'] as int,
+        latestData['gy'] as int,
+        latestData['gz'] as int,
+      );
+    }
+    
+    // ⭐ INVIA AL SERVER (opzionale se online)
+    try {
+      await _sendToServer(deviceName, latestData);
+    } catch (e) {
+      debugPrint('⚠️ [$deviceName] Server send error: $e');
+    }
+  }
+
+  Future<void> _sendToServer(String deviceName, Map<String, dynamic> data) async {
     try {
       await http.post(
         Uri.parse(SERVER_URL),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'sensor_name': deviceName,
-          'timestamp': latestData['timestamp'],
-          'accel_x': latestData['ax'],
-          'accel_y': latestData['ay'],
-          'accel_z': latestData['az'],
-          'gyro_x': latestData['gx'],
-          'gyro_y': latestData['gy'],
-          'gyro_z': latestData['gz'],
-          'mag_x': latestData['mx'],
-          'mag_y': latestData['my'],
-          'mag_z': latestData['mz'],
+          'timestamp': data['timestamp'],
+          'accel_x': data['ax'],
+          'accel_y': data['ay'],
+          'accel_z': data['az'],
+          'gyro_x': data['gx'],
+          'gyro_y': data['gy'],
+          'gyro_z': data['gz'],
+          'mag_x': data['mx'],
+          'mag_y': data['my'],
+          'mag_z': data['mz'],
         }),
-      );
-      
-      _lastSendTime[deviceId] = DateTime.now();
-      
+      ).timeout(const Duration(seconds: 1));
     } catch (e) {
-      debugPrint('⚠️ [$deviceName] Send error: $e');
+      debugPrint('⚠️ [$deviceName] Errore invio al server: $e');
     }
   }
-  
+
   Map<String, int> _parseIMUData(List<int> data) {
     if (data.length < 20) return {};
     
@@ -244,7 +267,7 @@ class StreamingManager extends ChangeNotifier {
   void _cleanupStreaming(String deviceId) {
     _activeStreams.remove(deviceId);
     _packetCounts.remove(deviceId);
-    _latestData.remove(deviceId); // ⭐ CAMBIAMENTO: Rimuove _latestData
+    _latestData.remove(deviceId);
     _sendTimers[deviceId]?.cancel();
     _sendTimers.remove(deviceId);
     _Hz.remove(deviceId);
