@@ -464,18 +464,13 @@ function renderSensors() {
     if (!grid) return;
 
     var names = Object.keys(sensors);
-    
-    // ⭐ NON mostrare messaggio se ci sono sensori
-    if (names.length === 0) {
-        grid.innerHTML = '';
-        return;
-    }
 
     grid.innerHTML = '';
     names.slice(0, 6).forEach(function(name) {
         createSensorCard(name, sensors[name]);
     });
 }
+
 
 function clearAllData() {
     if (!confirm('Reset?')) return;
