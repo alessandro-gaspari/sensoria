@@ -41,7 +41,118 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
     startFpsCounter();
+    setupStyles();
 });
+
+function setupStyles() {
+    var style = document.createElement('style');
+    style.textContent = `
+        #sensors-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 20px;
+            justify-content: flex-start;
+        }
+
+        .sensor-col {
+            flex: 1;
+            min-width: 450px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #222 100%);
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+            border: 2px solid #333;
+        }
+
+        .sensor-col.connected {
+            border: 2px solid #97c93e;
+        }
+
+        .sensor-header {
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 12px;
+            color: #97c93e;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .sensor-subcolumns {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 12px;
+        }
+
+        .sensor-subcolumn {
+            background: rgba(0,0,0,0.4);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid;
+        }
+
+        .sensor-subcolumn.accel {
+            border-left-color: #8a8;
+            background: linear-gradient(135deg, #1a2a1a 0%, #222 100%);
+        }
+
+        .sensor-subcolumn.gyro {
+            border-left-color: #4f4;
+            background: linear-gradient(135deg, #1a2a1a 0%, #222 100%);
+        }
+
+        .sensor-subcolumn.mag {
+            border-left-color: #88a;
+            background: linear-gradient(135deg, #1a1a2a 0%, #222 100%);
+        }
+
+        .subcolumn-title {
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .accel .subcolumn-title {
+            color: #8a8;
+        }
+
+        .gyro .subcolumn-title {
+            color: #4f4;
+        }
+
+        .mag .subcolumn-title {
+            color: #88a;
+        }
+
+        .subcolumn-values {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .value-row {
+            font-size: 14px;
+            color: #ccc;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .value-row b {
+            color: #97c93e;
+            min-width: 20px;
+        }
+
+        .value-row span {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+            color: #fff;
+        }
+    `;
+    document.head.appendChild(style);
+}
 
 function startFpsCounter() {
     setInterval(function() {
@@ -145,7 +256,6 @@ function initializeSocketListeners() {
 
         if (deltaTime > 0.5) deltaTime = 0.01;
 
-        // ⭐ CONVERSIONI
         var convertedData = {
             timestamp: sensorData.timestamp,
             accel_x: convertAccelerometerRaw(sensorData.accel_x),
@@ -164,7 +274,6 @@ function initializeSocketListeners() {
         var gx = convertedData.gyro_x;
         var n = sensorName.toLowerCase();
 
-        // ⭐ FASE 1: Calibrazione bias
         if (!biasCalibrationDone) {
             if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
                 calibSamplesSup.push(gx);
@@ -181,7 +290,6 @@ function initializeSocketListeners() {
             return;
         }
 
-        // ⭐ FASE 2: Integrazione
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
             var gx_smooth = smoothWithOutlierDetection(smoothSupGX, gx);
             var dominant_corrected = gx_smooth;
@@ -218,7 +326,6 @@ function initializeSocketListeners() {
         smoothInfGY = [];
         renderSensors();
         updateKneeAngleDisplay();
-        console.log('🔄 Reset');
     });
 }
 
@@ -266,7 +373,7 @@ function updateKneeAngleDisplay() {
         '</div>';
 }
 
-// ⭐ NUOVO: Aggiorna sensore con TUTTI i dati ordinati
+// ⭐ NUOVO: Aggiorna sensore con layout a 3 sottocolonne
 function updateSensorDirectly(sensorName, data) {
     var card = document.querySelector('[data-sensor="' + sensorName + '"]');
     if (!card) {
@@ -274,23 +381,20 @@ function updateSensorDirectly(sensorName, data) {
         return;
     }
 
-    // Accelerometro
     card.querySelector('.accel_x').textContent = data.accel_x.toFixed(2);
     card.querySelector('.accel_y').textContent = data.accel_y.toFixed(2);
     card.querySelector('.accel_z').textContent = data.accel_z.toFixed(2);
 
-    // Giroscopio
     card.querySelector('.gyro_x').textContent = data.gyro_x.toFixed(2);
     card.querySelector('.gyro_y').textContent = data.gyro_y.toFixed(2);
     card.querySelector('.gyro_z').textContent = data.gyro_z.toFixed(2);
 
-    // Magnetometro
     card.querySelector('.mag_x').textContent = data.mag_x.toFixed(2);
     card.querySelector('.mag_y').textContent = data.mag_y.toFixed(2);
     card.querySelector('.mag_z').textContent = data.mag_z.toFixed(2);
 }
 
-// ⭐ NUOVO: Crea card sensore con layout moderno
+// ⭐ NUOVO: Crea card con 3 sottocolonne
 function createSensorCard(sensorName, data) {
     var grid = document.getElementById('sensors-grid');
     if (!grid) return;
@@ -302,21 +406,38 @@ function createSensorCard(sensorName, data) {
     var emoji = sensorName.toLowerCase().indexOf('sup') !== -1 ? '🦿 SUP' : '🦿 INF';
 
     card.innerHTML =
-        '<div style="font-weight: bold; font-size: 1.1em; margin-bottom: 12px; color: #97c93e;">' + emoji + ' - ' + sensorName + '</div>' +
+        '<div class="sensor-header">' + emoji + ' - ' + sensorName + '</div>' +
 
-        '<div style="background: #222; padding: 10px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #8a8;">' +
-            '<div style="font-size: 11px; color: #8a8; font-weight: 600; margin-bottom: 6px;">📊 ACCELEROMETRO (g)</div>' +
-            '<div style="font-size: 12px; color: #ccc;"><b>X:</b> <span class="accel_x">0.00</span>  <b>Y:</b> <span class="accel_y">0.00</span>  <b>Z:</b> <span class="accel_z">0.00</span></div>' +
-        '</div>' +
+        '<div class="sensor-subcolumns">' +
+            // ⭐ ACCELEROMETRO
+            '<div class="sensor-subcolumn accel">' +
+                '<div class="subcolumn-title">📊 Accelerometro (g)</div>' +
+                '<div class="subcolumn-values">' +
+                    '<div class="value-row"><b>X:</b> <span class="accel_x">0.00</span></div>' +
+                    '<div class="value-row"><b>Y:</b> <span class="accel_y">0.00</span></div>' +
+                    '<div class="value-row"><b>Z:</b> <span class="accel_z">0.00</span></div>' +
+                '</div>' +
+            '</div>' +
 
-        '<div style="background: #1a2a1a; padding: 10px; border-radius: 6px; margin-bottom: 8px; border-left: 3px solid #4f4;">' +
-            '<div style="font-size: 11px; color: #4f4; font-weight: 600; margin-bottom: 6px;">🌀 GIROSCOPIO (°/s)</div>' +
-            '<div style="font-size: 12px; color: #ccc;"><b>X:</b> <span class="gyro_x">0.00</span>  <b>Y:</b> <span class="gyro_y">0.00</span>  <b>Z:</b> <span class="gyro_z">0.00</span></div>' +
-        '</div>' +
+            // ⭐ GIROSCOPIO
+            '<div class="sensor-subcolumn gyro">' +
+                '<div class="subcolumn-title">🌀 Giroscopio (°/s)</div>' +
+                '<div class="subcolumn-values">' +
+                    '<div class="value-row"><b>X:</b> <span class="gyro_x">0.00</span></div>' +
+                    '<div class="value-row"><b>Y:</b> <span class="gyro_y">0.00</span></div>' +
+                    '<div class="value-row"><b>Z:</b> <span class="gyro_z">0.00</span></div>' +
+                '</div>' +
+            '</div>' +
 
-        '<div style="background: #1a1a2a; padding: 10px; border-radius: 6px; border-left: 3px solid #88a;">' +
-            '<div style="font-size: 11px; color: #88a; font-weight: 600; margin-bottom: 6px;">🧲 MAGNETOMETRO (µT)</div>' +
-            '<div style="font-size: 12px; color: #ccc;"><b>X:</b> <span class="mag_x">0.00</span>  <b>Y:</b> <span class="mag_y">0.00</span>  <b>Z:</b> <span class="mag_z">0.00</span></div>' +
+            // ⭐ MAGNETOMETRO
+            '<div class="sensor-subcolumn mag">' +
+                '<div class="subcolumn-title">🧲 Magnetometro (µT)</div>' +
+                '<div class="subcolumn-values">' +
+                    '<div class="value-row"><b>X:</b> <span class="mag_x">0.00</span></div>' +
+                    '<div class="value-row"><b>Y:</b> <span class="mag_y">0.00</span></div>' +
+                    '<div class="value-row"><b>Z:</b> <span class="mag_z">0.00</span></div>' +
+                '</div>' +
+            '</div>' +
         '</div>';
 
     grid.appendChild(card);
@@ -343,8 +464,10 @@ function renderSensors() {
     if (!grid) return;
 
     var names = Object.keys(sensors);
+    
+    // ⭐ NON mostrare messaggio se ci sono sensori
     if (names.length === 0) {
-        grid.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">⏳ Sensori...</div>';
+        grid.innerHTML = '';
         return;
     }
 
