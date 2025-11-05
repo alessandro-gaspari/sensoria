@@ -322,7 +322,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final streamingManager = Provider.of<StreamingManager>(context);
     final displayName = devicesProvider.getDeviceName(widget.device);
     final deviceId = widget.device.remoteId.toString();
-    final isStreaming = streamingManager.isDeviceStreaming(deviceId);
+    final isStreaming = streamingManager.isStreamingDevice(deviceId);
     
     return Scaffold(
       appBar: AppBar(

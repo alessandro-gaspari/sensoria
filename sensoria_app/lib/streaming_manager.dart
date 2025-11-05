@@ -1,309 +1,294 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'dart:async';
 
 class StreamingManager extends ChangeNotifier {
-  static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
-  static const int TARGET_HZ = 100;
-  static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
+  // Endpoints server (opzionali)
+  static const String serverUrl = 'https://sensoria-dashboard.onrender.com/api/data';
+  static const String serverAngleUrl = 'https://sensoria-dashboard.onrender.com/api/knee_angle';
 
-  final Map<String, StreamSubscription> _activeStreams = {};
-  final Map<String, Timer> _sendTimers = {};
-  final Map<String, Map<String, dynamic>?> _latestData = {};
-  final Map<String, DateTime> _lastSendTime = {};
-  final Map<String, int> _Hz = {};
+  // Target frequenza locale
+  static const int targetHz = 100;
+  static const int intervalMs = 1000 ~/ targetHz;
 
-  Function(String, int, int, int)? onGyroDataReceived;
+  // Stato connessioni/stream
+  final Map<String, BluetoothDevice> _connected = {};
+  final Map<String, String> _deviceNames = {}; // id -> nome
+  final Map<String, StreamSubscription<List<int>>> _activeStreams = {};
+  final Map<String, BluetoothCharacteristic> _rxChars = {};
+  final Map<String, DateTime> _lastSampleTime = {};
 
-  bool isConnected = false;
-  bool isStreamingActive = false;
-  bool isScanning = false;
+  // Identificazione sup/inf
+  String? supId;
+  String? infId;
 
-  void setGyroDataCallback(Function(String, int, int, int) callback) {
-    onGyroDataReceived = callback;
-    debugPrint('✅ Callback registrato');
-  }
+  // Orientazioni fuse (pitch in gradi)
+  final Map<String, double> _pitchDeg = {};
+  final Map<String, double> _rollDeg = {};
 
-  // ⭐ SCANSIONE SENZA CONNESSIONE
-  Future<void> startScanning() async {
-    isScanning = true;
+  // Parametri filtro complementare (aggiorna se conosci scale reali)
+  static const double alpha = 0.02;        // peso accelerometro
+  static const double gyroDegPerLSB = 1.0; // fattore di scala giroscopio
+  static const double accelGPerLSB = 1.0;  // fattore di scala accelerometro
+
+  // Calibrazione
+  double _calibrationOffsetDeg = 0.0;
+  bool _isCalibrated = false;
+
+  // Stream angolo ginocchio (gradi interi)
+  final _kneeAngleCtrl = StreamController<int>.broadcast();
+  Stream<int> get kneeAngleStream => _kneeAngleCtrl.stream;
+
+  // Streaming status per UI
+  final _streamingStatusCtrl = StreamController<Map<String, bool>>.broadcast();
+  Stream<Map<String, bool>> get streamingStatusStream => _streamingStatusCtrl.stream;
+
+  Map<String, bool> get streamingStatus =>
+      Map.fromEntries(_activeStreams.keys.map((id) => MapEntry(id, true)));
+
+  bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
+  bool isConnected(String deviceId) => _connected.containsKey(deviceId);
+  List<BluetoothDevice> getConnectedDevices() => _connected.values.toList();
+  String getName(String deviceId) => _deviceNames[deviceId] ?? 'Unknown';
+
+  // Connessione
+  Future<void> connectToDevice(BluetoothDevice device, {String? friendlyName}) async {
+    final id = device.remoteId.toString();
+    if (_connected.containsKey(id)) return;
+    await device.connect(autoConnect: false);
+    _connected[id] = device;
+
+    final sysName = device.name; // String sincrona
+    _deviceNames[id] = friendlyName ?? (sysName.isNotEmpty ? sysName : 'Unknown');
+
     notifyListeners();
-    debugPrint('🔍 Inizio scansione BLE...');
-
-    try {
-      FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
-      await Future.delayed(const Duration(seconds: 5));
-      await FlutterBluePlus.stopScan();
-
-      isScanning = false;
-      notifyListeners();
-      debugPrint('✅ Scansione completata');
-    } catch (e) {
-      debugPrint('❌ Errore scansione: $e');
-      isScanning = false;
-      notifyListeners();
-    }
   }
 
-  // ⭐ GET SCANNED DEVICES
-  List<Map<String, String>> getScannedDevices() {
-    try {
-      final results = FlutterBluePlus.lastScanResults;
-      return results
-          .where((r) => r.device.advName.isNotEmpty)
-          .map((r) => {
-                'id': r.device.remoteId.toString(),
-                'name': r.device.advName,
-              })
-          .toList();
-    } catch (e) {
-      debugPrint('❌ Errore get devices: $e');
-      return [];
-    }
+  Future<void> quickConnect(BluetoothDevice device, {String? friendlyName}) async {
+    await connectToDevice(device, friendlyName: friendlyName);
+    try { await device.discoverServices(); } catch (_) {}
   }
 
-  // ⭐ CONNETTI A UN DEVICE
-  Future<void> connectToDevice(String deviceId, String deviceName) async {
-    debugPrint('🔗 Connessione a $deviceName...');
-
-    try {
-      // ⭐ Ottieni il device dalla scansione
-      final results = FlutterBluePlus.lastScanResults;
-      final device = results.firstWhere(
-        (r) => r.device.remoteId.toString() == deviceId,
-        orElse: () => throw Exception('Device non trovato'),
-      ).device;
-
-      // ⭐ Connetti senza autoConnect
-      await device.connect(timeout: const Duration(seconds: 10));
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // ⭐ Setup streaming
-      await _setupStreaming(device: device, deviceName: deviceName);
-
-      isConnected = true;
-      notifyListeners();
-      debugPrint('✅ Connesso a $deviceName');
-    } catch (e) {
-      debugPrint('❌ Errore connessione: $e');
-      isConnected = false;
-      notifyListeners();
+  Future<void> disconnectFromDevice(String deviceId) async {
+    final dev = _connected[deviceId];
+    if (dev == null) return;
+    try { await dev.disconnect(); } catch (_) {}
+    _connected.remove(deviceId);
+    if (_activeStreams.containsKey(deviceId)) {
+      await stopStreaming(deviceId);
     }
+    notifyListeners();
   }
 
-  // ⭐ SETUP STREAMING
-  Future<void> _setupStreaming({
-    required BluetoothDevice device,
-    required String deviceName,
-  }) async {
-    final deviceId = device.remoteId.toString();
+  Future<void> renameDevice(String deviceId, String newName) async {
+    _deviceNames[deviceId] = newName;
+    notifyListeners();
+  }
 
-    try {
-      debugPrint('🔍 [$deviceName] Discovery servizi...');
+  // Avvio streaming
+  Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
+    await startAllStreaming({device.remoteId.toString(): device}, {device.remoteId.toString(): deviceName});
+  }
+
+  Future<void> startAllStreaming(
+    Map<String, BluetoothDevice> connectedDevices,
+    Map<String, String> deviceNames,
+  ) async {
+    if (connectedDevices.isEmpty) return;
+
+    for (final entry in connectedDevices.entries) {
+      final id = entry.key;
+      final device = entry.value;
+      final name = (deviceNames[id] ?? 'Unknown').toLowerCase();
+
+      if (_activeStreams.containsKey(id)) continue;
+
+      final state = await device.connectionState.first;
+      if (state != BluetoothConnectionState.connected) continue;
+
       final services = await device.discoverServices();
-      debugPrint('🔍 [$deviceName] Trovati ${services.length} servizi');
-
-      BluetoothCharacteristic? rxChar;
-
-      for (var service in services) {
-        debugPrint('  📋 Service: ${service.uuid}');
-
-        for (var char in service.characteristics) {
-          final uuid = char.uuid.toString().toLowerCase();
-          debugPrint('    └─ Char: $uuid (notify: ${char.properties.notify})');
-
-          if (char.properties.notify) {
-            rxChar = char;
-            debugPrint('✅ [$deviceName] Trovata: $uuid');
-            break;
+      BluetoothCharacteristic? rx;
+      for (var s in services) {
+        for (var c in s.characteristics) {
+          final uuid = c.uuid.toString().toLowerCase();
+          if (uuid == '1cac0003-656e-696c-4b5f-6e6572726157' && c.properties.notify) {
+            rx = c; break;
           }
         }
-        if (rxChar != null) break;
+        if (rx != null) break;
       }
+      if (rx == null) continue;
 
-      if (rxChar == null) {
-        debugPrint('❌ [$deviceName] Nessuna characteristic notify trovata');
-        return;
-      }
+      if (supId == null && _isSup(name)) supId = id;
+      if (infId == null && _isInf(name)) infId = id;
 
-      await rxChar.setNotifyValue(true);
-      await Future.delayed(const Duration(milliseconds: 300));
+      _rxChars[id] = rx;
+      await rx.setNotifyValue(true);
+      await Future.delayed(const Duration(milliseconds: 100));
 
-      _latestData[deviceId] = null;
-      _Hz[deviceId] = 0;
-      _lastSendTime[deviceId] = DateTime.now();
+      _pitchDeg[id] = 0.0;
+      _rollDeg[id] = 0.0;
+      _lastSampleTime[id] = DateTime.now();
 
-      _startSendTimer(deviceId, deviceName);
-
-      final subscription = rxChar.lastValueStream.listen(
-        (value) {
-          debugPrint('🔊 [$deviceName] RAW: ${value.length}B - ${value.take(20).toList()}');
-          _processIMUData(deviceId, deviceName, value);
-        },
-        onError: (error) {
-          debugPrint('❌ [$deviceName] Stream ERROR: $error');
-          _cleanupStreaming(deviceId);
-        },
-        onDone: () {
-          debugPrint('⚠️ [$deviceName] Stream DONE');
-          _cleanupStreaming(deviceId);
-        },
+      final sub = rx.lastValueStream.listen(
+        (bytes) => _onPacket(id, name, bytes),
+        onError: (_) => _cleanup(id),
+        onDone: () => _cleanup(id),
       );
-
-      _activeStreams[deviceId] = subscription;
-      isStreamingActive = true;
-
-      debugPrint('🟢 [$deviceName] STREAMING ATTIVO');
-      notifyListeners();
-
-    } catch (e) {
-      debugPrint('❌ [$deviceName] Setup error: $e');
-    }
-  }
-
-  // ⭐ PROCESS IMU DATA
-  void _processIMUData(String deviceId, String deviceName, List<int> value) {
-    if (value.isEmpty) return;
-
-    if (value.length >= 20) {
-      try {
-        int readInt16LE(int offset) {
-          int val = value[offset] | (value[offset + 1] << 8);
-          return val > 32767 ? val - 65536 : val;
-        }
-
-        final data = {
-          'timestamp': DateTime.now().toIso8601String(),
-          'ax': readInt16LE(2),
-          'ay': readInt16LE(4),
-          'az': readInt16LE(6),
-          'gx': readInt16LE(8),
-          'gy': readInt16LE(10),
-          'gz': readInt16LE(12),
-          'mx': readInt16LE(14),
-          'my': readInt16LE(16),
-          'mz': readInt16LE(18),
-        };
-
-        _latestData[deviceId] = data;
-
-        final now = DateTime.now();
-        final elapsed = now.difference(_lastSendTime[deviceId]!).inMilliseconds;
-        if (elapsed > 0) {
-          _Hz[deviceId] = (1000 ~/ elapsed);
-        }
-
-        debugPrint('📦 [$deviceName] GX=${data['gx']} @ ${_Hz[deviceId]}Hz');
-
-      } catch (e) {
-        debugPrint('⚠️ [$deviceName] Parse error: $e');
-      }
-    }
-  }
-
-  // ⭐ SEND TIMER
-  void _startSendTimer(String deviceId, String deviceName) {
-    _sendTimers[deviceId]?.cancel();
-    _sendTimers[deviceId] = Timer.periodic(
-      Duration(milliseconds: INTERVAL_MS),
-      (timer) => _sendData(deviceId, deviceName),
-    );
-  }
-
-  // ⭐ SEND DATA
-  Future<void> _sendData(String deviceId, String deviceName) async {
-    final latestData = _latestData[deviceId];
-    if (latestData == null) return;
-
-    _latestData[deviceId] = null;
-
-    // ⭐ CALLBACK
-    if (onGyroDataReceived != null) {
-      debugPrint('📡 [$deviceName] CALLBACK - GX=${latestData['gx']}');
-      onGyroDataReceived!(
-        deviceName,
-        latestData['gx'] as int,
-        latestData['gy'] as int,
-        latestData['gz'] as int,
-      );
+      _activeStreams[id] = sub;
+      _notifyStreamingStatus();
     }
 
-    // ⭐ SEND SERVER
-    await _sendToServer(deviceName, latestData);
-  }
-
-  // ⭐ SEND TO SERVER
-  Future<void> _sendToServer(String deviceName, Map<String, dynamic> data) async {
-    try {
-      debugPrint('📤 [$deviceName] INVIO: ${data['gx']}');
-
-      final response = await http
-          .post(
-            Uri.parse(SERVER_URL),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'sensor_name': deviceName,
-              'data': {
-                'timestamp': data['timestamp'],
-                'accel_x': data['ax'],
-                'accel_y': data['ay'],
-                'accel_z': data['az'],
-                'gyro_x': data['gx'],
-                'gyro_y': data['gy'],
-                'gyro_z': data['gz'],
-                'mag_x': data['mx'],
-                'mag_y': data['my'],
-                'mag_z': data['mz'],
-              }
-            }),
-          )
-          .timeout(const Duration(seconds: 1));
-
-      debugPrint('✅ [$deviceName] INVIATO - ${response.statusCode}');
-
-    } catch (e) {
-      debugPrint('❌ [$deviceName] ERRORE INVIO: $e');
-    }
-  }
-
-  void _cleanupStreaming(String deviceId) {
-    _activeStreams.remove(deviceId);
-    _sendTimers[deviceId]?.cancel();
-    _sendTimers.remove(deviceId);
-    _latestData.remove(deviceId);
-    _Hz.remove(deviceId);
-    _lastSendTime.remove(deviceId);
-
-    if (_activeStreams.isEmpty) {
-      isStreamingActive = false;
-    }
+    _startTicker();
     notifyListeners();
+  }
+
+  // Ticker per calcolo e invio angolo
+  void _startTicker() {
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(milliseconds: intervalMs), (_) {
+      final sup = supId != null ? _pitchDeg[supId!] : null;
+      final inf = infId != null ? _pitchDeg[infId!] : null;
+      if (sup == null || inf == null) return;
+
+      final rawDiff = sup - inf;
+      final rel = rawDiff - (_isCalibrated ? _calibrationOffsetDeg : 0.0);
+      final intDeg = rel.round();
+
+      if (!_kneeAngleCtrl.isClosed) _kneeAngleCtrl.add(intDeg);
+      _sendKneeAngle(intDeg); // opzionale, non blocca
+    });
+  }
+
+  void calibrateZero() {
+    final sup = supId != null ? _pitchDeg[supId!] : null;
+    final inf = infId != null ? _pitchDeg[infId!] : null;
+    if (sup == null || inf == null) return;
+    _calibrationOffsetDeg = sup - inf;
+    _isCalibrated = true;
   }
 
   Future<void> stopStreaming(String deviceId) async {
-    if (!_activeStreams.containsKey(deviceId)) return;
-    await _activeStreams[deviceId]?.cancel();
-    _cleanupStreaming(deviceId);
+    if (_activeStreams.containsKey(deviceId)) {
+      final sub = _activeStreams.remove(deviceId);
+      await sub?.cancel();
+      _cleanup(deviceId);
+      _notifyStreamingStatus();
+      notifyListeners();
+    }
   }
 
-  Future<void> disconnectAll() async {
-    debugPrint('🔌 Disconnessione...');
-    for (var id in _activeStreams.keys.toList()) {
-      await stopStreaming(id);
+  Future<void> stopAll() async {
+    for (final id in _activeStreams.keys.toList()) {
+      final sub = _activeStreams.remove(id);
+      await sub?.cancel();
+      _cleanup(id);
     }
-    isConnected = false;
-    isStreamingActive = false;
+    _ticker?.cancel();
+    _notifyStreamingStatus();
     notifyListeners();
   }
 
+  Timer? _ticker;
+
   @override
   void dispose() {
-    disconnectAll();
-    for (var timer in _sendTimers.values) {
-      timer.cancel();
-    }
+    stopAll();
+    _kneeAngleCtrl.close();
+    _streamingStatusCtrl.close();
     super.dispose();
+  }
+
+  // Packet parsing + fusione
+  void _onPacket(String id, String name, List<int> data) {
+    if (data.length < 20) return;
+
+    int i16(int o) {
+      int v = data[o] | (data[o + 1] << 8);
+      return v > 32767 ? v - 65536 : v;
+    }
+
+    final axRaw = i16(2);
+    final ayRaw = i16(4);
+    final azRaw = i16(6);
+    final gxRaw = i16(8);
+    final gyRaw = i16(10);
+    final gzRaw = i16(12);
+
+    final ax = axRaw * accelGPerLSB;
+    final ay = ayRaw * accelGPerLSB;
+    final az = azRaw * accelGPerLSB;
+
+    final gxDeg = gxRaw * gyroDegPerLSB;
+    final gyDeg = gyRaw * gyroDegPerLSB;
+
+    final now = DateTime.now();
+    final dt = _lastSampleTime[id] != null
+        ? now.difference(_lastSampleTime[id]!).inMicroseconds / 1e6
+        : (1.0 / targetHz);
+    _lastSampleTime[id] = now;
+
+    final accelPitch = math.atan2(-ax, math.sqrt(ay * ay + az * az)) * 180.0 / math.pi;
+    final gyroPitch = (_pitchDeg[id] ?? 0.0) + gyDeg * dt;
+    final fused = (1 - alpha) * gyroPitch + alpha * accelPitch;
+    _pitchDeg[id] = fused;
+
+    _sendRaw(id, name, axRaw, ayRaw, azRaw, gxRaw, gyRaw, gzRaw); // opzionale
+  }
+
+  bool _isSup(String n) => RegExp(r'(sup|sopra|upper|quadricipite|thigh)').hasMatch(n);
+  bool _isInf(String n) => RegExp(r'(inf|sotto|lower|tibia|shank)').hasMatch(n);
+
+  void _cleanup(String id) {
+    _activeStreams[id]?.cancel();
+    _activeStreams.remove(id);
+    _rxChars.remove(id);
+    _pitchDeg.remove(id);
+    _rollDeg.remove(id);
+    _lastSampleTime.remove(id);
+    if (supId == id) supId = null;
+    if (infId == id) infId = null;
+  }
+
+  void _notifyStreamingStatus() {
+    if (!_streamingStatusCtrl.isClosed) {
+      _streamingStatusCtrl.add(streamingStatus);
+    }
+  }
+
+  // Invio opzionale (non blocca)
+  Future<void> _sendRaw(
+    String id, String name,
+    int ax, int ay, int az,
+    int gx, int gy, int gz,
+  ) async {
+    try {
+      unawaited(http.post(
+        Uri.parse(serverUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'sensor_name': name,
+          'accel_x': ax, 'accel_y': ay, 'accel_z': az,
+          'gyro_x': gx, 'gyro_y': gy, 'gyro_z': gz,
+        }),
+      ));
+    } catch (_) {}
+  }
+
+  Future<void> _sendKneeAngle(int angleDeg) async {
+    try {
+      unawaited(http.post(
+        Uri.parse(serverAngleUrl),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'knee_angle_deg': angleDeg,
+          'calibrated': _isCalibrated,
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
+      ));
+    } catch (_) {}
   }
 }
