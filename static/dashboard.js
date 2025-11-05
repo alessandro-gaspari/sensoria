@@ -35,6 +35,12 @@ var angleSup = 0;
 var angleInf = 0;
 var calibrationOffsetKnee = null;
 
+// ⭐ MEMORIA PER INTERPOLAZIONE
+var lastRawSupGX = 0;
+var lastRawInfGX = 0;
+var lastRawSupGY = 0;
+var lastRawInfGY = 0;
+
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
@@ -53,6 +59,18 @@ function startFpsCounter() {
 
 function convertGyroscopeRaw(raw) {
     return raw / S_GYRO;
+}
+
+// ⭐ INTERPOLAZIONE LINEARE tra campioni discreti
+function interpolateValue(lastValue, currentValue, steps) {
+    if (steps <= 1) return currentValue;
+    
+    var diff = (currentValue - lastValue) / steps;
+    var values = [];
+    for (var i = 1; i <= steps; i++) {
+        values.push(lastValue + (diff * i));
+    }
+    return values;  // Ritorna array di valori interpolati
 }
 
 function smoothWithOutlierDetection(buffer, value) {
@@ -138,7 +156,7 @@ function initializeSocketListeners() {
         var gy = convertGyroscopeRaw(sensorData.gyro_y);
         var n = sensorName.toLowerCase();
 
-        // ⭐ FASE 1: Calibrazione bias (primi 100 campioni)
+        // ⭐ FASE 1: Calibrazione bias
         if (!biasCalibrationDone) {
             if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
                 calibSamplesSup.push(gx);
@@ -153,33 +171,63 @@ function initializeSocketListeners() {
             return;
         }
 
-        // ⭐ FASE 2: Integrazione
+        // ⭐ FASE 2: Integrazione CON INTERPOLAZIONE
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
-            var gx_smooth = smoothWithOutlierDetection(smoothSupGX, gx);
-            var gy_smooth = smoothWithOutlierDetection(smoothSupGY, gy);
+            // Se il valore è cambiato, interpola
+            var gx_smooth, gy_smooth, dominant, dominant_corrected;
+            var finalAngle = 0;
             
-            var dominant = Math.abs(gy_smooth) > Math.abs(gx_smooth) ? gy_smooth : gx_smooth;
-            
-            var dominant_corrected = dominant;
-            if (Math.abs(dominant) < 50) {
-                dominant_corrected = dominant - gyroBiasSup;
+            if (gx !== lastRawSupGX) {
+                // Calcola quanto è cambiato
+                var gxDelta = Math.abs(gx - lastRawSupGX);
+                var interpolatedSteps = Math.max(2, Math.ceil(gxDelta / 5));  // Almeno 2 step
+                
+                var gx_smooth = smoothWithOutlierDetection(smoothSupGX, gx);
+                var gy_smooth = smoothWithOutlierDetection(smoothSupGY, gy);
+                
+                var dominant = Math.abs(gy_smooth) > Math.abs(gx_smooth) ? gy_smooth : gx_smooth;
+                
+                var dominant_corrected = dominant;
+                if (Math.abs(dominant) < 50) {
+                    dominant_corrected = dominant - gyroBiasSup;
+                }
+                
+                finalAngle = (dominant_corrected * deltaTime) / interpolatedSteps;
+                
+                lastRawSupGX = gx;
             }
             
-            angleSup = angleSup + (dominant_corrected * deltaTime);
+            angleSup = angleSup + finalAngle;
+            
+            console.log('[SUP] GX=' + gx.toFixed(1) + ' GY=' + gy.toFixed(1) + ' → Angle=' + angleSup.toFixed(1) + '°');
         }
 
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1) {
-            var gx_smooth = smoothWithOutlierDetection(smoothInfGX, gx);
-            var gy_smooth = smoothWithOutlierDetection(smoothInfGY, gy);
+            var gx_smooth, gy_smooth, dominant, dominant_corrected;
+            var finalAngle = 0;
             
-            var dominant = Math.abs(gy_smooth) > Math.abs(gx_smooth) ? gy_smooth : gx_smooth;
-            
-            var dominant_corrected = dominant;
-            if (Math.abs(dominant) < 50) {
-                dominant_corrected = dominant - gyroBiasInf;
+            if (gx !== lastRawInfGX) {
+                var gxDelta = Math.abs(gx - lastRawInfGX);
+                var interpolatedSteps = Math.max(2, Math.ceil(gxDelta / 5));
+                
+                var gx_smooth = smoothWithOutlierDetection(smoothInfGX, gx);
+                var gy_smooth = smoothWithOutlierDetection(smoothInfGY, gy);
+                
+                var dominant = Math.abs(gy_smooth) > Math.abs(gx_smooth) ? gy_smooth : gx_smooth;
+                
+                var dominant_corrected = dominant;
+                if (Math.abs(dominant) < 50) {
+                    dominant_corrected = dominant - gyroBiasInf;
+                }
+                
+                finalAngle = (dominant_corrected * deltaTime) / interpolatedSteps;
+                
+                lastRawInfGX = gx;
             }
             
-            angleInf = angleInf + (dominant_corrected * deltaTime);
+            angleInf = angleInf + finalAngle;
+            
+            console.log('[INF] GX=' + gx.toFixed(1) + ' GY=' + gy.toFixed(1) + ' → Angle=' + angleInf.toFixed(1) + '°');
         }
 
         updateKneeAngleDisplay();
@@ -191,26 +239,20 @@ function initializeSocketListeners() {
     });
 }
 
-// ⭐ UN SOLO PULSANTE: Resetta bias e calibrazione angolo
 function calibrateButton() {
-    // Se bias non fatto, non fa nulla
     if (!biasCalibrationDone) {
-        alert('⏳ Aspetta la calibrazione automatica!\n\nTieni fermo per 2 secondi...');
+        alert('⏳ Aspetta!\n\nTieni fermo per 2 secondi...');
         return;
     }
     
-    // Resetta angoli e salva come nuovi offset
     calibrationOffsetKnee = {
         sup: angleSup,
         inf: angleInf
     };
     
-    console.log('✅ CALIBRAZIONE ANGOLO');
-    console.log('   SUP offset: ' + angleSup.toFixed(1) + '°');
-    console.log('   INF offset: ' + angleInf.toFixed(1) + '°');
-    
+    console.log('✅ CALIBRAZIONE ANGOLO: SUP=' + angleSup.toFixed(1) + '° INF=' + angleInf.toFixed(1) + '°');
     updateKneeAngleDisplay();
-    alert('✅ Calibrato! I gradi ripartono da 0°');
+    alert('✅ Calibrato!');
 }
 
 function resetCalibration() {
@@ -225,18 +267,20 @@ function resetCalibration() {
     smoothSupGY = [];
     smoothInfGX = [];
     smoothInfGY = [];
+    lastRawSupGX = 0;
+    lastRawInfGX = 0;
+    lastRawSupGY = 0;
+    lastRawInfGY = 0;
     renderSensors();
     updateKneeAngleDisplay();
-    console.log('🔄 Reset completo');
+    console.log('🔄 Reset');
 }
 
 function getKneeAngle() {
     if (calibrationOffsetKnee === null) {
-        // Se non calibrato, mostra differenza diretta
         return Math.round(angleSup - angleInf);
     }
     
-    // Se calibrato, sottrai gli offset
     var sup_rel = angleSup - calibrationOffsetKnee.sup;
     var inf_rel = angleInf - calibrationOffsetKnee.inf;
     
