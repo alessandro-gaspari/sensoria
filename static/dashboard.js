@@ -11,9 +11,17 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-// ⭐ COMPLEMENTARY FILTER: 98% gyro + 2% accel (per corregere drift)
-var GYRO_WEIGHT = 0.98;
-var ACCEL_WEIGHT = 0.02;
+// ⭐ FILTRO OTTIMIZZATO: 50% gyro + 50% accel (equilibrio perfetto)
+var GYRO_WEIGHT = 0.50;
+var ACCEL_WEIGHT = 0.50;
+
+// ⭐ SMOOTHING: Media mobile su 5 campioni
+var SMOOTH_WINDOW = 5;
+var smoothBufferSup = [];
+var smoothBufferInf = [];
+
+// ⭐ DEAD-ZONE: Ignora variazioni < 0.3°
+var DEAD_ZONE = 0.3;
 
 var sensors = {};
 var isConnected = false;
@@ -29,6 +37,10 @@ var angleInf = 0;
 var calibrationOffset = 0;
 var isCalibrated = false;
 var lastUpdateTime = Date.now();
+
+// ⭐ GYRO BIAS (offset di fermo)
+var gyroBiasSup = 0;
+var gyroBiasInf = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -66,21 +78,54 @@ function convertMagnetometerRaw(raw) {
 
 // ⭐ Calcola inclinazione dall'accelerometro
 function calculateAccelAngle(ax, az) {
-    // atan2(ax, az) per il nostro setup
     var angle = Math.atan2(ax, az) * (180 / Math.PI);
     return angle;
 }
 
-// ⭐ COMPLEMENTARY FILTER: Combina gyro (velocità) + accel (posizione assoluta)
-function complementaryFilter(gyroX, ax, az, currentAngle, deltaTime) {
+// ⭐ DEAD-ZONE: Se la variazione è piccola, mantieni l'angolo
+function applyDeadZone(newAngle, oldAngle) {
+    var delta = Math.abs(newAngle - oldAngle);
+    if (delta < DEAD_ZONE) {
+        return oldAngle;
+    }
+    return newAngle;
+}
+
+// ⭐ SMOOTHING: Media mobile
+function addToSmoothBuffer(buffer, value) {
+    buffer.push(value);
+    if (buffer.length > SMOOTH_WINDOW) {
+        buffer.shift();
+    }
+    
+    var sum = 0;
+    for (var i = 0; i < buffer.length; i++) {
+        sum += buffer[i];
+    }
+    return sum / buffer.length;
+}
+
+// ⭐ COMPLEMENTARY FILTER ROBUSTO: Combina gyro (velocità) + accel (posizione assoluta)
+function complementaryFilter(gyroX, ax, az, currentAngle, deltaTime, isSup) {
+    // Applica bias (offset) del giroscopio
+    var gyroBias = isSup ? gyroBiasSup : gyroBiasInf;
+    var gyroXCorrected = gyroX - gyroBias;
+    
     // Parte gyro: integra velocità angolare
-    var gyroAngle = currentAngle + (gyroX * deltaTime);
+    var gyroAngle = currentAngle + (gyroXCorrected * deltaTime);
     
     // Parte accel: calcola inclinazione assoluta
     var accelAngle = calculateAccelAngle(ax, az);
     
-    // Combina: 98% gyro (reattivo) + 2% accel (corregge drift)
+    // Combina: 50% gyro (reattivo) + 50% accel (stabile)
     var filteredAngle = (GYRO_WEIGHT * gyroAngle) + (ACCEL_WEIGHT * accelAngle);
+    
+    // Applica dead-zone
+    filteredAngle = applyDeadZone(filteredAngle, currentAngle);
+    
+    // Applica smoothing (media mobile)
+    var smoothBuffer = isSup ? smoothBufferSup : smoothBufferInf;
+    filteredAngle = addToSmoothBuffer(smoothBuffer, filteredAngle);
     
     return filteredAngle;
 }
@@ -134,33 +179,36 @@ function initializeSocketListeners() {
         sensors[sensorName] = convertedData;
         
         var n = sensorName.toLowerCase();
+        var isSup = (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1);
         
-        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            // ⭐ COMPLEMENTARY FILTER
+        if (isSup) {
+            // ⭐ COMPLEMENTARY FILTER STABILE
             angleSup = complementaryFilter(
                 convertedData.gyro_x, 
                 convertedData.accel_x, 
                 convertedData.accel_z, 
                 angleSup, 
-                deltaTime
+                deltaTime,
+                true
             );
             
             var accelAngle = calculateAccelAngle(convertedData.accel_x, convertedData.accel_z);
-            console.log('[SUP] GX:' + convertedData.gyro_x.toFixed(1) + '°/s | Accel:' + accelAngle.toFixed(1) + '° | ΔT:' + deltaTime.toFixed(4) + 's → Filtrato:' + angleSup.toFixed(1) + '°');
+            console.log('[SUP] GX:' + convertedData.gyro_x.toFixed(1) + '°/s | Accel:' + accelAngle.toFixed(1) + '° → Filtrato:' + angleSup.toFixed(1) + '°');
         }
         
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            // ⭐ COMPLEMENTARY FILTER
+            // ⭐ COMPLEMENTARY FILTER STABILE
             angleInf = complementaryFilter(
                 convertedData.gyro_x, 
                 convertedData.accel_x, 
                 convertedData.accel_z, 
                 angleInf, 
-                deltaTime
+                deltaTime,
+                false
             );
             
             var accelAngle = calculateAccelAngle(convertedData.accel_x, convertedData.accel_z);
-            console.log('[INF] GX:' + convertedData.gyro_x.toFixed(1) + '°/s | Accel:' + accelAngle.toFixed(1) + '° | ΔT:' + deltaTime.toFixed(4) + 's → Filtrato:' + angleInf.toFixed(1) + '°');
+            console.log('[INF] GX:' + convertedData.gyro_x.toFixed(1) + '°/s | Accel:' + accelAngle.toFixed(1) + '° → Filtrato:' + angleInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -178,6 +226,10 @@ function initializeSocketListeners() {
         angleInf = 0;
         calibrationOffset = 0;
         isCalibrated = false;
+        smoothBufferSup = [];
+        smoothBufferInf = [];
+        gyroBiasSup = 0;
+        gyroBiasInf = 0;
         renderSensors();
         resetHeartbeat();
     });
@@ -188,14 +240,26 @@ function calibrateKnee() {
     console.log('   Sup: ' + angleSup.toFixed(2) + '°');
     console.log('   Inf: ' + angleInf.toFixed(2) + '°');
     
-    calibrationOffset = angleSup - angleInf;
+    // Azzera offset gyro (supponiamo che da fermo i sensori non si muovono)
+    gyroBiasSup = 0;
+    gyroBiasInf = 0;
+    
+    // Azzera i buffer di smoothing
+    smoothBufferSup = [];
+    smoothBufferInf = [];
+    
+    // Azzera gli angoli assoluti
+    angleSup = 0;
+    angleInf = 0;
+    
+    calibrationOffset = 0;
     isCalibrated = true;
     
     console.log('✅ CALIBRATO');
-    console.log('   Differenza: ' + calibrationOffset.toFixed(1) + '°');
+    console.log('   Differenza: 0°');
     
     updateKneeAngleDisplay();
-    alert('✅ Calibrato!\nDifferenza: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
+    alert('✅ Calibrato!\n\nOra muovi il ginocchio!');
 }
 
 function getKneeAngle() {
@@ -285,12 +349,12 @@ function createSensorCardFast(sensorName, data) {
             '<div class="status-indicator active"></div>' +
         '</div>' +
         '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (Corregge Drift)</div>' +
+            '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (50%)</div>' +
             '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value">' + accelX + '</span></div>' +
             '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value">' + accelZ + '</span></div>' +
         '</div>' +
         '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO 98% (Principale)</div>' +
+            '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO 50% (Equilibrato)</div>' +
             '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value" style="color: #4f4;">' + gyroX + '</span></div>' +
         '</div>' +
         '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
@@ -380,12 +444,12 @@ function renderSensors() {
                 '<div class="sensor-header">' + emoji + ' ' + name + '</div><div class="status-indicator"></div>' +
             '</div>' +
             '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (Corregge Drift)</div>' +
+                '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">📊 ACCELEROMETRO (50%)</div>' +
                 '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value">' + accelX + '</span></div>' +
                 '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value">' + accelZ + '</span></div>' +
             '</div>' +
             '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO 98% (Principale)</div>' +
+                '<div style="font-size: 10px; color: #4f4; margin-bottom: 4px;">🌀 GIROSCOPIO 50% (Equilibrato)</div>' +
                 '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value" style="color: #4f4;">' + gyroX + '</span></div>' +
             '</div>' +
             '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
@@ -426,6 +490,10 @@ function clearAllData() {
             angleInf = 0;
             calibrationOffset = 0;
             isCalibrated = false;
+            smoothBufferSup = [];
+            smoothBufferInf = [];
+            gyroBiasSup = 0;
+            gyroBiasInf = 0;
             renderSensors();
         });
 }
