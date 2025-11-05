@@ -9,6 +9,16 @@ var socket = io({
 
 var S_MAG = 0.3;
 
+// ⭐ SMOOTHING BUFFERS
+var smoothBufferSupMX = [];
+var smoothBufferSupMY = [];
+var smoothBufferSupMZ = [];
+var smoothBufferInfMX = [];
+var smoothBufferInfMY = [];
+var smoothBufferInfMZ = [];
+var SMOOTH_WINDOW = 10;
+var OUTLIER_THRESHOLD = 5;  // ⭐ Scarta picchi > 5µT dalla media
+
 var sensors = {};
 var isConnected = false;
 var frameCount = 0;
@@ -17,7 +27,6 @@ var currentFps = 0;
 var lastDataTime = Date.now();
 var heartbeatTimer;
 
-// ⭐ STATO SENSORI - SOLO MAGNETOMETRO
 var angleSup = 0;  
 var angleInf = 0;
 var calibrationOffset = 0;
@@ -49,29 +58,49 @@ function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ FORMULA MAGNETOMETRO: Calcola heading (direzione) da MX, MY
-// Heading = atan2(MY, MX) in gradi
-function calculateMagAngle(mx, my) {
-    var angle = Math.atan2(my, mx) * (180 / Math.PI);
-    // Normalizza tra 0-360
-    if (angle < 0) angle += 360;
-    return angle;
+// ⭐ OUTLIER DETECTION - Scarta picchi anomali
+function outlierFilter(buffer, newValue, maxDelta) {
+    if (buffer.length === 0) {
+        buffer.push(newValue);
+        return newValue;
+    }
+    
+    var avg = 0;
+    for (var i = 0; i < buffer.length; i++) {
+        avg += buffer[i];
+    }
+    avg = avg / buffer.length;
+    
+    var delta = Math.abs(newValue - avg);
+    
+    // Se delta > soglia, scarta il valore
+    if (delta > maxDelta) {
+        console.log('⚠️ OUTLIER SCARTATO: ' + newValue.toFixed(2) + ' µT (media: ' + avg.toFixed(2) + ', delta: ' + delta.toFixed(2) + ')');
+        return avg;
+    }
+    
+    buffer.push(newValue);
+    if (buffer.length > SMOOTH_WINDOW) {
+        buffer.shift();
+    }
+    
+    var newAvg = 0;
+    for (var i = 0; i < buffer.length; i++) {
+        newAvg += buffer[i];
+    }
+    return newAvg / buffer.length;
 }
 
-// ⭐ CALCOLA INCLINAZIONE da MZ (componente verticale)
-// Quando il sensore è dritto: MZ è massimo
-// Quando è inclinato: MZ diminuisce
+// ⭐ CALCOLA TILT DA MAGNETOMETRO
 function calculateTiltFromMagZ(mz, mx, my) {
-    var mx_norm = mx / S_MAG;
-    var my_norm = my / S_MAG;
-    var mz_norm = mz / S_MAG;
+    var mx_norm = mx;
+    var my_norm = my;
+    var mz_norm = mz;
     
-    // Magnitudine totale del campo magnetico
     var mag_total = Math.sqrt(mx_norm*mx_norm + my_norm*my_norm + mz_norm*mz_norm);
+    if (mag_total === 0) return 0;
     
-    // Inclinazione = arccos(MZ / mag_total)
     var tilt = Math.acos(mz_norm / mag_total) * (180 / Math.PI);
-    
     return tilt;
 }
 
@@ -105,7 +134,6 @@ function initializeSocketListeners() {
         var sensorName = data.sensor_name;
         var sensorData = data.data;
         
-        // ⭐ CONVERTE RAW → UNITÀ FISICHE (solo magnetometro)
         var convertedData = {
             timestamp: sensorData.timestamp,
             mag_x: convertMagnetometerRaw(sensorData.mag_x),
@@ -123,27 +151,28 @@ function initializeSocketListeners() {
         
         var n = sensorName.toLowerCase();
         
-        // ⭐ FORMULA MAGNETOMETRO: Calcola angolo
+        // ⭐ SUP - Outlier Filter + Smooth
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1) {
-            // Prova con MX, MY (heading)
-            var headingSup = calculateMagAngle(convertedData.mag_x, convertedData.mag_y);
+            var mx_filtered = outlierFilter(smoothBufferSupMX, convertedData.mag_x, OUTLIER_THRESHOLD);
+            var my_filtered = outlierFilter(smoothBufferSupMY, convertedData.mag_y, OUTLIER_THRESHOLD);
+            var mz_filtered = outlierFilter(smoothBufferSupMZ, convertedData.mag_z, OUTLIER_THRESHOLD);
             
-            // Prova con MZ (tilt/inclinazione)
-            var tiltSup = calculateTiltFromMagZ(convertedData.mag_z, convertedData.mag_x, convertedData.mag_y);
-            
-            // Usa tilt come angolo principale
+            var tiltSup = calculateTiltFromMagZ(mz_filtered, mx_filtered, my_filtered);
             angleSup = tiltSup;
             
-            console.log('[SUP] MX:' + convertedData.mag_x.toFixed(2) + ' MY:' + convertedData.mag_y.toFixed(2) + ' MZ:' + convertedData.mag_z.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '° HEADING:' + headingSup.toFixed(1) + '°');
+            console.log('[SUP] MX:' + mx_filtered.toFixed(2) + ' MY:' + my_filtered.toFixed(2) + ' MZ:' + mz_filtered.toFixed(2) + ' → TILT:' + angleSup.toFixed(1) + '°');
         }
         
+        // ⭐ INF - Outlier Filter + Smooth
         if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1) {
-            var headingInf = calculateMagAngle(convertedData.mag_x, convertedData.mag_y);
-            var tiltInf = calculateTiltFromMagZ(convertedData.mag_z, convertedData.mag_x, convertedData.mag_y);
+            var mx_filtered = outlierFilter(smoothBufferInfMX, convertedData.mag_x, OUTLIER_THRESHOLD);
+            var my_filtered = outlierFilter(smoothBufferInfMY, convertedData.mag_y, OUTLIER_THRESHOLD);
+            var mz_filtered = outlierFilter(smoothBufferInfMZ, convertedData.mag_z, OUTLIER_THRESHOLD);
             
+            var tiltInf = calculateTiltFromMagZ(mz_filtered, mx_filtered, my_filtered);
             angleInf = tiltInf;
             
-            console.log('[INF] MX:' + convertedData.mag_x.toFixed(2) + ' MY:' + convertedData.mag_y.toFixed(2) + ' MZ:' + convertedData.mag_z.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '° HEADING:' + headingInf.toFixed(1) + '°');
+            console.log('[INF] MX:' + mx_filtered.toFixed(2) + ' MY:' + my_filtered.toFixed(2) + ' MZ:' + mz_filtered.toFixed(2) + ' → TILT:' + angleInf.toFixed(1) + '°');
         }
         
         updateSensorDirectly(sensorName, convertedData);
@@ -156,12 +185,17 @@ function initializeSocketListeners() {
         angleInf = 0;
         calibrationOffset = 0;
         isCalibrated = false;
+        smoothBufferSupMX = [];
+        smoothBufferSupMY = [];
+        smoothBufferSupMZ = [];
+        smoothBufferInfMX = [];
+        smoothBufferInfMY = [];
+        smoothBufferInfMZ = [];
         renderSensors();
         resetHeartbeat();
     });
 }
 
-// ⭐ CALIBRAZIONE
 function calibrateKnee() {
     console.log('📍 CALIBRAZIONE GINOCCHIO');
     console.log('   SUP: ' + angleSup.toFixed(2) + '°');
@@ -212,16 +246,12 @@ function updateSensorDirectly(sensorName, data) {
     }
     
     var valueElements = sensorCard.querySelectorAll('.sensor-value');
-    var fields = ['mag_x', 'mag_y', 'mag_z', 'accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z'];
+    var fields = ['mag_x', 'mag_y', 'mag_z'];
     
     for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
         var value = data[fields[i]];
         if (value !== undefined) {
-            if (fields[i].indexOf('mag') !== -1) {
-                valueElements[i].textContent = (value * 0.3).toFixed(3);
-            } else {
-                valueElements[i].textContent = value.toFixed(0);
-            }
+            valueElements[i].textContent = value.toFixed(3);
         }
     }
     
@@ -242,19 +272,19 @@ function createSensorCardFast(sensorName, data) {
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
-    var mx = (data.mag_x !== undefined) ? (data.mag_x * 0.3).toFixed(3) : '---';
-    var my = (data.mag_y !== undefined) ? (data.mag_y * 0.3).toFixed(3) : '---';
-    var mz = (data.mag_z !== undefined) ? (data.mag_z * 0.3).toFixed(3) : '---';
+    var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+    var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+    var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
     
     template.innerHTML = 
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
             '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
         '</div>' +
         '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0; border: 2px solid #88a;">' +
-            '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (STABILE)</div>' +
-            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span> µT</div>' +
-            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span> µT</div>' +
-            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span> µT</div>' +
+            '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (µT)</div>' +
+            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span></div>' +
+            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span></div>' +
+            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span></div>' +
         '</div>' +
         '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
     
@@ -316,19 +346,19 @@ function renderSensors() {
         card.className = 'sensor-col connected';
         card.setAttribute('data-sensor', name);
         
-        var mx = (data.mag_x !== undefined) ? (data.mag_x * 0.3).toFixed(3) : '---';
-        var my = (data.mag_y !== undefined) ? (data.mag_y * 0.3).toFixed(3) : '---';
-        var mz = (data.mag_z !== undefined) ? (data.mag_z * 0.3).toFixed(3) : '---';
+        var mx = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+        var my = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+        var mz = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
         
         card.innerHTML =
             '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
                 '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
             '</div>' +
             '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0; border: 2px solid #88a;">' +
-                '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (STABILE)</div>' +
-                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span> µT</div>' +
-                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span> µT</div>' +
-                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span> µT</div>' +
+                '<div style="font-size: 12px; color: #88a; margin-bottom: 8px; font-weight: 600;">🧲 MAGNETOMETRO (µT)</div>' +
+                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mx + '</span></div>' +
+                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + my + '</span></div>' +
+                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value" style="color: #88a; font-weight: bold;">' + mz + '</span></div>' +
             '</div>' +
             '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
         grid.appendChild(card);
@@ -361,6 +391,12 @@ function clearAllData() {
             angleInf = 0;
             calibrationOffset = 0;
             isCalibrated = false;
+            smoothBufferSupMX = [];
+            smoothBufferSupMY = [];
+            smoothBufferSupMZ = [];
+            smoothBufferInfMX = [];
+            smoothBufferInfMY = [];
+            smoothBufferInfMZ = [];
             renderSensors();
         });
 }
