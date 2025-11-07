@@ -10,12 +10,10 @@ class TrackingScreen extends StatefulWidget {
 }
 
 class _TrackingScreenState extends State<TrackingScreen> {
-  int _debugCounter = 0;
-
   @override
   void initState() {
     super.initState();
-    debugPrint('\n🎯 TrackingScreen INIT - Dati già filtrati con EMA');
+    debugPrint('\n🎯 TrackingScreen INIT - Sensori Reali');
   }
 
   @override
@@ -24,16 +22,23 @@ class _TrackingScreenState extends State<TrackingScreen> {
     super.dispose();
   }
 
-  /// ⭐ Ferma lo streaming e torna indietro
   void _stopStreamingAndExit() async {
     debugPrint('🛑 STOP STREAMING');
-
     final streamingManager = Provider.of<StreamingManager>(context, listen: false);
     await streamingManager.stopAll();
-
     if (mounted) {
       Navigator.of(context).pop();
     }
+  }
+
+  Color _getColorByIndex(int index) {
+    const colors = [
+      Color.fromRGBO(76, 175, 80, 1),      // Verde
+      Color.fromRGBO(33, 150, 243, 1),     // Blu
+      Color.fromRGBO(255, 152, 0, 1),      // Arancione
+      Color.fromRGBO(156, 39, 176, 1),     // Viola
+    ];
+    return colors[index % colors.length];
   }
 
   @override
@@ -41,7 +46,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('📊 Sensori In Tempo Reale'),
+        title: const Text('DATI REAL TIME'),
         centerTitle: true,
         elevation: 0,
       ),
@@ -50,138 +55,35 @@ class _TrackingScreenState extends State<TrackingScreen> {
           builder: (context, streamingManager, _) {
             final allSensorData = streamingManager.allSensorData;
 
-            // ⭐ DEBUG - Stampa ogni 100 build (evita spam)
-            _debugCounter++;
-            if (_debugCounter % 100 == 0) {
-              debugPrint('\n📱 BUILD #$_debugCounter @ 100Hz');
-              debugPrint('   Keys: ${allSensorData.keys.toList()}');
-            }
-
-            // ⭐ ELABORAZIONE LOCALE - ESTRAI DATI GIÀ FILTRATI
-            double? supAccelX, supAccelY, supAccelZ;
-            double? supGyroX, supGyroY, supGyroZ;
-            double? supMagX, supMagY, supMagZ;
-
-            double? infAccelX, infAccelY, infAccelZ;
-            double? infGyroX, infGyroY, infGyroZ;
-            double? infMagX, infMagY, infMagZ;
-
-            bool hasSupData = false;
-            bool hasInfData = false;
-            String? supName;
-            String? infName;
-
-            for (var entry in allSensorData.entries) {
-              final data = entry.value;
-
-              if (data == null) continue;
-
-              // ⭐ ESTRAI NOME SENSORE
-              final sensorName = (data['sensor_name'] as String?) ?? 'Unknown';
-              final nameLower = sensorName.toLowerCase();
-
-              if (nameLower.contains('sup') ||
-                  nameLower.contains('sopra') ||
-                  nameLower.contains('upper') ||
-                  nameLower.contains('top')) {
-                
-                // ⭐ I DATI SONO GIÀ FILTRATI (in g, °/s, µT)
-                supAccelX = (data['accel_x'] as double?) ?? 0.0;
-                supAccelY = (data['accel_y'] as double?) ?? 0.0;
-                supAccelZ = (data['accel_z'] as double?) ?? 0.0;
-                supGyroX = (data['gyro_x'] as double?) ?? 0.0;
-                supGyroY = (data['gyro_y'] as double?) ?? 0.0;
-                supGyroZ = (data['gyro_z'] as double?) ?? 0.0;
-                supMagX = (data['mag_x'] as double?) ?? 0.0;
-                supMagY = (data['mag_y'] as double?) ?? 0.0;
-                supMagZ = (data['mag_z'] as double?) ?? 0.0;
-
-                hasSupData = true;
-                supName = sensorName;
-
-                debugPrint(
-                  '🔝 [$sensorName] AX=${supAccelX?.toStringAsFixed(4)}, '
-                  'AY=${supAccelY?.toStringAsFixed(4)}, '
-                  'AZ=${supAccelZ?.toStringAsFixed(4)}'
-                );
-                
-              } else if (nameLower.contains('inf') ||
-                  nameLower.contains('sotto') ||
-                  nameLower.contains('lower') ||
-                  nameLower.contains('bottom')) {
-                
-                // ⭐ I DATI SONO GIÀ FILTRATI (in g, °/s, µT)
-                infAccelX = (data['accel_x'] as double?) ?? 0.0;
-                infAccelY = (data['accel_y'] as double?) ?? 0.0;
-                infAccelZ = (data['accel_z'] as double?) ?? 0.0;
-                infGyroX = (data['gyro_x'] as double?) ?? 0.0;
-                infGyroY = (data['gyro_y'] as double?) ?? 0.0;
-                infGyroZ = (data['gyro_z'] as double?) ?? 0.0;
-                infMagX = (data['mag_x'] as double?) ?? 0.0;
-                infMagY = (data['mag_y'] as double?) ?? 0.0;
-                infMagZ = (data['mag_z'] as double?) ?? 0.0;
-
-                hasInfData = true;
-                infName = sensorName;
-
-                debugPrint(
-                  '🔻 [$sensorName] AX=${infAccelX?.toStringAsFixed(4)}, '
-                  'AY=${infAccelY?.toStringAsFixed(4)}, '
-                  'AZ=${infAccelZ?.toStringAsFixed(4)}'
-                );
-              }
-            }
+            // ⭐ CONVERTI IN LISTA PER AVERE INDICE
+            final sensorsEntries = allSensorData.entries.toList();
 
             return Column(
               children: [
-                // ⭐ DUE COLONNE
                 Expanded(
-                  child: Row(
-                    children: [
-                      // ⭐ COLONNA SINISTRA - SENSORE SUPERIORE
-                      Expanded(
-                        child: _buildSensorCard(
-                          title: 'SENSORE SUPERIORE',
-                          icon: '🔝',
-                          name: supName,
-                          hasData: hasSupData,
-                          accelX: supAccelX,
-                          accelY: supAccelY,
-                          accelZ: supAccelZ,
-                          gyroX: supGyroX,
-                          gyroY: supGyroY,
-                          gyroZ: supGyroZ,
-                          magX: supMagX,
-                          magY: supMagY,
-                          magZ: supMagZ,
-                          waitText: 'Attendi Sensore SUP',
-                        ),
-                      ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: List.generate(
+                        sensorsEntries.length,
+                        (index) {
+                          final entry = sensorsEntries[index];
+                          final data = entry.value;
+                          if (data == null) return SizedBox.shrink();
 
-                      // ⭐ COLONNA DESTRA - SENSORE INFERIORE
-                      Expanded(
-                        child: _buildSensorCard(
-                          title: 'SENSORE INFERIORE',
-                          icon: '🔻',
-                          name: infName,
-                          hasData: hasInfData,
-                          accelX: infAccelX,
-                          accelY: infAccelY,
-                          accelZ: infAccelZ,
-                          gyroX: infGyroX,
-                          gyroY: infGyroY,
-                          gyroZ: infGyroZ,
-                          magX: infMagX,
-                          magY: infMagY,
-                          magZ: infMagZ,
-                          waitText: 'Attendi Sensore INF',
-                        ),
+                          // ⭐ ESTRAI NOME E ICONA DAL SENSORE
+                          final sensorName = (data['sensor_name'] as String?) ?? 'Unknown';
+                          final color = _getColorByIndex(index);
+
+                          return _buildRow(
+                            sensorName: sensorName,
+                            data: data,
+                            color: color,
+                          );
+                        },
                       ),
-                    ],
+                    ),
                   ),
                 ),
-
-                // ⭐ PULSANTE FERMA STREAM
                 Padding(
                   padding: const EdgeInsets.all(16),
                   child: SizedBox(
@@ -200,13 +102,8 @@ class _TrackingScreenState extends State<TrackingScreen> {
                       ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFFFF4444),
-                        side: const BorderSide(
-                          color: Color(0xFFFF4444),
-                          width: 2,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        side: const BorderSide(color: Color(0xFFFF4444), width: 2),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -219,165 +116,124 @@ class _TrackingScreenState extends State<TrackingScreen> {
     );
   }
 
-  // ================== WIDGETS DI SUPPORTO ==================
-
-  Widget _buildSensorCard({
-    required String title,
-    required String icon,
-    required String waitText,
-    required String? name,
-    required bool hasData,
-    double? accelX,
-    double? accelY,
-    double? accelZ,
-    double? gyroX,
-    double? gyroY,
-    double? gyroZ,
-    double? magX,
-    double? magY,
-    double? magZ,
+  Widget _buildRow({
+    required String sensorName,
+    required Map<String, dynamic> data,
+    required Color color,
   }) {
+    String icon = _getIconFromName(sensorName);
+
     return Container(
-      margin: const EdgeInsets.all(16),
+      margin: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         border: Border.all(
-          color: hasData
-              ? const Color.fromRGBO(151, 201, 62, 1)
-              : const Color(0xFF333333),
+          color: color,
           width: 2,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: !hasData
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.schedule,
-                    size: 48,
-                    color: Color.fromRGBO(151, 201, 62, 0.5),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    waitText,
-                    style: TextStyle(
-                      color: const Color.fromRGBO(151, 201, 62, 1)
-                          .withOpacity(0.7),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
               ),
-            )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  // ⭐ HEADER
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color.fromRGBO(151, 201, 62, 0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(icon, style: const TextStyle(fontSize: 20)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                style: const TextStyle(
-                                  color: Color.fromRGBO(151, 201, 62, 1),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                              Text(
-                                name ?? 'Unknown',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                  Text(icon, style: const TextStyle(fontSize: 18)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      sensorName,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 20),
-
-                  // ⭐ ACCELEROMETRO (FILTRATO)
-                  _buildSectionTitle('📊 Accelerometro (g)'),
-                  _buildDataRow('AX', accelX ?? 0.0, 'g'),
-                  _buildDataRow('AY', accelY ?? 0.0, 'g'),
-                  _buildDataRow('AZ', accelZ ?? 0.0, 'g'),
-                  const SizedBox(height: 16),
-
-                  // ⭐ GIROSCOPIO (FILTRATO)
-                  _buildSectionTitle('🌀 Giroscopio (°/s)'),
-                  _buildDataRow('GX', gyroX ?? 0.0, '°/s'),
-                  _buildDataRow('GY', gyroY ?? 0.0, '°/s'),
-                  _buildDataRow('GZ', gyroZ ?? 0.0, '°/s'),
-                  const SizedBox(height: 16),
-
-                  // ⭐ MAGNETOMETRO (FILTRATO)
-                  _buildSectionTitle('🧲 Magnetometro (µT)'),
-                  _buildDataRow('MX', magX ?? 0.0, 'µT'),
-                  _buildDataRow('MY', magY ?? 0.0, 'µT'),
-                  _buildDataRow('MZ', magZ ?? 0.0, 'µT'),
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: const TextStyle(
-          color: Color.fromRGBO(151, 201, 62, 1),
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.5,
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader('📊 Acc (g)', color),
+                      _buildValue('X', data['accel_x']),
+                      _buildValue('Y', data['accel_y']),
+                      _buildValue('Z', data['accel_z']),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader('🌀 Gyr (°/s)', color),
+                      _buildValue('X', data['gyro_x']),
+                      _buildValue('Y', data['gyro_y']),
+                      _buildValue('Z', data['gyro_z']),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader('🧲 Mag (µT)', color),
+                      _buildValue('X', data['mag_x']),
+                      _buildValue('Y', data['mag_y']),
+                      _buildValue('Z', data['mag_z']),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildDataRow(String label, double value, String unit) {
+  String _getIconFromName(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('ginoc') && lower.contains('sup')) return '🦿';
+    if (lower.contains('ginoc') && lower.contains('inf')) return '🦿';
+    if (lower.contains('calzin') || lower.contains('sock') || lower.contains('piede')) return '🧦';
+    if (lower.contains('bracc') || lower.contains('arm')) return '🦾';
+    if (lower.contains('destr') || lower.contains('right') || lower.contains('dx')) return '➡️';
+    if (lower.contains('sinis') || lower.contains('left') || lower.contains('sx')) return '⬅️';
+    return '📍';
+  }
+
+  Widget _buildHeader(String text, Color color) {
+    return Text(
+      text,
+      style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
+    );
+  }
+
+  Widget _buildValue(String label, dynamic value) {
+    final val = (value as double?) ?? 0.0;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            '${value.toStringAsFixed(4)} $unit',
-            style: const TextStyle(
-              color: Color.fromRGBO(151, 201, 62, 1),
-              fontSize: 12,
-              fontFamily: 'Courier New',
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w600)),
+          Text(val.toStringAsFixed(3), style: const TextStyle(color: Color.fromRGBO(151, 201, 62, 1), fontSize: 9, fontFamily: 'Courier New', fontWeight: FontWeight.w600)),
         ],
       ),
     );
