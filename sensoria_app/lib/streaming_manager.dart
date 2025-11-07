@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io';
 
 class StreamingManager extends ChangeNotifier {
-  // ⭐ SOCKET TCP (invece di HTTP POST)
-  static const String SERVER_HOST = 'sensoria-dashboard.onrender.com';
-  static const int SERVER_PORT = 9001;
+  // ⭐ HTTP POST (Render lo permette)
+  static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
   static const int TARGET_HZ = 100;
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ; // 10ms
   
@@ -17,16 +16,11 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
-  bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
-
-  
-  // ⭐ SOCKET CONNECTION
-  Socket? _tcpSocket;
-  bool _isServerConnected = false;
-  StreamSubscription? _serverResponseSubscription;
   
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
-    
+  
+  bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
+  
   Map<String, bool> get streamingStatus => Map.from(_activeStreams.map(
     (key, value) => MapEntry(key, true),
   ));
@@ -38,58 +32,7 @@ class StreamingManager extends ChangeNotifier {
   void dispose() {
     debugPrint('🛑 StreamingManager DISPOSE');
     stopAll();
-    _disconnectFromServer();
     super.dispose();
-  }
-
-  /// ⭐ CONNESSIONE AL SERVER (una sola volta)
-  Future<void> _connectToServer() async {
-    if (_isServerConnected) {
-      debugPrint('⚠️ Già connesso al server');
-      return;
-    }
-
-    try {
-      debugPrint('🔌 Connessione al server: $SERVER_HOST:$SERVER_PORT');
-      
-      _tcpSocket = await Socket.connect(SERVER_HOST, SERVER_PORT, timeout: const Duration(seconds: 5));
-      _isServerConnected = true;
-      
-      debugPrint('✅ Connesso al server!');
-      
-      // Ascolta le risposte dal server
-      _serverResponseSubscription = _tcpSocket!.listen(
-        (data) {
-          String response = utf8.decode(data).trim();
-          debugPrint('📨 SERVER RESPONSE: $response');
-        },
-        onError: (error) {
-          debugPrint('❌ Socket error: $error');
-          _isServerConnected = false;
-          _disconnectFromServer();
-        },
-        onDone: () {
-          debugPrint('⚠️ Server disconnected');
-          _isServerConnected = false;
-        },
-      );
-      
-    } catch (e) {
-      debugPrint('❌ Errore connessione server: $e');
-      _isServerConnected = false;
-    }
-  }
-
-  Future<void> _disconnectFromServer() async {
-    try {
-      await _serverResponseSubscription?.cancel();
-      await _tcpSocket?.close();
-      _isServerConnected = false;
-      _tcpSocket = null;
-      debugPrint('✅ Disconnesso dal server');
-    } catch (e) {
-      debugPrint('❌ Errore disconnessione: $e');
-    }
   }
 
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
@@ -105,11 +48,9 @@ class StreamingManager extends ChangeNotifier {
   ) async {
     if (connectedDevices.isEmpty) return;
     
-    // ⭐ CONNETTI AL SERVER UNA SOLA VOLTA
-    await _connectToServer();
-    
     debugPrint('\n🚀 INIZIO STREAMING MULTI-SENSORE @ ${TARGET_HZ}Hz');
-    debugPrint('📊 Dispositivi: ${connectedDevices.length}\n');
+    debugPrint('📊 Dispositivi: ${connectedDevices.length}');
+    debugPrint('🌐 Server: $SERVER_URL\n');
     
     int successCount = 0;
     
@@ -200,7 +141,6 @@ class StreamingManager extends ChangeNotifier {
             try {
               final data = _parseIMUData(value);
               
-              // ⭐ SALVA SOLO L'ULTIMO DATO
               _latestData[deviceId] = {
                 'timestamp': DateTime.now().toUtc().toIso8601String(),
                 ...data,
@@ -214,9 +154,7 @@ class StreamingManager extends ChangeNotifier {
               
               debugPrint(
                 '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-                'AX=${data['ax']}, AY=${data['ay']}, AZ=${data['az']} | '
-                'GX=${data['gx']}, GY=${data['gy']}, GZ=${data['gz']} | '
-                'MX=${data['mx']}, MY=${data['my']}, MZ=${data['mz']}'
+                'AX=${data['ax']}, AY=${data['ay']}, AZ=${data['az']}'
               );
               
             } catch (e) {
@@ -237,7 +175,7 @@ class StreamingManager extends ChangeNotifier {
       );
       
       _activeStreams[deviceId] = subscription;
-      debugPrint('🟢 [$deviceName] STREAMING ATTIVO @ ${TARGET_HZ}Hz!\n');
+      debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
       notifyListeners();
       
     } catch (e) {
@@ -257,46 +195,54 @@ class StreamingManager extends ChangeNotifier {
     );
   }
   
-  /// ⭐ INVIA DATI VIA SOCKET TCP (come Sensoria)
+  /// ⭐ INVIA DATI VIA HTTP POST (Render lo permette)
   Future<void> _sendData(String deviceId, String deviceName) async {
     final latestData = _latestData[deviceId];
     
-    if (latestData == null || !_isServerConnected || _tcpSocket == null) {
+    if (latestData == null) {
       return;
     }
     
-    // ⭐ AZZERA SUBITO PER EVITARE DUPLICATI
+    // ⭐ AZZERA SUBITO
     _latestData[deviceId] = null;
     
     try {
-      // ⭐ CREA JSON COME SENSORIA
+      // ⭐ FORMATO JSON SENSORIA
       final jsonData = {
         'sensor_name': deviceName,
-        'timestamp': latestData['timestamp'],
-        'accel_x': latestData['ax'],
-        'accel_y': latestData['ay'],
-        'accel_z': latestData['az'],
-        'gyro_x': latestData['gx'],
-        'gyro_y': latestData['gy'],
-        'gyro_z': latestData['gz'],
-        'mag_x': latestData['mx'],
-        'mag_y': latestData['my'],
-        'mag_z': latestData['mz'],
+        'data': {
+          'timestamp': latestData['timestamp'],
+          'accel_x': latestData['ax'],
+          'accel_y': latestData['ay'],
+          'accel_z': latestData['az'],
+          'gyro_x': latestData['gx'],
+          'gyro_y': latestData['gy'],
+          'gyro_z': latestData['gz'],
+          'mag_x': latestData['mx'],
+          'mag_y': latestData['my'],
+          'mag_z': latestData['mz'],
+        }
       };
       
-      String jsonString = jsonEncode(jsonData) + '\n';
+      final response = await http.post(
+        Uri.parse(SERVER_URL),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(jsonData),
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => http.Response('timeout', 408),
+      );
       
-      // ⭐ INVIA VIA SOCKET
-      _tcpSocket!.write(jsonString);
-      await _tcpSocket!.flush();
+      if (response.statusCode == 200) {
+        debugPrint('✅ [$deviceName] Data sent successfully');
+      } else {
+        debugPrint('⚠️ [$deviceName] Response: ${response.statusCode}');
+      }
       
       _lastSendTime[deviceId] = DateTime.now();
       
-      debugPrint('📤 [$deviceName] Sent: $jsonString');
-      
     } catch (e) {
       debugPrint('❌ [$deviceName] Send error: $e');
-      _isServerConnected = false;
     }
   }
   
@@ -346,13 +292,11 @@ class StreamingManager extends ChangeNotifier {
   Future<void> stopAll() async {
     debugPrint('\n🛑 STOP ALL STREAMS');
     
-    // Cancella tutti i timers PRIMA
     for (var timer in _sendTimers.values) {
       timer.cancel();
     }
     _sendTimers.clear();
     
-    // Poi cancella tutti gli stream
     for (var id in _activeStreams.keys.toList()) {
       try {
         await _activeStreams[id]?.cancel();
@@ -361,15 +305,11 @@ class StreamingManager extends ChangeNotifier {
       }
     }
     
-    // Pulisci tutto
     _activeStreams.clear();
     _packetCounts.clear();
     _latestData.clear();
     _Hz.clear();
     _lastSendTime.clear();
-    
-    // Disconnetti dal server
-    await _disconnectFromServer();
     
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
