@@ -286,6 +286,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
       final deviceName = devicesProvider.getDeviceName(widget.device);
 
       await streamingManager.startStreaming(widget.device, deviceName);
+      Future.delayed(const Duration(seconds: 2), () {
+  streamingManager.debugStreamingStatus();
+  });
+
       
       _showMessage('Streaming avviato');
     } catch (e) {

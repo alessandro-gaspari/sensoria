@@ -15,7 +15,8 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
-  
+  Map<String, Map<String, dynamic>?> get allSensorData => Map.from(_latestData);
+
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
   
   Map<String, bool> get streamingStatus => Map.from(_activeStreams.map(
@@ -277,4 +278,16 @@ class StreamingManager extends ChangeNotifier {
     }
     super.dispose();
   }
+  // Dopo il metodo _parseIMUData, aggiungi:
+
+void debugStreamingStatus() {
+  debugPrint('\n📋 === STREAMING DEBUG ===');
+  debugPrint('   Active streams: ${_activeStreams.length}');
+  debugPrint('   Latest data keys: ${_latestData.keys}');
+  for (var entry in _latestData.entries) {
+    debugPrint('   📊 ${entry.key}: ${entry.value}');
+  }
+  debugPrint('=========================\n');
+}
+
 }

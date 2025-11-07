@@ -11,8 +11,9 @@ var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-var FILTER_ALPHA = 0.2;
-var BUFFER_SIZE = 3;
+var FILTER_ALPHA = 0.08;
+var BUFFER_SIZE = 10;
+var OUTLIER_THRESHOLD = 15;
 
 var sensors = {};
 var isConnected = false;
@@ -34,6 +35,23 @@ document.addEventListener('DOMContentLoaded', function() {
     fetchInitialData();
     startFpsCounter();
 });
+
+function advancedFilterWithOutlierRemoval(newValue, filteredValue, alpha, buffer, bufferSize, threshold) {
+    // Se il nuovo valore è troppo lontano dalla media, ignora
+    var bufferAverage = getBufferAverage(buffer);
+    var deviation = Math.abs(newValue - bufferAverage);
+    
+    if (buffer.length > 2 && deviation > threshold) {
+        console.log('   ⚠️ OUTLIER SCARTATO: ' + newValue.toFixed(1) + '° (diff: ' + deviation.toFixed(1) + '°)');
+        // Non aggiungere il dato, ritorna il valore precedente
+        return filteredValue;
+    }
+    
+    addToBuffer(buffer, newValue, bufferSize);
+    var avg = getBufferAverage(buffer);
+    var filtered = alpha * avg + (1 - alpha) * filteredValue;
+    return filtered;
+}
 
 function resetHeartbeat() {
     lastDataTime = Date.now();
@@ -111,44 +129,61 @@ function initializeSocketListeners() {
         resetHeartbeat();
     });
 
-    socket.on('sensor_update', function(data) {
-        frameCount++;
-        resetHeartbeat();
-        
-        var sensorName = data.sensor_name;
-        var sensorData = data.data;
-        
-        var convertedData = {
-            timestamp: sensorData.timestamp,
-            accel_x: convertAccelerometerRaw(sensorData.accel_x),
-            accel_y: convertAccelerometerRaw(sensorData.accel_y),
-            accel_z: convertAccelerometerRaw(sensorData.accel_z),
-            gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
-            gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
-            gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
-            mag_x: convertMagnetometerRaw(sensorData.mag_x),
-            mag_y: convertMagnetometerRaw(sensorData.mag_y),
-            mag_z: convertMagnetometerRaw(sensorData.mag_z),
-        };
-        
-        sensors[sensorName] = convertedData;
-        
-        var n = sensorName.toLowerCase();
-        var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
-        
-        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
-            filteredPitchSup = advancedFilter(pitch, filteredPitchSup, FILTER_ALPHA, pitchSupBuffer, BUFFER_SIZE);
-            console.log('[SUP] AX:' + convertedData.accel_x.toFixed(2) + 'g AZ:' + convertedData.accel_z.toFixed(2) + 'g → Pitch:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchSup.toFixed(1) + '°');
-        }
-        
-        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
-            filteredPitchInf = advancedFilter(pitch, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE);
-            console.log('[INF] AX:' + convertedData.accel_x.toFixed(2) + 'g AZ:' + convertedData.accel_z.toFixed(2) + 'g → Pitch:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchInf.toFixed(1) + '°');
-        }
-        
-        updateSensorDirectly(sensorName, convertedData);
-        updateKneeAngleDisplay();
-    });
+socket.on('sensor_update', function(data) {
+    frameCount++;
+    resetHeartbeat();
+    
+    var sensorName = data.sensor_name;
+    var sensorData = data.data;
+    
+    var convertedData = {
+        timestamp: sensorData.timestamp,
+        accel_x: convertAccelerometerRaw(sensorData.accel_x),
+        accel_y: convertAccelerometerRaw(sensorData.accel_y),
+        accel_z: convertAccelerometerRaw(sensorData.accel_z),
+        gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
+        gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
+        gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
+        mag_x: convertMagnetometerRaw(sensorData.mag_x),
+        mag_y: convertMagnetometerRaw(sensorData.mag_y),
+        mag_z: convertMagnetometerRaw(sensorData.mag_z),
+    };
+    
+    sensors[sensorName] = convertedData;
+    
+    var n = sensorName.toLowerCase();
+    var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
+    
+    if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
+        // ⭐ USA LA NUOVA FUNZIONE CON OUTLIER REMOVAL
+        filteredPitchSup = advancedFilterWithOutlierRemoval(
+            pitch, 
+            filteredPitchSup, 
+            FILTER_ALPHA, 
+            pitchSupBuffer, 
+            BUFFER_SIZE,
+            OUTLIER_THRESHOLD
+        );
+        console.log('[SUP] Pitch:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchSup.toFixed(1) + '°');
+    }
+    
+    if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
+        // ⭐ USA LA NUOVA FUNZIONE CON OUTLIER REMOVAL
+        filteredPitchInf = advancedFilterWithOutlierRemoval(
+            pitch, 
+            filteredPitchInf, 
+            FILTER_ALPHA, 
+            pitchInfBuffer, 
+            BUFFER_SIZE,
+            OUTLIER_THRESHOLD
+        );
+        console.log('[INF] Pitch:' + pitch.toFixed(1) + '° → Filtered:' + filteredPitchInf.toFixed(1) + '°');
+    }
+    
+    updateSensorDirectly(sensorName, convertedData);
+    updateKneeAngleDisplay();
+});
+
 
     socket.on('sensor_disconnected', function(data) {
         var sensorCard = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
