@@ -3,9 +3,9 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:sensoria_cs/utils/sensor_filter.dart';
 
 class StreamingManager extends ChangeNotifier {
-  // ⭐ HTTP POST (Render lo permette)
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
   static const int TARGET_HZ = 100;
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ; // 10ms
@@ -17,8 +17,10 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
   
-  bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
+  // ⭐ FILTRI EMA
+  final Map<String, SensorFilter> _sensorFilters = {};
   
+  bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
   
   Map<String, bool> get streamingStatus => Map.from(_activeStreams.map(
@@ -50,7 +52,8 @@ class StreamingManager extends ChangeNotifier {
     
     debugPrint('\n🚀 INIZIO STREAMING MULTI-SENSORE @ ${TARGET_HZ}Hz');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
-    debugPrint('🌐 Server: $SERVER_URL\n');
+    debugPrint('🌐 Server: $SERVER_URL');
+    debugPrint('🔧 Filtro EMA: alpha=0.12\n');
     
     int successCount = 0;
     
@@ -126,7 +129,11 @@ class StreamingManager extends ChangeNotifier {
       _Hz[deviceId] = 0;
       _lastSendTime[deviceId] = DateTime.now();
       
+      // ⭐ CREA IL FILTRO PER QUESTO SENSORE
+      _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
+      
       debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz (${INTERVAL_MS}ms interval)');
+      debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
       
       _startSendTimer(deviceId, deviceName);
       
@@ -139,10 +146,12 @@ class StreamingManager extends ChangeNotifier {
           
           if (value.length >= 20) {
             try {
-              final data = _parseIMUData(value);
+              // ⭐ PARSE E FILTRA I DATI CON EMA
+              final data = _parseAndFilterIMUData(value, deviceId);
               
               _latestData[deviceId] = {
                 'timestamp': DateTime.now().toUtc().toIso8601String(),
+                'sensor_name': deviceName,
                 ...data,
               };
               
@@ -154,8 +163,13 @@ class StreamingManager extends ChangeNotifier {
               
               debugPrint(
                 '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-                'AX=${data['ax']}, AY=${data['ay']}, AZ=${data['az']}'
+                'AX=${data['accel_x']?.toStringAsFixed(4)}, '
+                'AY=${data['accel_y']?.toStringAsFixed(4)}, '
+                'AZ=${data['accel_z']?.toStringAsFixed(4)}'
               );
+              
+              // ⭐ NOTIFICA I LISTENER (UI si aggiorna @ 100Hz)
+              notifyListeners();
               
             } catch (e) {
               debugPrint('   ⚠️ Parse error: $e');
@@ -195,7 +209,7 @@ class StreamingManager extends ChangeNotifier {
     );
   }
   
-  /// ⭐ INVIA DATI VIA HTTP POST (Render lo permette)
+  /// ⭐ PARSE, FILTRA CON EMA E INVIA DATI VIA HTTP POST
   Future<void> _sendData(String deviceId, String deviceName) async {
     final latestData = _latestData[deviceId];
     
@@ -203,24 +217,20 @@ class StreamingManager extends ChangeNotifier {
       return;
     }
     
-    // ⭐ AZZERA SUBITO
-    _latestData[deviceId] = null;
-    
     try {
-      // ⭐ FORMATO JSON SENSORIA
       final jsonData = {
         'sensor_name': deviceName,
         'data': {
           'timestamp': latestData['timestamp'],
-          'accel_x': latestData['ax'],
-          'accel_y': latestData['ay'],
-          'accel_z': latestData['az'],
-          'gyro_x': latestData['gx'],
-          'gyro_y': latestData['gy'],
-          'gyro_z': latestData['gz'],
-          'mag_x': latestData['mx'],
-          'mag_y': latestData['my'],
-          'mag_z': latestData['mz'],
+          'accel_x': latestData['accel_x'],
+          'accel_y': latestData['accel_y'],
+          'accel_z': latestData['accel_z'],
+          'gyro_x': latestData['gyro_x'],
+          'gyro_y': latestData['gyro_y'],
+          'gyro_z': latestData['gyro_z'],
+          'mag_x': latestData['mag_x'],
+          'mag_y': latestData['mag_y'],
+          'mag_z': latestData['mag_z'],
         }
       };
       
@@ -246,7 +256,11 @@ class StreamingManager extends ChangeNotifier {
     }
   }
   
-  Map<String, int> _parseIMUData(List<int> data) {
+  /// ⭐ PARSE RAW E FILTRA CON EMA
+  Map<String, double> _parseAndFilterIMUData(
+    List<int> data,
+    String deviceId,
+  ) {
     if (data.length < 20) return {};
     
     int readInt16LE(int offset) {
@@ -254,17 +268,35 @@ class StreamingManager extends ChangeNotifier {
       return val > 32767 ? val - 65536 : val;
     }
     
-    return {
-      'ax': readInt16LE(2),
-      'ay': readInt16LE(4),
-      'az': readInt16LE(6),
-      'gx': readInt16LE(8),
-      'gy': readInt16LE(10),
-      'gz': readInt16LE(12),
-      'mx': readInt16LE(14),
-      'my': readInt16LE(16),
-      'mz': readInt16LE(18),
-    };
+    // ⭐ LEGGI RAW
+    final rawAccelX = readInt16LE(2);
+    final rawAccelY = readInt16LE(4);
+    final rawAccelZ = readInt16LE(6);
+    final rawGyroX = readInt16LE(8);
+    final rawGyroY = readInt16LE(10);
+    final rawGyroZ = readInt16LE(12);
+    final rawMagX = readInt16LE(14);
+    final rawMagY = readInt16LE(16);
+    final rawMagZ = readInt16LE(18);
+    
+    // ⭐ FILTRA CON EMA (il filtro è già creato in _setupStreaming)
+    final filter = _sensorFilters[deviceId];
+    if (filter == null) {
+      debugPrint('⚠️ Filtro non trovato per $deviceId');
+      return {};
+    }
+    
+    return filter.filterIMUData(
+      rawAccelX: rawAccelX,
+      rawAccelY: rawAccelY,
+      rawAccelZ: rawAccelZ,
+      rawGyroX: rawGyroX,
+      rawGyroY: rawGyroY,
+      rawGyroZ: rawGyroZ,
+      rawMagX: rawMagX,
+      rawMagY: rawMagY,
+      rawMagZ: rawMagZ,
+    );
   }
   
   void _cleanupStreaming(String deviceId) {
@@ -275,6 +307,7 @@ class StreamingManager extends ChangeNotifier {
     _sendTimers.remove(deviceId);
     _Hz.remove(deviceId);
     _lastSendTime.remove(deviceId);
+    _sensorFilters.remove(deviceId);
   }
   
   Future<void> stopStreaming(String deviceId) async {
@@ -310,6 +343,7 @@ class StreamingManager extends ChangeNotifier {
     _latestData.clear();
     _Hz.clear();
     _lastSendTime.clear();
+    _sensorFilters.clear();
     
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
