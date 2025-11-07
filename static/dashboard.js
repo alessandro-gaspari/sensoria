@@ -1,205 +1,486 @@
-var socket = io({ reconnection: true, reconnectionDelay: 100, reconnectionDelayMax: 1000, reconnectionAttempts: 5, transports: ['websocket'], upgrade: false });
+var socket = io({
+    reconnection: true,
+    reconnectionDelay: 100,
+    reconnectionDelayMax: 1000,
+    reconnectionAttempts: 5,
+    transports: ['websocket'],
+    upgrade: false,
+});
+
+// ⭐ SCALE FACTOR (come Sensoria)
+var S_ACC = 4096;
+var S_GYRO = 65.54;
+var S_MAG = 0.3;
+
+// ⭐ FILTERING PARAMETERS
+var FILTER_ALPHA = 0.12;   // Più aggressivo (era 0.2)
+var BUFFER_SIZE = 8;       // Più grande (era 3)
+var OUTLIER_THRESHOLD = 15; // Scarta dati fuori range
 
 var sensors = {};
 var isConnected = false;
 var frameCount = 0;
 var lastFrameTime = Date.now();
 var currentFps = 0;
+var lastDataTime = Date.now();
+var heartbeatTimer;
 
-var kneeAngle = 0;
-var calibrated = false;
+var pitchSupBuffer = [];
+var pitchInfBuffer = [];
+var filteredPitchSup = 0;
+var filteredPitchInf = 0;
+var calibrationOffset = 0;
+var isCalibrated = false;
 
 document.addEventListener('DOMContentLoaded', function() {
-  initializeSocketListeners();
-  fetchInitialData();
-  startFpsCounter();
+    initializeSocketListeners();
+    fetchInitialData();
+    startFpsCounter();
 });
 
+function resetHeartbeat() {
+    lastDataTime = Date.now();
+    clearTimeout(heartbeatTimer);
+    heartbeatTimer = setTimeout(function() {}, 2000);
+}
+
 function startFpsCounter() {
-  setInterval(function() {
-    var now = Date.now();
-    var elapsed = (now - lastFrameTime) / 1000;
-    currentFps = Math.round(frameCount / elapsed);
-    frameCount = 0;
-    lastFrameTime = now;
-    updateConnectionStatus(isConnected);
-  }, 1000);
+    setInterval(function() {
+        var now = Date.now();
+        var elapsed = (now - lastFrameTime) / 1000;
+        currentFps = Math.round(frameCount / elapsed);
+        frameCount = 0;
+        lastFrameTime = now;
+    }, 1000);
+}
+
+function convertAccelerometerRaw(raw) {
+    return raw / S_ACC;
+}
+
+function convertGyroscopeRaw(raw) {
+    return raw / S_GYRO;
+}
+
+function convertMagnetometerRaw(raw) {
+    return raw * S_MAG;
+}
+
+function getBufferAverage(buffer) {
+    if (buffer.length === 0) return 0;
+    var sum = 0;
+    for (var i = 0; i < buffer.length; i++) sum += buffer[i];
+    return sum / buffer.length;
+}
+
+function addToBuffer(buffer, value, maxSize) {
+    buffer.push(value);
+    if (buffer.length > maxSize) buffer.shift();
+}
+
+// ⭐ FORMULA CORRETTA: atan2(AX, AZ) per calcolare il pitch
+function calculatePitch(ax, az) {
+    var pitch = Math.atan2(ax, az) * (180 / Math.PI);
+    return pitch;
+}
+
+// ⭐ FILTERING CON OUTLIER REMOVAL (come Sensoria)
+function advancedFilterWithOutlierRemoval(newValue, filteredValue, alpha, buffer, bufferSize, threshold) {
+    // Se il nuovo valore è troppo lontano dalla media, ignora (outlier)
+    var bufferAverage = getBufferAverage(buffer);
+    var deviation = Math.abs(newValue - bufferAverage);
+    
+    if (buffer.length > 2 && deviation > threshold) {
+        console.log('   ⚠️ OUTLIER SCARTATO: ' + newValue.toFixed(1) + '° (diff: ' + deviation.toFixed(1) + '°)');
+        // Ritorna il valore filtrato precedente senza aggiungere l'outlier
+        return filteredValue;
+    }
+    
+    // Aggiungi al buffer
+    addToBuffer(buffer, newValue, bufferSize);
+    
+    // Calcola la media del buffer
+    var avg = getBufferAverage(buffer);
+    
+    // Exponential moving average: α * avg + (1-α) * previous
+    var filtered = alpha * avg + (1 - alpha) * filteredValue;
+    
+    return filtered;
 }
 
 function initializeSocketListeners() {
-  socket.on('connect', function() { isConnected = true; updateConnectionStatus(true); });
-  socket.on('disconnect', function() { isConnected = false; updateConnectionStatus(false); });
+    socket.on('connect', function() {
+        console.log('✅ Connesso');
+        isConnected = true;
+        updateConnectionStatus(true);
+        resetHeartbeat();
+    });
 
-  socket.on('connection_response', function(data) {
-    sensors = data.sensors || {};
-    if (data.knee_angle) {
-      kneeAngle = data.knee_angle.angle || 0;
-      calibrated = !!data.knee_angle.calibrated;
-    }
-    renderSensors();
-    updateKneeAngleDisplay();
-  });
+    socket.on('disconnect', function() {
+        console.log('❌ Disconnesso');
+        isConnected = false;
+        updateConnectionStatus(false);
+        clearTimeout(heartbeatTimer);
+    });
 
-  socket.on('sensor_update', function(payload) {
-    frameCount++;
-    const name = payload.sensor_name;
-    const d = payload.data || {};
-    const conv = {
-      timestamp: d.timestamp,
-      ax: d.accel_x_ms2 ?? d.accel_x,
-      ay: d.accel_y_ms2 ?? d.accel_y,
-      az: d.accel_z_ms2 ?? d.accel_z,
-      gx: d.gyro_x_dps ?? d.gyro_x,
-      gy: d.gyro_y_dps ?? d.gyro_y,
-      gz: d.gyro_z_dps ?? d.gyro_z,
-      mx: d.mag_x_uT   ?? d.mag_x,
-      my: d.mag_y_uT   ?? d.mag_y,
-      mz: d.mag_z_uT   ?? d.mag_z,
-    };
-    sensors[name] = conv;
-    updateSensorDirectly(name, conv);
-  });
+    socket.on('connection_response', function(data) {
+        if (data.sensors) {
+            sensors = data.sensors;
+            renderSensors();
+        }
+        resetHeartbeat();
+    });
 
-  socket.on('knee_angle_update', function(msg) {
-    kneeAngle = msg.angle || 0;
-    calibrated = !!msg.calibrated;
-    updateKneeAngleDisplay();
-  });
+    socket.on('sensor_update', function(data) {
+        frameCount++;
+        resetHeartbeat();
+        
+        var sensorName = data.sensor_name;
+        var sensorData = data.data;
+        
+        console.log('\n🔵 RAW DATA RICEVUTO da ' + sensorName + ':', {
+            accel_x: sensorData.accel_x,
+            accel_y: sensorData.accel_y,
+            accel_z: sensorData.accel_z,
+            gyro_x: sensorData.gyro_x,
+            gyro_y: sensorData.gyro_y,
+            gyro_z: sensorData.gyro_z,
+            mag_x: sensorData.mag_x,
+            mag_y: sensorData.mag_y,
+            mag_z: sensorData.mag_z,
+        });
+        
+        // ⭐ CONVERTI I DATI GREZZI
+        var convertedData = {
+            timestamp: sensorData.timestamp,
+            accel_x: convertAccelerometerRaw(sensorData.accel_x),
+            accel_y: convertAccelerometerRaw(sensorData.accel_y),
+            accel_z: convertAccelerometerRaw(sensorData.accel_z),
+            gyro_x: convertGyroscopeRaw(sensorData.gyro_x),
+            gyro_y: convertGyroscopeRaw(sensorData.gyro_y),
+            gyro_z: convertGyroscopeRaw(sensorData.gyro_z),
+            mag_x: convertMagnetometerRaw(sensorData.mag_x),
+            mag_y: convertMagnetometerRaw(sensorData.mag_y),
+            mag_z: convertMagnetometerRaw(sensorData.mag_z),
+        };
+        
+        console.log('🟢 CONVERTED DATA:', convertedData);
+        
+        sensors[sensorName] = convertedData;
+        
+        var n = sensorName.toLowerCase();
+        var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
+        
+        // ⭐ FILTRAGGIO CON OUTLIER REMOVAL
+        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
+            filteredPitchSup = advancedFilterWithOutlierRemoval(
+                pitch, 
+                filteredPitchSup, 
+                FILTER_ALPHA, 
+                pitchSupBuffer, 
+                BUFFER_SIZE,
+                OUTLIER_THRESHOLD
+            );
+            console.log('[SUP] RAW: ' + pitch.toFixed(1) + '° → FILTERED: ' + filteredPitchSup.toFixed(1) + '°');
+        }
+        
+        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
+            filteredPitchInf = advancedFilterWithOutlierRemoval(
+                pitch, 
+                filteredPitchInf, 
+                FILTER_ALPHA, 
+                pitchInfBuffer, 
+                BUFFER_SIZE,
+                OUTLIER_THRESHOLD
+            );
+            console.log('[INF] RAW: ' + pitch.toFixed(1) + '° → FILTERED: ' + filteredPitchInf.toFixed(1) + '°');
+        }
+        
+        updateSensorDirectly(sensorName, convertedData);
+        updateKneeAngleDisplay();
+    });
 
-  socket.on('data_cleared', function() {
-    sensors = {}; kneeAngle = 0; calibrated = false;
-    renderSensors(); updateKneeAngleDisplay();
-  });
-}
+    socket.on('sensor_disconnected', function(data) {
+        var sensorCard = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
+        if (sensorCard) {
+            sensorCard.classList.add('disconnected');
+        }
+    });
 
-function fetchInitialData() {
-  fetch('/api/sensors')
-    .then(r => r.json())
-    .then(data => {
-      sensors = data.sensors || {};
-      if (data.knee_angle) {
-        kneeAngle = data.knee_angle.angle || 0;
-        calibrated = !!data.knee_angle.calibrated;
-      }
-      renderSensors(); updateKneeAngleDisplay();
+    socket.on('data_cleared', function() {
+        sensors = {};
+        pitchSupBuffer = [];
+        pitchInfBuffer = [];
+        filteredPitchSup = 0;
+        filteredPitchInf = 0;
+        calibrationOffset = 0;
+        isCalibrated = false;
+        renderSensors();
+        resetHeartbeat();
     });
 }
 
-function updateKneeAngleDisplay() {
-  var el = document.getElementById('knee-angle-display');
-  if (!el) return;
-  const statusText = calibrated ? '✓ Calibrato' : '✗ Non calibrato';
-  const statusColor = calibrated ? '#97c93e' : '#ff9500';
-  el.innerHTML =
-    '<div style="background: linear-gradient(135deg, #97c93e 0%, #6fa52d 100%); border-radius: 12px; padding: 20px; text-align: center; color: #000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">' +
-      '<div style="font-size: 12px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
-      '<div style="font-size: 72px; font-weight: 700; margin: 8px 0; font-family: monospace;">' + kneeAngle + '°</div>' +
-      '<div style="font-size: 11px; opacity: 0.8;"><span style="color: ' + statusColor + '; font-weight: 700;">' + statusText + '</span></div>' +
-    '</div>';
+function calibrateKnee() {
+    console.log('\n📍 CALIBRAZIONE');
+    console.log('   SUP: ' + filteredPitchSup.toFixed(2) + '°');
+    console.log('   INF: ' + filteredPitchInf.toFixed(2) + '°');
+    
+    calibrationOffset = filteredPitchSup - filteredPitchInf;
+    isCalibrated = true;
+    
+    console.log('✅ CALIBRATO');
+    console.log('   Offset: ' + calibrationOffset.toFixed(1) + '°\n');
+    
+    updateKneeAngleDisplay();
+    alert('✅ Calibrato!\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
 }
 
-function renderSensors() {
-  var grid = document.getElementById('sensors-grid');
-  var emptyState = document.getElementById('empty-state');
-  var names = Object.keys(sensors);
+// ⭐ CALCOLA ANGOLO GINOCCHIO: differenza tra i due pitch filtrati
+function getKneeAngle() {
+    var currentDifference = filteredPitchSup - filteredPitchInf;
+    var relativeAngle = currentDifference - calibrationOffset;
+    return Math.round(relativeAngle);
+}
 
-  if (names.length === 0) {
-    grid.style.display = 'none'; emptyState.classList.add('visible'); return;
-  }
-  grid.style.display = 'grid'; emptyState.classList.remove('visible'); grid.innerHTML = '';
-
-  var toShow = names.slice(0, 6);
-  toShow.forEach(function(name) {
-    var data = sensors[name];
-    var emoji = getSensorEmoji(name);
-    var card = document.createElement('div');
-    card.className = 'sensor-col connected';
-    card.setAttribute('data-sensor', name);
-
-    card.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
-        '<div class="sensor-header">' + emoji + ' ' + name + '</div>' +
-      '</div>' +
-      '<div class="sensor-grid" style="background:#1a1a2a;padding:8px;border-radius:4px;margin:8px 0;border:2px solid #88a;">' +
-        '<div class="sensor-row" data-k="ax"><b>AX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
-        '<div class="sensor-row" data-k="ay"><b>AY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
-        '<div class="sensor-row" data-k="az"><b>AZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> m/s²</div>' +
-        '<div class="sensor-row" data-k="gx"><b>GX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
-        '<div class="sensor-row" data-k="gy"><b>GY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
-        '<div class="sensor-row" data-k="gz"><b>GZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> °/s</div>' +
-        '<div class="sensor-row" data-k="mx"><b>MX:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
-        '<div class="sensor-row" data-k="my"><b>MY:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
-        '<div class="sensor-row" data-k="mz"><b>MZ:</b> <span class="sensor-value" style="color:#88a;font-weight:bold;">--</span> µT</div>' +
-      '</div>' +
-      '<div style="margin-top:12px;font-size:11px;color:#666;text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
-
-    grid.appendChild(card);
-    updateSensorDirectly(name, data);
-  });
-
-  for (var i = toShow.length; i < 6; i++) {
-    var slot = document.createElement('div');
-    slot.className = 'sensor-col';
-    slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div>';
-    grid.appendChild(slot);
-  }
-
-  updateConnectionStatus(isConnected);
+function updateKneeAngleDisplay() {
+    var kneeAngleEl = document.getElementById('knee-angle-display');
+    if (!kneeAngleEl) return;
+    
+    if (!sensors || Object.keys(sensors).length < 2) {
+        kneeAngleEl.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">⏳ Attendi sensori...</div>';
+        return;
+    }
+    
+    var kneeAngle = getKneeAngle();
+    var statusText = isCalibrated ? '✓ Calibrato' : '✗ Non calibrato';
+    var statusColor = isCalibrated ? '#97c93e' : '#ff9500';
+    
+    kneeAngleEl.innerHTML =
+        '<div style="background: linear-gradient(135deg, #97c93e 0%, #6fa52d 100%); border-radius: 12px; padding: 20px; text-align: center; color: #000; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">' +
+            '<div style="font-size: 12px; font-weight: 600; opacity: 0.9;">ANGOLO GINOCCHIO</div>' +
+            '<div style="font-size: 72px; font-weight: 700; margin: 8px 0; font-family: monospace;">' + kneeAngle + '°</div>' +
+            '<div style="font-size: 11px; opacity: 0.8;"><span style="color: ' + statusColor + '; font-weight: 700;">' + statusText + '</span></div>' +
+            '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.5); border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 12px; width: 100%;">📍 Calibra (dritto)</button>' +
+        '</div>';
 }
 
 function updateSensorDirectly(sensorName, data) {
-  var sensorCard = document.querySelector('[data-sensor="' + sensorName + '"]');
-  if (!sensorCard) return;
-
-  const rows = [
-    { key: 'ax', unit: 'm/s²' },
-    { key: 'ay', unit: 'm/s²' },
-    { key: 'az', unit: 'm/s²' },
-    { key: 'gx', unit: '°/s' },
-    { key: 'gy', unit: '°/s' },
-    { key: 'gz', unit: '°/s' },
-    { key: 'mx', unit: 'µT' },
-    { key: 'my', unit: 'µT' },
-    { key: 'mz', unit: 'µT' },
-  ];
-
-  rows.forEach(r => {
-    const row = sensorCard.querySelector('.sensor-row[data-k="'+r.key+'"] .sensor-value');
-    if (!row) return;
-    const v = data[r.key];
-    if (v !== undefined && v !== null && !Number.isNaN(v)) {
-      row.textContent = Number(v).toFixed(2);
+    var sensorCard = document.querySelector('[data-sensor="' + sensorName + '"]');
+    
+    if (!sensorCard) {
+        console.log('⚠️ Card non trovata per ' + sensorName + ', creo una nuova');
+        createSensorCardFast(sensorName, data);
+        return;
     }
-  });
-
-  var timestampEl = sensorCard.querySelector('.sensor-timestamp');
-  if (timestampEl && data.timestamp) {
-    var date = new Date(data.timestamp);
-    timestampEl.textContent = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0') + ':' + String(date.getSeconds()).padStart(2, '0');
-  }
+    
+    var valueElements = sensorCard.querySelectorAll('.sensor-value');
+    var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
+    
+    for (var i = 0; i < Math.min(valueElements.length, fields.length); i++) {
+        var value = data[fields[i]];
+        if (value !== undefined) {
+            valueElements[i].textContent = value.toFixed(3);
+        }
+    }
+    
+    var timestampEl = sensorCard.querySelector('.sensor-timestamp');
+    if (timestampEl && data.timestamp) {
+        var date = new Date(data.timestamp);
+        timestampEl.textContent = String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0') + ':' + String(date.getSeconds()).padStart(2, '0');
+    }
+    
+    var statusIndicator = sensorCard.querySelector('.status-indicator');
+    if (statusIndicator) {
+        statusIndicator.classList.add('active');
+        if (statusIndicator.timeoutId) clearTimeout(statusIndicator.timeoutId);
+        statusIndicator.timeoutId = setTimeout(function() {
+            statusIndicator.classList.remove('active');
+        }, 50);
+    }
 }
 
-function getSensorEmoji(name) {
-  var n = name.toLowerCase();
-  if (n.indexOf('ginocchio') !== -1 || n.indexOf('knee') !== -1) return '🦿';
-  if (n.indexOf('piede') !== -1 || n.indexOf('foot') !== -1) return '🧦';
-  return '📱';
+function createSensorCardFast(sensorName, data) {
+    var grid = document.getElementById('sensors-grid');
+    var currentSensors = grid.querySelectorAll('[data-sensor]').length;
+    if (currentSensors >= 6) return;
+    
+    var emoji = getSensorEmoji(sensorName);
+    var template = document.createElement('div');
+    template.className = 'sensor-col connected';
+    template.setAttribute('data-sensor', sensorName);
+    
+    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
+    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
+    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
+    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
+    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
+    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
+    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
+    
+    template.innerHTML = 
+        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+            '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
+            '<div class="status-indicator active"></div>' +
+        '</div>' +
+        '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+            '<div style="font-size: 10px; color: #aaa; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
+            '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value" style="color: #4f4;">' + accelX + '</span></div>' +
+            '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + accelY + '</span></div>' +
+            '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value" style="color: #4f4;">' + accelZ + '</span></div>' +
+        '</div>' +
+        '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+            '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
+            '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
+            '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
+            '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
+        '</div>' +
+        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+            '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
+            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + magX + '</span></div>' +
+            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + magY + '</span></div>' +
+            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + magZ + '</span></div>' +
+        '</div>' +
+        '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+    
+    var emptySlot = grid.querySelector('.sensor-col:not([data-sensor])');
+    if (emptySlot) {
+        emptySlot.replaceWith(template);
+    } else {
+        grid.appendChild(template);
+    }
+    
+    var emptyState = document.getElementById('empty-state');
+    if (Object.keys(sensors).length > 0 && emptyState) {
+        emptyState.classList.remove('visible');
+        grid.style.display = 'grid';
+    }
+}
+
+function fetchInitialData() {
+    fetch('/api/sensors')
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            sensors = data.sensors || {};
+            renderSensors();
+        });
 }
 
 function updateConnectionStatus(connected) {
-  var statusEl = document.getElementById('connection-status');
-  var countEl = document.getElementById('sensor-count');
-  var fpsEl = document.getElementById('fps-counter');
+    var statusEl = document.getElementById('connection-status');
+    var countEl = document.getElementById('sensor-count');
+    var fpsEl = document.getElementById('fps-counter');
+    
+    if (statusEl) {
+        statusEl.classList.toggle('disconnected', !connected);
+        statusEl.innerHTML = connected ? '<span class="dot"></span> Connesso' : '<span class="dot"></span> Disconnesso';
+    }
+    if (countEl) {
+        var count = Object.keys(sensors).length;
+        countEl.textContent = count + ' Sensore' + (count !== 1 ? 'i' : '');
+    }
+    if (fpsEl) {
+        fpsEl.textContent = currentFps + ' Hz';
+    }
+}
 
-  if (statusEl) {
-    statusEl.classList.toggle('disconnected', !connected);
-    statusEl.innerHTML = connected ? '<span class="dot"></span> Connesso' : '<span class="dot"></span> Disconnesso';
-  }
-  if (countEl) {
-    var count = Object.keys(sensors).length;
-    countEl.textContent = count + ' Sensore' + (count !== 1 ? 'i' : '');
-  }
-  if (fpsEl) {
-    fpsEl.textContent = currentFps + ' Hz';
-  }
+function renderSensors() {
+    var grid = document.getElementById('sensors-grid');
+    var emptyState = document.getElementById('empty-state');
+    
+    // ⭐ PROTEZIONE
+    if (!grid || !emptyState) {
+        console.error('❌ ERROR: grid o emptyState element non trovato');
+        return;
+    }
+    
+    var sensorNames = Object.keys(sensors);
+    
+    if (sensorNames.length === 0) {
+        grid.style.display = 'none';
+        emptyState.classList.add('visible');
+        return;
+    }
+    
+    grid.style.display = 'grid';
+    emptyState.classList.remove('visible');
+    grid.innerHTML = '';
+    
+    var sensorsToShow = sensorNames.slice(0, 6);
+    sensorsToShow.forEach(function(name) {
+        var data = sensors[name];
+        var emoji = getSensorEmoji(name);
+        var card = document.createElement('div');
+        card.className = 'sensor-col connected';
+        card.setAttribute('data-sensor', name);
+        
+        var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
+        var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
+        var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
+        var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
+        var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
+        var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
+        var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
+        var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
+        var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
+        
+        card.innerHTML =
+            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+                '<div class="sensor-header">' + emoji + ' ' + name + '</div><div class="status-indicator"></div>' +
+            '</div>' +
+            '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+                '<div style="font-size: 10px; color: #aaa; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
+                '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value" style="color: #4f4;">' + accelX + '</span></div>' +
+                '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + accelY + '</span></div>' +
+                '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value" style="color: #4f4;">' + accelZ + '</span></div>' +
+            '</div>' +
+            '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+                '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
+                '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
+                '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
+                '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
+            '</div>' +
+            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
+                '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
+                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + magX + '</span></div>' +
+                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + magY + '</span></div>' +
+                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + magZ + '</span></div>' +
+            '</div>' +
+            '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+        grid.appendChild(card);
+    });
+    
+    for (var i = sensorsToShow.length; i < 6; i++) {
+        var slot = document.createElement('div');
+        slot.className = 'sensor-col';
+        slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div><p style="text-align:center; color:#666; margin-top:20px;">In attesa...</p>';
+        grid.appendChild(slot);
+    }
+    
+    updateConnectionStatus(isConnected);
+    updateKneeAngleDisplay();
+}
+
+function getSensorEmoji(name) {
+    var n = name.toLowerCase();
+    if (n.indexOf('ginocchio') !== -1 || n.indexOf('knee') !== -1 || n.indexOf('gamba') !== -1) return '🦿';
+    if (n.indexOf('piede') !== -1 || n.indexOf('foot') !== -1 || n.indexOf('calzino') !== -1) return '🧦';
+    if (n.indexOf('braccio') !== -1 || n.indexOf('arm') !== -1) return '🦾';
+    return '📱';
+}
+
+function clearAllData() {
+    if (!confirm('Pulire dati?')) return;
+    fetch('/api/clear', { method: 'POST' })
+        .then(function() {
+            sensors = {};
+            pitchSupBuffer = [];
+            pitchInfBuffer = [];
+            filteredPitchSup = 0;
+            filteredPitchInf = 0;
+            calibrationOffset = 0;
+            isCalibrated = false;
+            renderSensors();
+        });
 }
