@@ -176,9 +176,10 @@ function startFpsCounter() {
         lastFrameTime = now;
         
         var fpsEl = document.getElementById('fps-counter');
-        if (fpsEl) fpsEl.textContent = currentFps + ' Hz';
+        if (fpsEl) fpsEl.textContent = (currentFps || 0) + ' Hz';  // ⭐ Protezione
     }, 1000);
 }
+
 
 // ⭐ SOCKET LISTENERS
 function initializeSocketListeners() {
