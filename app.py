@@ -13,9 +13,9 @@ socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, ping_interva
 
 sensors_data = {}
 sensors_status = {}
-sensors_filters = {}  # ⭐ Filtri EMA per ogni sensore
+sensors_filters = {}
 
-# ⭐ CLASSE FILTRO EMA (come Dart)
+# ⭐ CLASSE FILTRO EMA
 class SensorFilter:
     def __init__(self, alpha=0.1):
         self.alpha = alpha
@@ -39,7 +39,7 @@ class SensorFilter:
                        raw_mag_x, raw_mag_y, raw_mag_z):
         """Filtra i dati IMU con EMA"""
         
-        # ⭐ Converti a valori fisici
+        # Converti a valori fisici
         accel_x = raw_accel_x / 4096.0
         accel_y = raw_accel_y / 4096.0
         accel_z = raw_accel_z / 4096.0
@@ -52,7 +52,7 @@ class SensorFilter:
         mag_y = raw_mag_y * 0.3
         mag_z = raw_mag_z * 0.3
         
-        # ⭐ Prima volta: inizializza senza filtro
+        # Prima volta: inizializza senza filtro
         if not self.initialized:
             self.last_accel_x = accel_x
             self.last_accel_y = accel_y
@@ -77,7 +77,7 @@ class SensorFilter:
                 'mag_z': self.last_mag_z,
             }
         
-        # ⭐ EMA: filtered = last + alpha * (new - last)
+        # EMA filtering
         self.last_accel_x = self.filter_value(accel_x, self.last_accel_x)
         self.last_accel_y = self.filter_value(accel_y, self.last_accel_y)
         self.last_accel_z = self.filter_value(accel_z, self.last_accel_z)
@@ -127,25 +127,33 @@ def get_sensors():
         'timestamp': datetime.now().isoformat()
     })
 
-# ⭐ ENDPOINT CHE RICEVE E FILTRA I DATI
+# ⭐ ENDPOINT CHE RICEVE DATI DA FLUTTER
 @app.route('/api/data', methods=['POST'])
 def receive_data():
-    """Riceve dati da Flutter, filtra con EMA e emette via Socket.IO"""
+    """Riceve dati da Flutter, filtra IMU e inoltra tutto via Socket.IO"""
     try:
         data = request.json
         sensor_name = data.get('sensor_name', 'Unknown')
         sensor_data = data.get('data', {})
         
-        print(f'\n🔵 HTTP POST RICEVUTO da {sensor_name}:')
-        print(f'   RAW: accel_x={sensor_data.get("accel_x")}, gyro_x={sensor_data.get("gyro_x")}')
+        print(f'\n🔵 HTTP POST da {sensor_name}')
+        print(f'   accel_x: {sensor_data.get("accel_x")}')
         
-        # ⭐ CREA IL FILTRO PER QUESTO SENSORE SE NON ESISTE
+        # ⭐ CHECK PRESSIONI
+        pressure_keys = [k for k in sensor_data.keys() if k.startswith('pressure_')]
+        if pressure_keys:
+            print(f'   ✅ PRESSIONI: {len(pressure_keys)} sensori')
+            print(f'      p1={sensor_data.get("pressure_1")}, p2={sensor_data.get("pressure_2")}')
+        else:
+            print(f'   ❌ Nessuna pressione')
+        
+        # ⭐ CREA FILTRO SE NON ESISTE
         if sensor_name not in sensors_filters:
             sensors_filters[sensor_name] = SensorFilter(alpha=0.1)
-            print(f'   ✨ Filtro EMA creato per {sensor_name}')
+            print(f'   ✨ Filtro EMA creato')
         
-        # ⭐ FILTRA I DATI CON EMA
-        filtered_data = sensors_filters[sensor_name].filter_imu_data(
+        # ⭐ FILTRA SOLO I DATI IMU
+        filtered_imu = sensors_filters[sensor_name].filter_imu_data(
             raw_accel_x=int(sensor_data.get('accel_x', 0)),
             raw_accel_y=int(sensor_data.get('accel_y', 0)),
             raw_accel_z=int(sensor_data.get('accel_z', 0)),
@@ -157,32 +165,38 @@ def receive_data():
             raw_mag_z=int(sensor_data.get('mag_z', 0)),
         )
         
-        print(f'   FILTERED: accel_x={filtered_data.get("accel_x"):.4f}, gyro_x={filtered_data.get("gyro_x"):.4f}')
-        
-        # ⭐ SALVA I DATI FILTRATI
+        # ⭐ CREA PAYLOAD COMPLETO: IMU FILTRATI + PRESSIONI RAW
         sensor_reading = {
             'timestamp': sensor_data.get('timestamp', datetime.utcnow().isoformat()),
-            **filtered_data,  # ⭐ Dati filtrati!
+            **filtered_imu,  # IMU filtrati
         }
         
+        # ⭐ COPIA TUTTE LE PRESSIONI (RAW, senza filtro)
+        for key, value in sensor_data.items():
+            if key.startswith('pressure_'):
+                sensor_reading[key] = value
+        
+        # ⭐ SALVA E INOLTRA
         sensors_data[sensor_name] = sensor_reading
         sensors_status[sensor_name] = 'connected'
         
-        print(f'✅ Dati salvati e filtrati\n')
-        
-        # ⭐ EMETTI SUBITO VIA SOCKET.IO (NO RITARDI)
+        # ⭐ EMETTI VIA SOCKET.IO
         socketio.emit('sensor_update', {
             'sensor_name': sensor_name,
-            'data': sensor_reading
+            'data': sensor_reading  # Include IMU + pressioni
         }, namespace='/')
         
-        print(f'🟢 Emesso via Socket.IO al dashboard\n')
+        if pressure_keys:
+            print(f'   🟢 Emesso via Socket.IO (IMU + {len(pressure_keys)} pressioni)\n')
+        else:
+            print(f'   🟢 Emesso via Socket.IO (solo IMU)\n')
         
-        # ⭐ RISPOSTA IMMEDIATA (200 OK)
         return jsonify({'status': 'success'}), 200
         
     except Exception as e:
         print(f'❌ Errore: {e}')
+        import traceback
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
 @app.route('/api/clear', methods=['POST'])
@@ -192,7 +206,6 @@ def clear_data():
     sensors_data = {}
     sensors_status = {}
     
-    # ⭐ RESETTA TUTTI I FILTRI
     for sensor_name in sensors_filters:
         sensors_filters[sensor_name].reset()
     sensors_filters = {}
@@ -216,8 +229,9 @@ def handle_disconnect():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    print(f'\n🚀 Flask + SocketIO avviato su porta {port}')
+    print(f'\n🚀 Flask + SocketIO su porta {port}')
     print(f'📊 Endpoint: /api/data (POST)')
-    print(f'🔧 Filtro EMA: alpha=0.1')
-    print(f'📡 WebSocket: enabled\n')
+    print(f'🔧 Filtro EMA: alpha=0.1 (solo IMU)')
+    print(f'📡 WebSocket: enabled')
+    print(f'🦶 Pressioni: passthrough (no filtro)\n')
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)

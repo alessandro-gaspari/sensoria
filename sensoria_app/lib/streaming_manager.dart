@@ -113,172 +113,137 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
   
-Future<void> _setupStreaming({
-  required String deviceId,
-  required String deviceName,
-  required BluetoothCharacteristic rxChar,
-}) async {
-  try {
-    await rxChar.setNotifyValue(true);
-    await Future.delayed(const Duration(milliseconds: 200));
-    
-    _packetCounts[deviceId] = 0;
-    _latestData[deviceId] = null;
-    _Hz[deviceId] = 0;
-    _lastSendTime[deviceId] = DateTime.now();
-    _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
-    
-    debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz');
-    debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
-    
-    _startSendTimer(deviceId, deviceName);
-    
-    final nameLower = deviceName.toLowerCase();
-    final isSocks = nameLower.contains('calzin') || 
-                    nameLower.contains('sock') || 
-                    nameLower.contains('piede') || 
-                    nameLower.contains('foot');
-    
-    // ⭐ COUNTER per i pacchetti (per riconoscere il tipo)
-    int packetCounter = 0;
-    List<int>? imuBuffer;
-    Map<String, double> pressureData = {};
-    
-    final subscription = rxChar.lastValueStream.listen(
-      (value) {
-        if (value.isEmpty) return;
-        
-        // ⭐ OGNI CHUNK È UN PACCHETTO DA 20 BYTES
-        if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
-          packetCounter++;
+  Future<void> _setupStreaming({
+    required String deviceId,
+    required String deviceName,
+    required BluetoothCharacteristic rxChar,
+  }) async {
+    try {
+      await rxChar.setNotifyValue(true);
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      _packetCounts[deviceId] = 0;
+      _latestData[deviceId] = null;
+      _Hz[deviceId] = 0;
+      _lastSendTime[deviceId] = DateTime.now();
+      _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
+      
+      debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz');
+      debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
+      
+      _startSendTimer(deviceId, deviceName);
+      
+      final nameLower = deviceName.toLowerCase();
+      final isSocks = nameLower.contains('calzin') || 
+                      nameLower.contains('sock') || 
+                      nameLower.contains('piede') || 
+                      nameLower.contains('foot');
+      
+      // ⭐ COUNTER per i pacchetti (per riconoscere il tipo)
+      int packetCounter = 0;
+      List<int>? imuBuffer;
+      Map<String, double> pressureData = {};
+      
+      final subscription = rxChar.lastValueStream.listen(
+        (value) {
+          if (value.isEmpty) return;
           
-          // Pacchetto 1 di 3: IMU
-          if (packetCounter % 3 == 1) {
-            imuBuffer = List.from(value);
-            pressureData = {}; // Reset pressioni
-          }
-          // Pacchetto 2 di 3: Pressioni parte 1
-          else if (packetCounter % 3 == 2 && imuBuffer != null) {
-            // Estrai pressioni (salta header 0xF010, leggi bytes 2-19)
-            for (int i = 2; i < 20; i += 2) {
-              final idx = (i - 2) ~/ 2 + 1;
-              final val = value[i] | (value[i + 1] << 8);
-              final pressure = val > 32767 ? val - 65536 : val;
-              pressureData['pressure_$idx'] = pressure.toDouble();
+          // ⭐ OGNI CHUNK È UN PACCHETTO DA 20 BYTES
+          if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
+            packetCounter++;
+            
+            // Pacchetto 1 di 3: IMU
+            if (packetCounter % 3 == 1) {
+              imuBuffer = List.from(value);
+              pressureData = {}; // Reset pressioni
+            }
+            // Pacchetto 2 di 3: Pressioni parte 1
+            else if (packetCounter % 3 == 2 && imuBuffer != null) {
+              // Estrai pressioni (salta header 0xF010, leggi bytes 2-19)
+              for (int i = 2; i < 20; i += 2) {
+                final idx = (i - 2) ~/ 2 + 1;
+                final val = value[i] | (value[i + 1] << 8);
+                final pressure = val > 32767 ? val - 65536 : val;
+                pressureData['pressure_$idx'] = pressure.toDouble();
+              }
+            }
+            // Pacchetto 3 di 3: Completamento
+            else if (packetCounter % 3 == 0 && imuBuffer != null) {
+              // ⭐ PROCESSA TUTTO: IMU + PRESSIONI
+              _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
+              imuBuffer = null;
             }
           }
-          // Pacchetto 3 di 3: Pressioni parte 2 (o completamento)
-          else if (packetCounter % 3 == 0 && imuBuffer != null) {
-            // Aggiungi altre pressioni se necessario
-            // (per ora skippiamo, 9 pressioni sono sufficienti)
-            
-            // ⭐ PROCESSA TUTTO: IMU + PRESSIONI
-            _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
-            imuBuffer = null;
-          }
-        }
-      },
-      onError: (error) {
-        debugPrint('❌ [$deviceName] Stream error: $error');
-        _cleanupStreaming(deviceId);
-        notifyListeners();
-      },
-      onDone: () {
-        debugPrint('⚠️ [$deviceName] Stream done');
-        _cleanupStreaming(deviceId);
-        notifyListeners();
-      },
-    );
-    
-    _activeStreams[deviceId] = subscription;
-    debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
-    notifyListeners();
-    
-  } catch (e) {
-    debugPrint('❌ [$deviceName] Setup error: $e');
-    rethrow;
-  }
-}
-
-void _processCompletePacket(
-  List<int> imuData,
-  Map<String, double> pressureData,
-  String deviceId,
-  String deviceName,
-) {
-  _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
-  final packetNum = _packetCounts[deviceId]!;
-  
-  try {
-    final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
-    parsedData.addAll(pressureData);
-    
-    _latestData[deviceId] = {
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
-      'sensor_name': deviceName,
-      ...parsedData,
-    };
-    
-    final now = DateTime.now();
-    final lastSend = _lastSendTime[deviceId];
-    if (lastSend != null) {
-      final elapsed = now.difference(lastSend).inMilliseconds;
-      if (elapsed > 0) {
-        _Hz[deviceId] = (1000 ~/ elapsed);
-      }
-    }
-    
-    if (packetNum % 100 == 0) {
-      debugPrint(
-        '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-        'AX=${parsedData['accel_x']?.toStringAsFixed(4)} | '
-        'P=${pressureData.length} pressioni'
+        },
+        onError: (error) {
+          debugPrint('❌ [$deviceName] Stream error: $error');
+          _cleanupStreaming(deviceId);
+          notifyListeners();
+        },
+        onDone: () {
+          debugPrint('⚠️ [$deviceName] Stream done');
+          _cleanupStreaming(deviceId);
+          notifyListeners();
+        },
       );
+      
+      _activeStreams[deviceId] = subscription;
+      debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
+      notifyListeners();
+      
+    } catch (e) {
+      debugPrint('❌ [$deviceName] Setup error: $e');
+      rethrow;
     }
-    
-    notifyListeners();
-    
-  } catch (e) {
-    debugPrint('   ⚠️ Parse error: $e');
   }
-}
-
   
-  void _processPacket(List<int> data, String deviceId, String deviceName) {
+  void _processCompletePacket(
+    List<int> imuData,
+    Map<String, double> pressureData,
+    String deviceId,
+    String deviceName,
+  ) {
     _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
     final packetNum = _packetCounts[deviceId]!;
     
-    if (data.length >= 20) {
-      try {
-        final parsedData = _parseAndFilterIMUData(data, deviceId, deviceName);
-        
-        _latestData[deviceId] = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
-          'sensor_name': deviceName,
-          ...parsedData,
-        };
-        
-        final now = DateTime.now();
-        final lastSend = _lastSendTime[deviceId];
-        if (lastSend != null) {
-          final elapsed = now.difference(lastSend).inMilliseconds;
-          if (elapsed > 0) {
-            _Hz[deviceId] = (1000 ~/ elapsed);
-          }
-        }
-        
-        if (packetNum % 100 == 0) {
-          debugPrint(
-            '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-            'AX=${parsedData['accel_x']?.toStringAsFixed(4)}'
-          );
-        }
-        
-        notifyListeners();
-        
-      } catch (e) {
-        debugPrint('   ⚠️ Parse error: $e');
+    try {
+      final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
+      
+      // ⭐ AGGIUNGI LE PRESSIONI
+      parsedData.addAll(pressureData);
+      
+      // ⭐ DEBUG PRESSIONI
+      if (packetNum % 50 == 0 && pressureData.isNotEmpty) {
+        debugPrint('🦶 [$deviceName] Pressioni estratte: ${pressureData.length}');
+        debugPrint('   p1=${pressureData['pressure_1']}, p2=${pressureData['pressure_2']}');
       }
+      
+      _latestData[deviceId] = {
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'sensor_name': deviceName,
+        ...parsedData,  // Include IMU + pressioni
+      };
+      
+      final now = DateTime.now();
+      final lastSend = _lastSendTime[deviceId];
+      if (lastSend != null) {
+        final elapsed = now.difference(lastSend).inMilliseconds;
+        if (elapsed > 0) {
+          _Hz[deviceId] = (1000 ~/ elapsed);
+        }
+      }
+      
+      if (packetNum % 100 == 0) {
+        debugPrint(
+          '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
+          'AX=${parsedData['accel_x']?.toStringAsFixed(4)}'
+        );
+      }
+      
+      notifyListeners();
+      
+    } catch (e) {
+      debugPrint('   ⚠️ Parse error: $e');
     }
   }
   
@@ -303,6 +268,15 @@ void _processCompletePacket(
         'sensor_name': deviceName,
         'data': latestData,
       };
+      
+      // ⭐ DEBUG: Verifica invio pressioni ogni 5 secondi
+      if ((_packetCounts[deviceId] ?? 0) % 500 == 0) {
+        if (latestData.containsKey('pressure_1')) {
+          debugPrint('✅ [$deviceName] INVIO PRESSIONI: p1=${latestData['pressure_1']}');
+        } else {
+          debugPrint('❌ [$deviceName] NESSUNA PRESSIONE da inviare');
+        }
+      }
       
       final response = await http.post(
         Uri.parse(SERVER_URL),
@@ -329,19 +303,6 @@ void _processCompletePacket(
     String deviceId,
     String deviceName,
   ) {
-    final nameLower = deviceName.toLowerCase();
-    final isSocks = nameLower.contains('calzin') || 
-                    nameLower.contains('sock') || 
-                    nameLower.contains('piede') || 
-                    nameLower.contains('foot');
-    
-    if (isSocks && (_packetCounts[deviceId] ?? 0) % 50 == 0) {
-      debugPrint('🧦 [$deviceName] Lunghezza pacchetto: ${data.length} bytes');
-      if (data.length > 20) {
-        debugPrint('🧦 [$deviceName] Bytes extra: ${data.sublist(20)}');
-      }
-    }
-    
     if (data.length < 20) return {};
     
     int readInt16LE(int offset) {
@@ -378,20 +339,6 @@ void _processCompletePacket(
       rawMagY: rawMagY,
       rawMagZ: rawMagZ,
     );
-    
-    // ⭐ BYTES EXTRA - POTREBBERO ESSERE PRESSIONI
-    if (isSocks && data.length > 20) {
-      int pressureIndex = 1;
-      for (int i = 20; i < data.length - 1; i += 2) {
-        final pressureRaw = readInt16LE(i);
-        filteredData['pressure_$pressureIndex'] = pressureRaw.toDouble();
-        pressureIndex++;
-      }
-      
-      if ((_packetCounts[deviceId] ?? 0) % 50 == 0 && pressureIndex > 1) {
-        debugPrint('🧦 [$deviceName] Pressioni estratte: ${pressureIndex - 1}');
-      }
-    }
     
     return filteredData;
   }
