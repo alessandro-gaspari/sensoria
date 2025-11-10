@@ -32,44 +32,50 @@ var isCalibrated = false;
 var domCache = {};
 var pendingUpdates = {};
 
-// ⭐ FILTRO EMA PER PRESSIONI
-var pressureFilters = {};
+// ⭐ BASELINE PRESSIONI (calibrato all'inizio)
+var pressureBaselines = {};
 
-function initPressureFilter(sensorName) {
-    if (!pressureFilters[sensorName]) {
-        pressureFilters[sensorName] = {};
-        for (var i = 1; i <= 9; i++) {
-            pressureFilters[sensorName]['pressure_' + i] = 0;
+function initPressureBaseline(sensorName, pressureKey, value) {
+    if (!pressureBaselines[sensorName]) {
+        pressureBaselines[sensorName] = {};
+    }
+    if (!pressureBaselines[sensorName][pressureKey]) {
+        // Baseline = prime 10 letture
+        if (!pressureBaselines[sensorName][pressureKey + '_buffer']) {
+            pressureBaselines[sensorName][pressureKey + '_buffer'] = [];
+        }
+        var buffer = pressureBaselines[sensorName][pressureKey + '_buffer'];
+        buffer.push(value);
+        
+        if (buffer.length >= 10) {
+            var sum = 0;
+            for (var i = 0; i < buffer.length; i++) sum += buffer[i];
+            pressureBaselines[sensorName][pressureKey] = sum / buffer.length;
         }
     }
 }
 
-// ⭐ CONVERSIONE PRESSIONE CON OUTLIER REJECTION
-function convertAndFilterPressure(sensorName, pressureKey, raw) {
-    initPressureFilter(sensorName);
+// ⭐ CONVERSIONE CORRETTA (come nel paper)
+function convertPressureToPU(sensorName, pressureKey, raw) {
+    // Inizializza baseline
+    initPressureBaseline(sensorName, pressureKey, raw);
     
-    // Prendi valore assoluto
-    var absRaw = Math.abs(raw);
+    var baseline = pressureBaselines[sensorName][pressureKey];
+    if (!baseline) return 0; // Baseline non ancora calibrato
     
-    // ⭐ OUTLIER REJECTION: scarta valori anomali
-    if (absRaw > 30000) return 0;  // Troppo alto = rumore
-    if (absRaw < 50) return 0;     // Troppo basso = no pressione
+    // ⭐ VARIAZIONE DAL BASELINE (negativo = pressione, positivo = rilascio)
+    var delta = baseline - raw;  // Inverti segno: valori negativi raw = pressione
     
-    // ⭐ CONVERSIONE: scala sensata
-    // Assumiamo: 10000 raw units = 1 kg/m²
-    var kgM2 = absRaw / 10000.0;
+    // ⭐ NORMALIZZA: range tipico ±500 PU
+    // Mostra solo variazioni significative (> 50 PU)
+    if (Math.abs(delta) < 50) return 0;
     
-    // ⭐ CLAMP: limita range ragionevole (0-10 kg/m²)
-    if (kgM2 > 10) kgM2 = 10;
+    // ⭐ CLAMP ±500 PU (come specificato nel paper)
+    if (delta > 500) delta = 500;
+    if (delta < -500) delta = -500;
     
-    // ⭐ EMA SMOOTHING: riduci instabilità
-    var alpha = 0.25;  // Più reattivo di IMU
-    var lastValue = pressureFilters[sensorName][pressureKey];
-    var smoothed = alpha * kgM2 + (1 - alpha) * lastValue;
-    
-    pressureFilters[sensorName][pressureKey] = smoothed;
-    
-    return smoothed;
+    // Ritorna valore assoluto (solo pressioni positive)
+    return Math.abs(delta);
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -200,7 +206,7 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
         };
         
-        // Copia pressioni RAW (filtreremo dopo)
+        // Copia pressioni RAW
         for (var key in sensorData) {
             if (key.startsWith('pressure_')) {
                 convertedData[key] = sensorData[key];
@@ -235,7 +241,7 @@ function initializeSocketListeners() {
 
     socket.on('data_cleared', function() {
         sensors = {};
-        pressureFilters = {};
+        pressureBaselines = {};
         pitchSupBuffer = [];
         pitchInfBuffer = [];
         filteredPitchSup = 0;
@@ -329,50 +335,42 @@ function updateSensorCardOptimized(sensorName, data) {
         }, 50);
     }
     
-    // ⭐ AGGIORNA PRESSIONI CON FILTRO
+    // ⭐ AGGIORNA PRESSIONI (SEMPRE TUTTE E 9)
     var pressureHtml = '';
     var hasPressure = false;
     var totalPressure = 0;
-    var activeSensors = 0;
     
     for (var i = 1; i <= 9; i++) {
         var raw = data['pressure_' + i];
         if (raw !== undefined) {
             hasPressure = true;
             
-            // ⭐ CONVERTI E FILTRA
-            var kgM2 = convertAndFilterPressure(sensorName, 'pressure_' + i, raw);
+            // ⭐ CONVERTI (baseline-based)
+            var pu = convertPressureToPU(sensorName, 'pressure_' + i, raw);
             
-            // Mostra solo se > 0.05 (ignora rumore)
-            if (kgM2 > 0.05) {
-                totalPressure += kgM2;
-                activeSensors++;
-                
-                // Colore dinamico
-                var color = '#97c93e';
-                if (kgM2 > 1) color = '#ffa500';
-                if (kgM2 > 3) color = '#ff4444';
-                
-                pressureHtml += '<div style="font-size:11px; margin:2px 0; display:flex; justify-content:space-between;">' +
-                    '<span style="color:' + color + '; font-weight:600;">P' + i + ':</span>' +
-                    '<span><strong>' + kgM2.toFixed(2) + '</strong> <span style="color:#888; font-size:10px;">kg/m²</span></span>' +
-                    '</div>';
-            }
+            totalPressure += pu;
+            
+            // Colore dinamico
+            var color = '#666';
+            if (pu > 50) color = '#97c93e';
+            if (pu > 200) color = '#ffa500';
+            if (pu > 400) color = '#ff4444';
+            
+            pressureHtml += '<div style="font-size:10px; margin:2px 0; display:flex; justify-content:space-between;">' +
+                '<span style="color:' + color + '; font-weight:600;">P' + i + ':</span>' +
+                '<span><strong>' + pu.toFixed(0) + '</strong> <span style="color:#888; font-size:9px;">PU</span></span>' +
+                '</div>';
         }
     }
     
     if (hasPressure && cached.pressures) {
-        if (activeSensors > 0) {
-            cached.pressures.innerHTML = '<div style="margin-top:12px; padding:10px; background:rgba(151,201,62,0.1); border-radius:8px; border:1px solid rgba(151,201,62,0.2);">' +
-                '<div style="font-size:11px; color:#97c93e; font-weight:700; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">' +
-                    '<span>🦶 PRESSIONI (' + activeSensors + '/9)</span>' +
-                    '<span style="background:rgba(151,201,62,0.3); padding:3px 8px; border-radius:4px;">Σ ' + totalPressure.toFixed(2) + ' kg/m²</span>' +
-                '</div>' +
-                pressureHtml +
-                '</div>';
-        } else {
-            cached.pressures.innerHTML = '<div style="margin-top:12px; padding:8px; color:#666; font-size:11px; text-align:center;">Nessuna pressione rilevata</div>';
-        }
+        cached.pressures.innerHTML = '<div style="margin-top:10px; padding:8px; background:rgba(151,201,62,0.08); border-radius:6px; border:1px solid rgba(151,201,62,0.15);">' +
+            '<div style="font-size:10px; color:#97c93e; font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">' +
+                '<span>🦶 PRESSIONI (PU)</span>' +
+                '<span style="background:rgba(151,201,62,0.25); padding:2px 6px; border-radius:3px; font-size:9px;">Σ ' + totalPressure.toFixed(0) + '</span>' +
+            '</div>' +
+            pressureHtml +
+            '</div>';
     }
     
     if (!updateKneeAngleOptimized.lastCall || Date.now() - updateKneeAngleOptimized.lastCall > 50) {
@@ -491,7 +489,7 @@ function clearAllData() {
     fetch('/api/clear', { method: 'POST' })
         .then(function() {
             sensors = {};
-            pressureFilters = {};
+            pressureBaselines = {};
             pitchSupBuffer = [];
             pitchInfBuffer = [];
             filteredPitchSup = 0;
