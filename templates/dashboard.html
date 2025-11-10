@@ -7,7 +7,6 @@
     <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body style="background-color: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
-    
     <div class="dashboard-header">
         <h1 class="dashboard-title">📊 Sensoria Dashboard</h1>
         <div class="dashboard-info">
@@ -18,18 +17,13 @@
             <div id="fps-counter">0 Hz</div>
         </div>
     </div>
-    
     <div class="dashboard-container">
-        
         <div id="knee-angle-display" style="margin-bottom: 20px;"></div>
-        
         <div id="empty-state" class="visible">
             <h2>🔍 Nessun sensore connesso</h2>
             <p>Avvia l'app per iniziare lo streaming dei dati</p>
         </div>
-        
         <div id="sensors-grid"></div>
-        
         <div style="margin-top: 40px; text-align: center; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
             <button id="calibrateButton" onclick="calibrateKnee()" style="
                 background-color: #97c93e;
@@ -41,10 +35,7 @@
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.2s ease;
-            " onmouseover="this.style.backgroundColor='#6fa52d'" onmouseout="this.style.backgroundColor='#97c93e'">
-                📍 Calibra Ginocchio
-            </button>
-            
+            ">📍 Calibra Ginocchio</button>
             <button id="clearButton" onclick="clearAllData()" style="
                 background-color: #ff4444;
                 color: white;
@@ -55,12 +46,9 @@
                 font-weight: 600;
                 cursor: pointer;
                 transition: all 0.2s ease;
-            " onmouseover="this.style.backgroundColor='#cc0000'" onmouseout="this.style.backgroundColor='#ff4444'">
-                🗑️ Pulisci Dati
-            </button>
+            ">🗑️ Pulisci Dati</button>
         </div>
     </div>
-    
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="/static/dashboard.js"></script>
 </body>
