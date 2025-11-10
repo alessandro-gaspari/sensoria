@@ -223,6 +223,55 @@ def handle_connect():
         'timestamp': datetime.now().isoformat()
     })
 
+# ⭐ GESTISCI DATI IN ARRIVO DA FLUTTER VIA WEBSOCKET
+@socketio.on('sensor_data')
+def handle_sensor_data(data):
+    """Riceve dati via WebSocket da Flutter"""
+    try:
+        sensor_name = data.get('sensor_name', 'Unknown')
+        sensor_data = data.get('data', {})
+        
+        print(f'🔵 WebSocket da {sensor_name}')
+        
+        # Filtra IMU
+        if sensor_name not in sensors_filters:
+            sensors_filters[sensor_name] = SensorFilter(alpha=0.1)
+        
+        filtered_imu = sensors_filters[sensor_name].filter_imu_data(
+            raw_accel_x=int(sensor_data.get('accel_x', 0)),
+            raw_accel_y=int(sensor_data.get('accel_y', 0)),
+            raw_accel_z=int(sensor_data.get('accel_z', 0)),
+            raw_gyro_x=int(sensor_data.get('gyro_x', 0)),
+            raw_gyro_y=int(sensor_data.get('gyro_y', 0)),
+            raw_gyro_z=int(sensor_data.get('gyro_z', 0)),
+            raw_mag_x=int(sensor_data.get('mag_x', 0)),
+            raw_mag_y=int(sensor_data.get('mag_y', 0)),
+            raw_mag_z=int(sensor_data.get('mag_z', 0)),
+        )
+        
+        sensor_reading = {
+            'timestamp': sensor_data.get('timestamp', datetime.utcnow().isoformat()),
+            **filtered_imu,
+        }
+        
+        # Copia pressioni
+        for key, value in sensor_data.items():
+            if key.startswith('pressure_'):
+                sensor_reading[key] = value
+        
+        sensors_data[sensor_name] = sensor_reading
+        sensors_status[sensor_name] = 'connected'
+        
+        # Broadcast a tutti i client web
+        emit('sensor_update', {
+            'sensor_name': sensor_name,
+            'data': sensor_reading
+        }, broadcast=True)
+        
+    except Exception as e:
+        print(f'❌ WebSocket error: {e}')
+
+
 @socketio.on('disconnect')
 def handle_disconnect():
     print('❌ Client WebSocket disconnesso')

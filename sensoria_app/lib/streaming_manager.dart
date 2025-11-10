@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:async';
 import 'package:sensoria_cs/utils/sensor_filter.dart';
 
 class StreamingManager extends ChangeNotifier {
-  static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
-  static const int TARGET_HZ = 100;
+  static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
+  static const int TARGET_HZ = 50;  // ⭐ 50 Hz ottimale con WebSocket
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
   
   final Map<String, StreamSubscription> _activeStreams = {};
@@ -17,7 +16,9 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
   final Map<String, SensorFilter> _sensorFilters = {};
-  final Map<String, Timer?> _bufferTimers = {};
+  
+  IO.Socket? _socket;  // ⭐ WebSocket connection
+  bool _isSocketConnected = false;
   
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
@@ -31,8 +32,48 @@ class StreamingManager extends ChangeNotifier {
   @override
   void dispose() {
     debugPrint('🛑 StreamingManager DISPOSE');
+    _socket?.disconnect();
+    _socket?.dispose();
     stopAll();
     super.dispose();
+  }
+
+  // ⭐ CONNETTI WEBSOCKET
+  void _connectWebSocket() {
+    if (_socket != null && _isSocketConnected) {
+      debugPrint('✅ WebSocket già connesso');
+      return;
+    }
+    
+    debugPrint('🔌 Connessione WebSocket a $SERVER_URL...');
+    
+    _socket = IO.io(SERVER_URL, 
+      IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .enableAutoConnect()
+        .setReconnectionDelay(1000)
+        .setReconnectionAttempts(5)
+        .build()
+    );
+    
+    _socket!.onConnect((_) {
+      debugPrint('✅ WebSocket CONNESSO');
+      _isSocketConnected = true;
+    });
+    
+    _socket!.onDisconnect((_) {
+      debugPrint('❌ WebSocket DISCONNESSO');
+      _isSocketConnected = false;
+    });
+    
+    _socket!.onConnectError((error) {
+      debugPrint('❌ WebSocket errore connessione: $error');
+      _isSocketConnected = false;
+    });
+    
+    _socket!.onError((error) {
+      debugPrint('❌ WebSocket errore: $error');
+    });
   }
 
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
@@ -48,7 +89,10 @@ class StreamingManager extends ChangeNotifier {
   ) async {
     if (connectedDevices.isEmpty) return;
     
-    debugPrint('\n🚀 INIZIO STREAMING MULTI-SENSORE @ ${TARGET_HZ}Hz');
+    // ⭐ CONNETTI WEBSOCKET PRIMA DI INIZIARE
+    _connectWebSocket();
+    
+    debugPrint('\n🚀 INIZIO STREAMING @ ${TARGET_HZ}Hz via WebSocket');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
     debugPrint('🌐 Server: $SERVER_URL');
     debugPrint('🔧 Filtro EMA: alpha=0.12\n');
@@ -108,7 +152,7 @@ class StreamingManager extends ChangeNotifier {
       }
     }
     
-    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} sensori @ ${TARGET_HZ}Hz');
+    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz');
     debugPrint('📡 Stream attivi: ${_activeStreams.length}\n');
     notifyListeners();
   }
@@ -129,7 +173,6 @@ class StreamingManager extends ChangeNotifier {
       _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
       
       debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz');
-      debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
       
       _startSendTimer(deviceId, deviceName);
       
@@ -139,7 +182,6 @@ class StreamingManager extends ChangeNotifier {
                       nameLower.contains('piede') || 
                       nameLower.contains('foot');
       
-      // ⭐ COUNTER per i pacchetti (per riconoscere il tipo)
       int packetCounter = 0;
       List<int>? imuBuffer;
       Map<String, double> pressureData = {};
@@ -148,18 +190,14 @@ class StreamingManager extends ChangeNotifier {
         (value) {
           if (value.isEmpty) return;
           
-          // ⭐ OGNI CHUNK È UN PACCHETTO DA 20 BYTES
           if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
             packetCounter++;
             
-            // Pacchetto 1 di 3: IMU
             if (packetCounter % 3 == 1) {
               imuBuffer = List.from(value);
-              pressureData = {}; // Reset pressioni
+              pressureData = {};
             }
-            // Pacchetto 2 di 3: Pressioni parte 1
             else if (packetCounter % 3 == 2 && imuBuffer != null) {
-              // Estrai pressioni (salta header 0xF010, leggi bytes 2-19)
               for (int i = 2; i < 20; i += 2) {
                 final idx = (i - 2) ~/ 2 + 1;
                 final val = value[i] | (value[i + 1] << 8);
@@ -167,9 +205,7 @@ class StreamingManager extends ChangeNotifier {
                 pressureData['pressure_$idx'] = pressure.toDouble();
               }
             }
-            // Pacchetto 3 di 3: Completamento
             else if (packetCounter % 3 == 0 && imuBuffer != null) {
-              // ⭐ PROCESSA TUTTO: IMU + PRESSIONI
               _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
               imuBuffer = null;
             }
@@ -208,20 +244,12 @@ class StreamingManager extends ChangeNotifier {
     
     try {
       final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
-      
-      // ⭐ AGGIUNGI LE PRESSIONI
       parsedData.addAll(pressureData);
-      
-      // ⭐ DEBUG PRESSIONI
-      if (packetNum % 50 == 0 && pressureData.isNotEmpty) {
-        debugPrint('🦶 [$deviceName] Pressioni estratte: ${pressureData.length}');
-        debugPrint('   p1=${pressureData['pressure_1']}, p2=${pressureData['pressure_2']}');
-      }
       
       _latestData[deviceId] = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
         'sensor_name': deviceName,
-        ...parsedData,  // Include IMU + pressioni
+        ...parsedData,
       };
       
       final now = DateTime.now();
@@ -253,48 +281,34 @@ class StreamingManager extends ChangeNotifier {
     _sendTimers[deviceId] = Timer.periodic(
       Duration(milliseconds: INTERVAL_MS),
       (timer) {
-        _sendData(deviceId, deviceName);
+        _sendDataViaWebSocket(deviceId, deviceName);
       },
     );
   }
   
-  Future<void> _sendData(String deviceId, String deviceName) async {
+  // ⭐ INVIA DATI VIA WEBSOCKET
+  void _sendDataViaWebSocket(String deviceId, String deviceName) {
     final latestData = _latestData[deviceId];
     
     if (latestData == null) return;
     
+    if (_socket == null || !_isSocketConnected) {
+      debugPrint('⚠️ WebSocket non connesso, riconnetto...');
+      _connectWebSocket();
+      return;
+    }
+    
     try {
-      final jsonData = {
+      // ⭐ EMIT via WebSocket (molto più veloce di HTTP POST)
+      _socket!.emit('sensor_data', {
         'sensor_name': deviceName,
         'data': latestData,
-      };
-      
-      // ⭐ DEBUG: Verifica invio pressioni ogni 5 secondi
-      if ((_packetCounts[deviceId] ?? 0) % 500 == 0) {
-        if (latestData.containsKey('pressure_1')) {
-          debugPrint('✅ [$deviceName] INVIO PRESSIONI: p1=${latestData['pressure_1']}');
-        } else {
-          debugPrint('❌ [$deviceName] NESSUNA PRESSIONE da inviare');
-        }
-      }
-      
-      final response = await http.post(
-        Uri.parse(SERVER_URL),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(jsonData),
-      ).timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => http.Response('timeout', 408),
-      );
-      
-      if (response.statusCode != 200) {
-        debugPrint('⚠️ [$deviceName] Response: ${response.statusCode}');
-      }
+      });
       
       _lastSendTime[deviceId] = DateTime.now();
       
     } catch (e) {
-      debugPrint('❌ [$deviceName] Send error: $e');
+      debugPrint('❌ [$deviceName] WebSocket send error: $e');
     }
   }
   
@@ -311,7 +325,6 @@ class StreamingManager extends ChangeNotifier {
       return val > 32767 ? val - 65536 : val;
     }
     
-    // ⭐ LEGGI IMU (offset +2 per saltare header 0xF010)
     final rawAccelX = readInt16LE(2);
     final rawAccelY = readInt16LE(4);
     final rawAccelZ = readInt16LE(6);
@@ -323,12 +336,9 @@ class StreamingManager extends ChangeNotifier {
     final rawMagZ = readInt16LE(18);
     
     final filter = _sensorFilters[deviceId];
-    if (filter == null) {
-      debugPrint('⚠️ Filtro non trovato per $deviceId');
-      return {};
-    }
+    if (filter == null) return {};
     
-    final filteredData = filter.filterIMUData(
+    return filter.filterIMUData(
       rawAccelX: rawAccelX,
       rawAccelY: rawAccelY,
       rawAccelZ: rawAccelZ,
@@ -339,8 +349,6 @@ class StreamingManager extends ChangeNotifier {
       rawMagY: rawMagY,
       rawMagZ: rawMagZ,
     );
-    
-    return filteredData;
   }
   
   void _cleanupStreaming(String deviceId) {
@@ -349,8 +357,6 @@ class StreamingManager extends ChangeNotifier {
     _latestData.remove(deviceId);
     _sendTimers[deviceId]?.cancel();
     _sendTimers.remove(deviceId);
-    _bufferTimers[deviceId]?.cancel();
-    _bufferTimers.remove(deviceId);
     _Hz.remove(deviceId);
     _lastSendTime.remove(deviceId);
     _sensorFilters.remove(deviceId);
@@ -376,11 +382,6 @@ class StreamingManager extends ChangeNotifier {
     }
     _sendTimers.clear();
     
-    for (var timer in _bufferTimers.values) {
-      timer?.cancel();
-    }
-    _bufferTimers.clear();
-    
     for (var id in _activeStreams.keys.toList()) {
       try {
         await _activeStreams[id]?.cancel();
@@ -395,6 +396,10 @@ class StreamingManager extends ChangeNotifier {
     _Hz.clear();
     _lastSendTime.clear();
     _sensorFilters.clear();
+    
+    // ⭐ DISCONNETTI WEBSOCKET
+    _socket?.disconnect();
+    _isSocketConnected = false;
     
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
