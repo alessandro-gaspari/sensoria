@@ -1,7 +1,7 @@
 var socket = io({transports: ['websocket']});
 
 // --- Config e stato Pressioni ---
-var BODY_WEIGHT_KG = 75; // Inserisci qui il peso in kg!
+var BODY_WEIGHT_KG = 1; // Inserisci qui il peso in kg!
 var BASELINE_WARMUP = 20; // quante letture per baseline
 var BASELINE_ALPHA = 0.003; // drift lento del baseline
 var PRESS_MIN_DELTA = 8; // soglia variazione vera
