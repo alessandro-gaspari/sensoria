@@ -32,50 +32,20 @@ var isCalibrated = false;
 var domCache = {};
 var pendingUpdates = {};
 
-// ⭐ BASELINE PRESSIONI (calibrato all'inizio)
-var pressureBaselines = {};
-
-function initPressureBaseline(sensorName, pressureKey, value) {
-    if (!pressureBaselines[sensorName]) {
-        pressureBaselines[sensorName] = {};
-    }
-    if (!pressureBaselines[sensorName][pressureKey]) {
-        // Baseline = prime 10 letture
-        if (!pressureBaselines[sensorName][pressureKey + '_buffer']) {
-            pressureBaselines[sensorName][pressureKey + '_buffer'] = [];
-        }
-        var buffer = pressureBaselines[sensorName][pressureKey + '_buffer'];
-        buffer.push(value);
-        
-        if (buffer.length >= 10) {
-            var sum = 0;
-            for (var i = 0; i < buffer.length; i++) sum += buffer[i];
-            pressureBaselines[sensorName][pressureKey] = sum / buffer.length;
-        }
-    }
-}
-
-// ⭐ CONVERSIONE CORRETTA (come nel paper)
-function convertPressureToPU(sensorName, pressureKey, raw) {
-    // Inizializza baseline
-    initPressureBaseline(sensorName, pressureKey, raw);
+// ⭐ CONVERSIONE PRESSIONE (come tabella Sensoria)
+function convertPressureToPU(raw) {
+    // Baseline Sensoria: ~600 PU
+    // Range: 500-714 PU
+    // Variazioni: ±50 PU tipiche
     
-    var baseline = pressureBaselines[sensorName][pressureKey];
-    if (!baseline) return 0; // Baseline non ancora calibrato
+    // I tuoi dati: -32768 a +32767
+    // Scala: raw / 50 → PU range ±600
+    var pu = Math.abs(raw / 50);
     
-    // ⭐ VARIAZIONE DAL BASELINE (negativo = pressione, positivo = rilascio)
-    var delta = baseline - raw;  // Inverti segno: valori negativi raw = pressione
+    // Clamp 0-1000
+    if (pu > 1000) pu = 1000;
     
-    // ⭐ NORMALIZZA: range tipico ±500 PU
-    // Mostra solo variazioni significative (> 50 PU)
-    if (Math.abs(delta) < 50) return 0;
-    
-    // ⭐ CLAMP ±500 PU (come specificato nel paper)
-    if (delta > 500) delta = 500;
-    if (delta < -500) delta = -500;
-    
-    // Ritorna valore assoluto (solo pressioni positive)
-    return Math.abs(delta);
+    return pu;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -206,7 +176,7 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
         };
         
-        // Copia pressioni RAW
+        // ⭐ Copia 3 pressioni
         for (var key in sensorData) {
             if (key.startsWith('pressure_')) {
                 convertedData[key] = sensorData[key];
@@ -241,7 +211,6 @@ function initializeSocketListeners() {
 
     socket.on('data_cleared', function() {
         sensors = {};
-        pressureBaselines = {};
         pitchSupBuffer = [];
         pitchInfBuffer = [];
         filteredPitchSup = 0;
@@ -335,39 +304,38 @@ function updateSensorCardOptimized(sensorName, data) {
         }, 50);
     }
     
-    // ⭐ AGGIORNA PRESSIONI (SEMPRE TUTTE E 9)
+    // ⭐ AGGIORNA 3 PRESSIONI (S0, S1, S2)
     var pressureHtml = '';
     var hasPressure = false;
     var totalPressure = 0;
+    var sensorLabels = ['S0', 'S1', 'S2'];
     
-    for (var i = 1; i <= 9; i++) {
+    for (var i = 0; i <= 2; i++) {
         var raw = data['pressure_' + i];
         if (raw !== undefined) {
             hasPressure = true;
             
-            // ⭐ CONVERTI (baseline-based)
-            var pu = convertPressureToPU(sensorName, 'pressure_' + i, raw);
-            
+            var pu = convertPressureToPU(raw);
             totalPressure += pu;
             
             // Colore dinamico
             var color = '#666';
-            if (pu > 50) color = '#97c93e';
-            if (pu > 200) color = '#ffa500';
-            if (pu > 400) color = '#ff4444';
+            if (pu > 100) color = '#97c93e';
+            if (pu > 300) color = '#ffa500';
+            if (pu > 600) color = '#ff4444';
             
-            pressureHtml += '<div style="font-size:10px; margin:2px 0; display:flex; justify-content:space-between;">' +
-                '<span style="color:' + color + '; font-weight:600;">P' + i + ':</span>' +
-                '<span><strong>' + pu.toFixed(0) + '</strong> <span style="color:#888; font-size:9px;">PU</span></span>' +
+            pressureHtml += '<div style="font-size:12px; margin:4px 0; display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);">' +
+                '<span style="color:' + color + '; font-weight:700;">' + sensorLabels[i] + ':</span>' +
+                '<span><strong>' + pu.toFixed(0) + '</strong> <span style="color:#888; font-size:10px;">PU</span></span>' +
                 '</div>';
         }
     }
     
     if (hasPressure && cached.pressures) {
-        cached.pressures.innerHTML = '<div style="margin-top:10px; padding:8px; background:rgba(151,201,62,0.08); border-radius:6px; border:1px solid rgba(151,201,62,0.15);">' +
-            '<div style="font-size:10px; color:#97c93e; font-weight:700; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">' +
-                '<span>🦶 PRESSIONI (PU)</span>' +
-                '<span style="background:rgba(151,201,62,0.25); padding:2px 6px; border-radius:3px; font-size:9px;">Σ ' + totalPressure.toFixed(0) + '</span>' +
+        cached.pressures.innerHTML = '<div style="margin-top:14px; padding:12px; background:rgba(151,201,62,0.08); border-radius:8px; border:1px solid rgba(151,201,62,0.2);">' +
+            '<div style="font-size:11px; color:#97c93e; font-weight:700; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">' +
+                '<span>🦶 PRESSIONI PLANTARI</span>' +
+                '<span style="background:rgba(151,201,62,0.3); padding:4px 10px; border-radius:5px; font-size:10px;">Σ ' + totalPressure.toFixed(0) + ' PU</span>' +
             '</div>' +
             pressureHtml +
             '</div>';
@@ -489,7 +457,6 @@ function clearAllData() {
     fetch('/api/clear', { method: 'POST' })
         .then(function() {
             sensors = {};
-            pressureBaselines = {};
             pitchSupBuffer = [];
             pitchInfBuffer = [];
             filteredPitchSup = 0;

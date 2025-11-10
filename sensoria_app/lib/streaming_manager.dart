@@ -6,7 +6,7 @@ import 'package:sensoria_cs/utils/sensor_filter.dart';
 
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
-  static const int TARGET_HZ = 50;  // ⭐ 50 Hz ottimale con WebSocket
+  static const int TARGET_HZ = 50;
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
   
   final Map<String, StreamSubscription> _activeStreams = {};
@@ -17,7 +17,7 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, int> _Hz = {};
   final Map<String, SensorFilter> _sensorFilters = {};
   
-  IO.Socket? _socket;  // ⭐ WebSocket connection
+  IO.Socket? _socket;
   bool _isSocketConnected = false;
   
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
@@ -38,7 +38,6 @@ class StreamingManager extends ChangeNotifier {
     super.dispose();
   }
 
-  // ⭐ CONNETTI WEBSOCKET
   void _connectWebSocket() {
     if (_socket != null && _isSocketConnected) {
       debugPrint('✅ WebSocket già connesso');
@@ -89,13 +88,11 @@ class StreamingManager extends ChangeNotifier {
   ) async {
     if (connectedDevices.isEmpty) return;
     
-    // ⭐ CONNETTI WEBSOCKET PRIMA DI INIZIARE
     _connectWebSocket();
     
     debugPrint('\n🚀 INIZIO STREAMING @ ${TARGET_HZ}Hz via WebSocket');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
-    debugPrint('🌐 Server: $SERVER_URL');
-    debugPrint('🔧 Filtro EMA: alpha=0.12\n');
+    debugPrint('🌐 Server: $SERVER_URL\n');
     
     int successCount = 0;
     
@@ -152,8 +149,7 @@ class StreamingManager extends ChangeNotifier {
       }
     }
     
-    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz');
-    debugPrint('📡 Stream attivi: ${_activeStreams.length}\n');
+    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz\n');
     notifyListeners();
   }
   
@@ -176,12 +172,6 @@ class StreamingManager extends ChangeNotifier {
       
       _startSendTimer(deviceId, deviceName);
       
-      final nameLower = deviceName.toLowerCase();
-      final isSocks = nameLower.contains('calzin') || 
-                      nameLower.contains('sock') || 
-                      nameLower.contains('piede') || 
-                      nameLower.contains('foot');
-      
       int packetCounter = 0;
       List<int>? imuBuffer;
       Map<String, double> pressureData = {};
@@ -193,18 +183,22 @@ class StreamingManager extends ChangeNotifier {
           if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
             packetCounter++;
             
+            // Pacchetto 1 di 3: IMU
             if (packetCounter % 3 == 1) {
               imuBuffer = List.from(value);
               pressureData = {};
             }
+            // Pacchetto 2 di 3: Pressioni (3 sensori: S0, S1, S2)
             else if (packetCounter % 3 == 2 && imuBuffer != null) {
-              for (int i = 2; i < 20; i += 2) {
-                final idx = (i - 2) ~/ 2 + 1;
+              // ⭐ SOLO 3 SENSORI (bytes 2-7)
+              for (int i = 2; i < 8; i += 2) {
+                final sensorIdx = (i - 2) ~/ 2;  // 0, 1, 2
                 final val = value[i] | (value[i + 1] << 8);
                 final pressure = val > 32767 ? val - 65536 : val;
-                pressureData['pressure_$idx'] = pressure.toDouble();
+                pressureData['pressure_$sensorIdx'] = pressure.toDouble();
               }
             }
+            // Pacchetto 3 di 3: Completamento
             else if (packetCounter % 3 == 0 && imuBuffer != null) {
               _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
               imuBuffer = null;
@@ -244,7 +238,13 @@ class StreamingManager extends ChangeNotifier {
     
     try {
       final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
+      
+      // ⭐ AGGIUNGI 3 PRESSIONI
       parsedData.addAll(pressureData);
+      
+      if (packetNum % 100 == 0 && pressureData.isNotEmpty) {
+        debugPrint('🦶 [$deviceName] S0=${pressureData['pressure_0']}, S1=${pressureData['pressure_1']}, S2=${pressureData['pressure_2']}');
+      }
       
       _latestData[deviceId] = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
@@ -259,13 +259,6 @@ class StreamingManager extends ChangeNotifier {
         if (elapsed > 0) {
           _Hz[deviceId] = (1000 ~/ elapsed);
         }
-      }
-      
-      if (packetNum % 100 == 0) {
-        debugPrint(
-          '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-          'AX=${parsedData['accel_x']?.toStringAsFixed(4)}'
-        );
       }
       
       notifyListeners();
@@ -286,20 +279,17 @@ class StreamingManager extends ChangeNotifier {
     );
   }
   
-  // ⭐ INVIA DATI VIA WEBSOCKET
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
     final latestData = _latestData[deviceId];
     
     if (latestData == null) return;
     
     if (_socket == null || !_isSocketConnected) {
-      debugPrint('⚠️ WebSocket non connesso, riconnetto...');
       _connectWebSocket();
       return;
     }
     
     try {
-      // ⭐ EMIT via WebSocket (molto più veloce di HTTP POST)
       _socket!.emit('sensor_data', {
         'sensor_name': deviceName,
         'data': latestData,
@@ -397,7 +387,6 @@ class StreamingManager extends ChangeNotifier {
     _lastSendTime.clear();
     _sensorFilters.clear();
     
-    // ⭐ DISCONNETTI WEBSOCKET
     _socket?.disconnect();
     _isSocketConnected = false;
     
