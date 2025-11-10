@@ -13,9 +13,9 @@ var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
 // ⭐ FILTERING PARAMETERS
-var FILTER_ALPHA = 0.12;   // Più aggressivo (era 0.2)
-var BUFFER_SIZE = 8;       // Più grande (era 3)
-var OUTLIER_THRESHOLD = 15; // Scarta dati fuori range
+var FILTER_ALPHA = 0.12;
+var BUFFER_SIZE = 8;
+var OUTLIER_THRESHOLD = 15;
 
 var sensors = {};
 var isConnected = false;
@@ -36,7 +36,26 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
     startFpsCounter();
+    initializePressureSensors(); // ⭐ INIT PRESSIONI
 });
+
+// ⭐ INIZIALIZZA GRIGLIA SENSORI PRESSIONE
+function initializePressureSensors() {
+    ['left', 'right'].forEach(function(side) {
+        var container = document.getElementById('heatmap-' + side);
+        if (!container) return;
+        
+        for (var i = 1; i <= 9; i++) {
+            var sensor = document.createElement('div');
+            sensor.className = 'pressure-sensor pressure-low';
+            sensor.id = 'p-' + side + '-' + i;
+            sensor.innerHTML = 
+                '<span class="sensor-label">S' + i + '</span>' +
+                '<span class="sensor-value">---</span>';
+            container.appendChild(sensor);
+        }
+    });
+}
 
 function resetHeartbeat() {
     lastDataTime = Date.now();
@@ -78,31 +97,22 @@ function addToBuffer(buffer, value, maxSize) {
     if (buffer.length > maxSize) buffer.shift();
 }
 
-// ⭐ FORMULA CORRETTA: atan2(AX, AZ) per calcolare il pitch
 function calculatePitch(ax, az) {
     var pitch = Math.atan2(ax, az) * (180 / Math.PI);
     return pitch;
 }
 
-// ⭐ FILTERING CON OUTLIER REMOVAL (come Sensoria)
 function advancedFilterWithOutlierRemoval(newValue, filteredValue, alpha, buffer, bufferSize, threshold) {
-    // Se il nuovo valore è troppo lontano dalla media, ignora (outlier)
     var bufferAverage = getBufferAverage(buffer);
     var deviation = Math.abs(newValue - bufferAverage);
     
     if (buffer.length > 2 && deviation > threshold) {
         console.log('   ⚠️ OUTLIER SCARTATO: ' + newValue.toFixed(1) + '° (diff: ' + deviation.toFixed(1) + '°)');
-        // Ritorna il valore filtrato precedente senza aggiungere l'outlier
         return filteredValue;
     }
     
-    // Aggiungi al buffer
     addToBuffer(buffer, newValue, bufferSize);
-    
-    // Calcola la media del buffer
     var avg = getBufferAverage(buffer);
-    
-    // Exponential moving average: α * avg + (1-α) * previous
     var filtered = alpha * avg + (1 - alpha) * filteredValue;
     
     return filtered;
@@ -150,7 +160,6 @@ function initializeSocketListeners() {
             mag_z: sensorData.mag_z,
         });
         
-        // ⭐ CONVERTI I DATI GREZZI
         var convertedData = {
             timestamp: sensorData.timestamp,
             accel_x: convertAccelerometerRaw(sensorData.accel_x),
@@ -171,7 +180,6 @@ function initializeSocketListeners() {
         var n = sensorName.toLowerCase();
         var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
         
-        // ⭐ FILTRAGGIO CON OUTLIER REMOVAL
         if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
             filteredPitchSup = advancedFilterWithOutlierRemoval(
                 pitch, 
@@ -197,6 +205,10 @@ function initializeSocketListeners() {
         }
         
         updateSensorDirectly(sensorName, convertedData);
+        
+        // ⭐ AGGIORNA PRESSIONI PLANTARI
+        updatePressureData(sensorName, sensorData);
+        
         updateKneeAngleDisplay();
     });
 
@@ -220,6 +232,46 @@ function initializeSocketListeners() {
     });
 }
 
+// ⭐ AGGIORNA VISUALIZZAZIONE PRESSIONI PLANTARI
+function updatePressureData(sensorName, data) {
+    if (!data.pressure_1) return;
+    
+    // Mostra sezione pressioni
+    var pressureSection = document.getElementById('pressure-section');
+    if (pressureSection) {
+        pressureSection.style.display = 'block';
+    }
+    
+    // Determina lato (sx/dx)
+    var side = sensorName.toLowerCase().includes('sx') ? 'left' : 'right';
+    
+    // Aggiorna i 9 sensori
+    for (var i = 1; i <= 9; i++) {
+        var value = data['pressure_' + i];
+        if (value === undefined) continue;
+        
+        var sensorEl = document.getElementById('p-' + side + '-' + i);
+        if (!sensorEl) continue;
+        
+        var valueEl = sensorEl.querySelector('.sensor-value');
+        valueEl.textContent = Math.round(value);
+        
+        // Colore dinamico in base al valore
+        sensorEl.classList.remove('pressure-low', 'pressure-medium', 'pressure-high', 'pressure-very-high');
+        var absValue = Math.abs(value);
+        
+        if (absValue < 1000) {
+            sensorEl.classList.add('pressure-low');
+        } else if (absValue < 5000) {
+            sensorEl.classList.add('pressure-medium');
+        } else if (absValue < 10000) {
+            sensorEl.classList.add('pressure-high');
+        } else {
+            sensorEl.classList.add('pressure-very-high');
+        }
+    }
+}
+
 function calibrateKnee() {
     console.log('\n📍 CALIBRAZIONE');
     console.log('   SUP: ' + filteredPitchSup.toFixed(2) + '°');
@@ -235,7 +287,6 @@ function calibrateKnee() {
     alert('✅ Calibrato!\nOffset: ' + calibrationOffset.toFixed(1) + '°\n\nOra muovi il ginocchio!');
 }
 
-// ⭐ CALCOLA ANGOLO GINOCCHIO: differenza tra i due pitch filtrati
 function getKneeAngle() {
     var currentDifference = filteredPitchSup - filteredPitchInf;
     var relativeAngle = currentDifference - calibrationOffset;
@@ -302,47 +353,78 @@ function updateSensorDirectly(sensorName, data) {
 function createSensorCardFast(sensorName, data) {
     var grid = document.getElementById('sensors-grid');
     var currentSensors = grid.querySelectorAll('[data-sensor]').length;
-    if (currentSensors >= 6) return;
+    if (currentSensors >= 10) return;
     
     var emoji = getSensorEmoji(sensorName);
     var template = document.createElement('div');
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
-    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
-    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
-    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
-    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
-    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
-    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
-    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
-    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
-    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
+    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(4) : '---';
+    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(4) : '---';
+    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(4) : '---';
+    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(4) : '---';
+    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(4) : '---';
+    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(4) : '---';
+    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(4) : '---';
+    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(4) : '---';
+    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(4) : '---';
     
     template.innerHTML = 
-        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
-            '<div class="sensor-header">' + emoji + ' ' + sensorName + '</div>' +
+        '<div class="sensor-header">' +
+            '<div>' + emoji + ' ' + sensorName + '</div>' +
             '<div class="status-indicator active"></div>' +
         '</div>' +
-        '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #aaa; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
-            '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value" style="color: #4f4;">' + accelX + '</span></div>' +
-            '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + accelY + '</span></div>' +
-            '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value" style="color: #4f4;">' + accelZ + '</span></div>' +
+        
+        '<div class="sensor-data-section">' +
+            '<div class="sensor-data-section-title">📊 Accelerometro (g)</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">AX:</span>' +
+                '<span><span class="sensor-value">' + accelX + '</span><span class="sensor-unit">g</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">AY:</span>' +
+                '<span><span class="sensor-value">' + accelY + '</span><span class="sensor-unit">g</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">AZ:</span>' +
+                '<span><span class="sensor-value">' + accelZ + '</span><span class="sensor-unit">g</span></span>' +
+            '</div>' +
         '</div>' +
-        '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
-            '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
-            '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
-            '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
+        
+        '<div class="sensor-data-section">' +
+            '<div class="sensor-data-section-title">🌀 Giroscopio (°/s)</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">GX:</span>' +
+                '<span><span class="sensor-value">' + gyroX + '</span><span class="sensor-unit">°/s</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">GY:</span>' +
+                '<span><span class="sensor-value">' + gyroY + '</span><span class="sensor-unit">°/s</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">GZ:</span>' +
+                '<span><span class="sensor-value">' + gyroZ + '</span><span class="sensor-unit">°/s</span></span>' +
+            '</div>' +
         '</div>' +
-        '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-            '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
-            '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + magX + '</span></div>' +
-            '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + magY + '</span></div>' +
-            '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + magZ + '</span></div>' +
+        
+        '<div class="sensor-data-section">' +
+            '<div class="sensor-data-section-title">🧲 Magnetometro (µT)</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">MX:</span>' +
+                '<span><span class="sensor-value">' + magX + '</span><span class="sensor-unit">µT</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">MY:</span>' +
+                '<span><span class="sensor-value">' + magY + '</span><span class="sensor-unit">µT</span></span>' +
+            '</div>' +
+            '<div class="sensor-data-row">' +
+                '<span class="sensor-data-label">MZ:</span>' +
+                '<span><span class="sensor-value">' + magZ + '</span><span class="sensor-unit">µT</span></span>' +
+            '</div>' +
         '</div>' +
-        '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
+        
+        '<span class="sensor-timestamp">🕐 --:--:--</span>';
     
     var emptySlot = grid.querySelector('.sensor-col:not([data-sensor])');
     if (emptySlot) {
@@ -356,6 +438,114 @@ function createSensorCardFast(sensorName, data) {
         emptyState.classList.remove('visible');
         grid.style.display = 'grid';
     }
+}
+
+function renderSensors() {
+    var grid = document.getElementById('sensors-grid');
+    var emptyState = document.getElementById('empty-state');
+    
+    if (!grid || !emptyState) {
+        console.error('❌ ERROR: grid o emptyState element non trovato');
+        return;
+    }
+    
+    var sensorNames = Object.keys(sensors);
+    
+    if (sensorNames.length === 0) {
+        grid.style.display = 'none';
+        emptyState.classList.add('visible');
+        return;
+    }
+    
+    grid.style.display = 'grid';
+    emptyState.classList.remove('visible');
+    grid.innerHTML = '';
+    
+    var sensorsToShow = sensorNames.slice(0, 10);
+    sensorsToShow.forEach(function(name) {
+        var data = sensors[name];
+        var emoji = getSensorEmoji(name);
+        var card = document.createElement('div');
+        card.className = 'sensor-col connected';
+        card.setAttribute('data-sensor', name);
+        
+        var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(4) : '---';
+        var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(4) : '---';
+        var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(4) : '---';
+        var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(4) : '---';
+        var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(4) : '---';
+        var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(4) : '---';
+        var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(4) : '---';
+        var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(4) : '---';
+        var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(4) : '---';
+        
+        card.innerHTML =
+            '<div class="sensor-header">' +
+                '<div>' + emoji + ' ' + name + '</div>' +
+                '<div class="status-indicator"></div>' +
+            '</div>' +
+            
+            '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">📊 Accelerometro (g)</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">AX:</span>' +
+                    '<span><span class="sensor-value">' + accelX + '</span><span class="sensor-unit">g</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">AY:</span>' +
+                    '<span><span class="sensor-value">' + accelY + '</span><span class="sensor-unit">g</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">AZ:</span>' +
+                    '<span><span class="sensor-value">' + accelZ + '</span><span class="sensor-unit">g</span></span>' +
+                '</div>' +
+            '</div>' +
+            
+            '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">🌀 Giroscopio (°/s)</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">GX:</span>' +
+                    '<span><span class="sensor-value">' + gyroX + '</span><span class="sensor-unit">°/s</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">GY:</span>' +
+                    '<span><span class="sensor-value">' + gyroY + '</span><span class="sensor-unit">°/s</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">GZ:</span>' +
+                    '<span><span class="sensor-value">' + gyroZ + '</span><span class="sensor-unit">°/s</span></span>' +
+                '</div>' +
+            '</div>' +
+            
+            '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">🧲 Magnetometro (µT)</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">MX:</span>' +
+                    '<span><span class="sensor-value">' + magX + '</span><span class="sensor-unit">µT</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">MY:</span>' +
+                    '<span><span class="sensor-value">' + magY + '</span><span class="sensor-unit">µT</span></span>' +
+                '</div>' +
+                '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">MZ:</span>' +
+                    '<span><span class="sensor-value">' + magZ + '</span><span class="sensor-unit">µT</span></span>' +
+                '</div>' +
+            '</div>' +
+            
+            '<span class="sensor-timestamp">🕐 --:--:--</span>';
+        grid.appendChild(card);
+    });
+    
+    for (var i = sensorsToShow.length; i < 10; i++) {
+        var slot = document.createElement('div');
+        slot.className = 'sensor-col';
+        slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div><p style="text-align:center; color:#666; margin-top:20px;">In attesa...</p>';
+        grid.appendChild(slot);
+    }
+    
+    updateConnectionStatus(isConnected);
+    updateKneeAngleDisplay();
 }
 
 function fetchInitialData() {
@@ -383,83 +573,6 @@ function updateConnectionStatus(connected) {
     if (fpsEl) {
         fpsEl.textContent = currentFps + ' Hz';
     }
-}
-
-function renderSensors() {
-    var grid = document.getElementById('sensors-grid');
-    var emptyState = document.getElementById('empty-state');
-    
-    // ⭐ PROTEZIONE
-    if (!grid || !emptyState) {
-        console.error('❌ ERROR: grid o emptyState element non trovato');
-        return;
-    }
-    
-    var sensorNames = Object.keys(sensors);
-    
-    if (sensorNames.length === 0) {
-        grid.style.display = 'none';
-        emptyState.classList.add('visible');
-        return;
-    }
-    
-    grid.style.display = 'grid';
-    emptyState.classList.remove('visible');
-    grid.innerHTML = '';
-    
-    var sensorsToShow = sensorNames.slice(0, 6);
-    sensorsToShow.forEach(function(name) {
-        var data = sensors[name];
-        var emoji = getSensorEmoji(name);
-        var card = document.createElement('div');
-        card.className = 'sensor-col connected';
-        card.setAttribute('data-sensor', name);
-        
-        var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
-        var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
-        var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
-        var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
-        var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
-        var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
-        var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
-        var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
-        var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
-        
-        card.innerHTML =
-            '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
-                '<div class="sensor-header">' + emoji + ' ' + name + '</div><div class="status-indicator"></div>' +
-            '</div>' +
-            '<div style="background: #222; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #aaa; margin-bottom: 4px;">📊 ACCELEROMETRO (g)</div>' +
-                '<div class="sensor-data-row"><b>AX:</b> <span class="sensor-value" style="color: #4f4;">' + accelX + '</span></div>' +
-                '<div class="sensor-data-row"><b>AY:</b> <span class="sensor-value">' + accelY + '</span></div>' +
-                '<div class="sensor-data-row"><b>AZ:</b> <span class="sensor-value" style="color: #4f4;">' + accelZ + '</span></div>' +
-            '</div>' +
-            '<div style="background: #1a2a1a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #8a8; margin-bottom: 4px;">🌀 GIROSCOPIO (°/s)</div>' +
-                '<div class="sensor-data-row"><b>GX:</b> <span class="sensor-value">' + gyroX + '</span></div>' +
-                '<div class="sensor-data-row"><b>GY:</b> <span class="sensor-value">' + gyroY + '</span></div>' +
-                '<div class="sensor-data-row"><b>GZ:</b> <span class="sensor-value">' + gyroZ + '</span></div>' +
-            '</div>' +
-            '<div style="background: #1a1a2a; padding: 8px; border-radius: 4px; margin: 8px 0;">' +
-                '<div style="font-size: 10px; color: #88a; margin-bottom: 4px;">🧲 MAGNETOMETRO (µT)</div>' +
-                '<div class="sensor-data-row"><b>MX:</b> <span class="sensor-value">' + magX + '</span></div>' +
-                '<div class="sensor-data-row"><b>MY:</b> <span class="sensor-value">' + magY + '</span></div>' +
-                '<div class="sensor-data-row"><b>MZ:</b> <span class="sensor-value">' + magZ + '</span></div>' +
-            '</div>' +
-            '<div style="margin-top:12px; font-size:11px; color:#666; text-align:center;"><span class="sensor-timestamp">--:--:--</span></div>';
-        grid.appendChild(card);
-    });
-    
-    for (var i = sensorsToShow.length; i < 6; i++) {
-        var slot = document.createElement('div');
-        slot.className = 'sensor-col';
-        slot.innerHTML = '<div class="sensor-header">Slot ' + (i + 1) + '</div><p style="text-align:center; color:#666; margin-top:20px;">In attesa...</p>';
-        grid.appendChild(slot);
-    }
-    
-    updateConnectionStatus(isConnected);
-    updateKneeAngleDisplay();
 }
 
 function getSensorEmoji(name) {

@@ -8,7 +8,7 @@ import 'package:sensoria_cs/utils/sensor_filter.dart';
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com/api/data';
   static const int TARGET_HZ = 100;
-  static const int INTERVAL_MS = 1000 ~/ TARGET_HZ; // 10ms
+  static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
   
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
@@ -16,9 +16,8 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
-  
-  // ⭐ FILTRI EMA
   final Map<String, SensorFilter> _sensorFilters = {};
+  final Map<String, Timer?> _bufferTimers = {};
   
   bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
@@ -27,7 +26,6 @@ class StreamingManager extends ChangeNotifier {
     (key, value) => MapEntry(key, true),
   ));
 
-  /// ⭐ GETTER per TrackingScreen
   Map<String, Map<String, dynamic>?> get allSensorData => Map.from(_latestData);
 
   @override
@@ -115,86 +113,172 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
   
-  Future<void> _setupStreaming({
-    required String deviceId,
-    required String deviceName,
-    required BluetoothCharacteristic rxChar,
-  }) async {
-    try {
-      await rxChar.setNotifyValue(true);
-      await Future.delayed(const Duration(milliseconds: 200));
-      
-      _packetCounts[deviceId] = 0;
-      _latestData[deviceId] = null;
-      _Hz[deviceId] = 0;
-      _lastSendTime[deviceId] = DateTime.now();
-      
-      // ⭐ CREA IL FILTRO PER QUESTO SENSORE
-      _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
-      
-      debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz (${INTERVAL_MS}ms interval)');
-      debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
-      
-      _startSendTimer(deviceId, deviceName);
-      
-      final subscription = rxChar.lastValueStream.listen(
-        (value) {
-          if (value.isEmpty) return;
+Future<void> _setupStreaming({
+  required String deviceId,
+  required String deviceName,
+  required BluetoothCharacteristic rxChar,
+}) async {
+  try {
+    await rxChar.setNotifyValue(true);
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    _packetCounts[deviceId] = 0;
+    _latestData[deviceId] = null;
+    _Hz[deviceId] = 0;
+    _lastSendTime[deviceId] = DateTime.now();
+    _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
+    
+    debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz');
+    debugPrint('🔧 [$deviceName] Filtro EMA inizializzato');
+    
+    _startSendTimer(deviceId, deviceName);
+    
+    final nameLower = deviceName.toLowerCase();
+    final isSocks = nameLower.contains('calzin') || 
+                    nameLower.contains('sock') || 
+                    nameLower.contains('piede') || 
+                    nameLower.contains('foot');
+    
+    // ⭐ COUNTER per i pacchetti (per riconoscere il tipo)
+    int packetCounter = 0;
+    List<int>? imuBuffer;
+    Map<String, double> pressureData = {};
+    
+    final subscription = rxChar.lastValueStream.listen(
+      (value) {
+        if (value.isEmpty) return;
+        
+        // ⭐ OGNI CHUNK È UN PACCHETTO DA 20 BYTES
+        if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
+          packetCounter++;
           
-          _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
-          final packetNum = _packetCounts[deviceId]!;
-          
-          if (value.length >= 20) {
-            try {
-              // ⭐ PARSE E FILTRA I DATI CON EMA
-              final data = _parseAndFilterIMUData(value, deviceId);
-              
-              _latestData[deviceId] = {
-                'timestamp': DateTime.now().toUtc().toIso8601String(),
-                'sensor_name': deviceName,
-                ...data,
-              };
-              
-              final now = DateTime.now();
-              final elapsed = now.difference(_lastSendTime[deviceId]!).inMilliseconds;
-              if (elapsed > 0) {
-                _Hz[deviceId] = (1000 ~/ elapsed);
-              }
-              
-              debugPrint(
-                '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
-                'AX=${data['accel_x']?.toStringAsFixed(4)}, '
-                'AY=${data['accel_y']?.toStringAsFixed(4)}, '
-                'AZ=${data['accel_z']?.toStringAsFixed(4)}'
-              );
-              
-              // ⭐ NOTIFICA I LISTENER (UI si aggiorna @ 100Hz)
-              notifyListeners();
-              
-            } catch (e) {
-              debugPrint('   ⚠️ Parse error: $e');
+          // Pacchetto 1 di 3: IMU
+          if (packetCounter % 3 == 1) {
+            imuBuffer = List.from(value);
+            pressureData = {}; // Reset pressioni
+          }
+          // Pacchetto 2 di 3: Pressioni parte 1
+          else if (packetCounter % 3 == 2 && imuBuffer != null) {
+            // Estrai pressioni (salta header 0xF010, leggi bytes 2-19)
+            for (int i = 2; i < 20; i += 2) {
+              final idx = (i - 2) ~/ 2 + 1;
+              final val = value[i] | (value[i + 1] << 8);
+              final pressure = val > 32767 ? val - 65536 : val;
+              pressureData['pressure_$idx'] = pressure.toDouble();
             }
           }
-        },
-        onError: (error) {
-          debugPrint('❌ [$deviceName] Stream error: $error');
-          _cleanupStreaming(deviceId);
-          notifyListeners();
-        },
-        onDone: () {
-          debugPrint('⚠️ [$deviceName] Stream done');
-          _cleanupStreaming(deviceId);
-          notifyListeners();
-        },
+          // Pacchetto 3 di 3: Pressioni parte 2 (o completamento)
+          else if (packetCounter % 3 == 0 && imuBuffer != null) {
+            // Aggiungi altre pressioni se necessario
+            // (per ora skippiamo, 9 pressioni sono sufficienti)
+            
+            // ⭐ PROCESSA TUTTO: IMU + PRESSIONI
+            _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
+            imuBuffer = null;
+          }
+        }
+      },
+      onError: (error) {
+        debugPrint('❌ [$deviceName] Stream error: $error');
+        _cleanupStreaming(deviceId);
+        notifyListeners();
+      },
+      onDone: () {
+        debugPrint('⚠️ [$deviceName] Stream done');
+        _cleanupStreaming(deviceId);
+        notifyListeners();
+      },
+    );
+    
+    _activeStreams[deviceId] = subscription;
+    debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
+    notifyListeners();
+    
+  } catch (e) {
+    debugPrint('❌ [$deviceName] Setup error: $e');
+    rethrow;
+  }
+}
+
+void _processCompletePacket(
+  List<int> imuData,
+  Map<String, double> pressureData,
+  String deviceId,
+  String deviceName,
+) {
+  _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
+  final packetNum = _packetCounts[deviceId]!;
+  
+  try {
+    final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
+    parsedData.addAll(pressureData);
+    
+    _latestData[deviceId] = {
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'sensor_name': deviceName,
+      ...parsedData,
+    };
+    
+    final now = DateTime.now();
+    final lastSend = _lastSendTime[deviceId];
+    if (lastSend != null) {
+      final elapsed = now.difference(lastSend).inMilliseconds;
+      if (elapsed > 0) {
+        _Hz[deviceId] = (1000 ~/ elapsed);
+      }
+    }
+    
+    if (packetNum % 100 == 0) {
+      debugPrint(
+        '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
+        'AX=${parsedData['accel_x']?.toStringAsFixed(4)} | '
+        'P=${pressureData.length} pressioni'
       );
-      
-      _activeStreams[deviceId] = subscription;
-      debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
-      notifyListeners();
-      
-    } catch (e) {
-      debugPrint('❌ [$deviceName] Setup error: $e');
-      rethrow;
+    }
+    
+    notifyListeners();
+    
+  } catch (e) {
+    debugPrint('   ⚠️ Parse error: $e');
+  }
+}
+
+  
+  void _processPacket(List<int> data, String deviceId, String deviceName) {
+    _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
+    final packetNum = _packetCounts[deviceId]!;
+    
+    if (data.length >= 20) {
+      try {
+        final parsedData = _parseAndFilterIMUData(data, deviceId, deviceName);
+        
+        _latestData[deviceId] = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'sensor_name': deviceName,
+          ...parsedData,
+        };
+        
+        final now = DateTime.now();
+        final lastSend = _lastSendTime[deviceId];
+        if (lastSend != null) {
+          final elapsed = now.difference(lastSend).inMilliseconds;
+          if (elapsed > 0) {
+            _Hz[deviceId] = (1000 ~/ elapsed);
+          }
+        }
+        
+        if (packetNum % 100 == 0) {
+          debugPrint(
+            '📦 [$deviceName] #$packetNum @ ${_Hz[deviceId]} Hz | '
+            'AX=${parsedData['accel_x']?.toStringAsFixed(4)}'
+          );
+        }
+        
+        notifyListeners();
+        
+      } catch (e) {
+        debugPrint('   ⚠️ Parse error: $e');
+      }
     }
   }
   
@@ -209,29 +293,15 @@ class StreamingManager extends ChangeNotifier {
     );
   }
   
-  /// ⭐ PARSE, FILTRA CON EMA E INVIA DATI VIA HTTP POST
   Future<void> _sendData(String deviceId, String deviceName) async {
     final latestData = _latestData[deviceId];
     
-    if (latestData == null) {
-      return;
-    }
+    if (latestData == null) return;
     
     try {
       final jsonData = {
         'sensor_name': deviceName,
-        'data': {
-          'timestamp': latestData['timestamp'],
-          'accel_x': latestData['accel_x'],
-          'accel_y': latestData['accel_y'],
-          'accel_z': latestData['accel_z'],
-          'gyro_x': latestData['gyro_x'],
-          'gyro_y': latestData['gyro_y'],
-          'gyro_z': latestData['gyro_z'],
-          'mag_x': latestData['mag_x'],
-          'mag_y': latestData['mag_y'],
-          'mag_z': latestData['mag_z'],
-        }
+        'data': latestData,
       };
       
       final response = await http.post(
@@ -243,9 +313,7 @@ class StreamingManager extends ChangeNotifier {
         onTimeout: () => http.Response('timeout', 408),
       );
       
-      if (response.statusCode == 200) {
-        debugPrint('✅ [$deviceName] Data sent successfully');
-      } else {
+      if (response.statusCode != 200) {
         debugPrint('⚠️ [$deviceName] Response: ${response.statusCode}');
       }
       
@@ -256,19 +324,33 @@ class StreamingManager extends ChangeNotifier {
     }
   }
   
-  /// ⭐ PARSE RAW E FILTRA CON EMA
   Map<String, double> _parseAndFilterIMUData(
     List<int> data,
     String deviceId,
+    String deviceName,
   ) {
+    final nameLower = deviceName.toLowerCase();
+    final isSocks = nameLower.contains('calzin') || 
+                    nameLower.contains('sock') || 
+                    nameLower.contains('piede') || 
+                    nameLower.contains('foot');
+    
+    if (isSocks && (_packetCounts[deviceId] ?? 0) % 50 == 0) {
+      debugPrint('🧦 [$deviceName] Lunghezza pacchetto: ${data.length} bytes');
+      if (data.length > 20) {
+        debugPrint('🧦 [$deviceName] Bytes extra: ${data.sublist(20)}');
+      }
+    }
+    
     if (data.length < 20) return {};
     
     int readInt16LE(int offset) {
+      if (offset + 1 >= data.length) return 0;
       int val = data[offset] | (data[offset + 1] << 8);
       return val > 32767 ? val - 65536 : val;
     }
     
-    // ⭐ LEGGI RAW
+    // ⭐ LEGGI IMU (offset +2 per saltare header 0xF010)
     final rawAccelX = readInt16LE(2);
     final rawAccelY = readInt16LE(4);
     final rawAccelZ = readInt16LE(6);
@@ -279,14 +361,13 @@ class StreamingManager extends ChangeNotifier {
     final rawMagY = readInt16LE(16);
     final rawMagZ = readInt16LE(18);
     
-    // ⭐ FILTRA CON EMA (il filtro è già creato in _setupStreaming)
     final filter = _sensorFilters[deviceId];
     if (filter == null) {
       debugPrint('⚠️ Filtro non trovato per $deviceId');
       return {};
     }
     
-    return filter.filterIMUData(
+    final filteredData = filter.filterIMUData(
       rawAccelX: rawAccelX,
       rawAccelY: rawAccelY,
       rawAccelZ: rawAccelZ,
@@ -297,6 +378,22 @@ class StreamingManager extends ChangeNotifier {
       rawMagY: rawMagY,
       rawMagZ: rawMagZ,
     );
+    
+    // ⭐ BYTES EXTRA - POTREBBERO ESSERE PRESSIONI
+    if (isSocks && data.length > 20) {
+      int pressureIndex = 1;
+      for (int i = 20; i < data.length - 1; i += 2) {
+        final pressureRaw = readInt16LE(i);
+        filteredData['pressure_$pressureIndex'] = pressureRaw.toDouble();
+        pressureIndex++;
+      }
+      
+      if ((_packetCounts[deviceId] ?? 0) % 50 == 0 && pressureIndex > 1) {
+        debugPrint('🧦 [$deviceName] Pressioni estratte: ${pressureIndex - 1}');
+      }
+    }
+    
+    return filteredData;
   }
   
   void _cleanupStreaming(String deviceId) {
@@ -305,6 +402,8 @@ class StreamingManager extends ChangeNotifier {
     _latestData.remove(deviceId);
     _sendTimers[deviceId]?.cancel();
     _sendTimers.remove(deviceId);
+    _bufferTimers[deviceId]?.cancel();
+    _bufferTimers.remove(deviceId);
     _Hz.remove(deviceId);
     _lastSendTime.remove(deviceId);
     _sensorFilters.remove(deviceId);
@@ -329,6 +428,11 @@ class StreamingManager extends ChangeNotifier {
       timer.cancel();
     }
     _sendTimers.clear();
+    
+    for (var timer in _bufferTimers.values) {
+      timer?.cancel();
+    }
+    _bufferTimers.clear();
     
     for (var id in _activeStreams.keys.toList()) {
       try {

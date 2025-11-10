@@ -13,7 +13,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
   @override
   void initState() {
     super.initState();
-    debugPrint('\n🎯 TrackingScreen INIT - Sensori Reali');
+    debugPrint('\n🎯 TrackingScreen INIT');
   }
 
   @override
@@ -26,103 +26,155 @@ class _TrackingScreenState extends State<TrackingScreen> {
     debugPrint('🛑 STOP STREAMING');
     final streamingManager = Provider.of<StreamingManager>(context, listen: false);
     await streamingManager.stopAll();
-    if (mounted) {
-      Navigator.of(context).pop();
-    }
+    if (mounted) Navigator.of(context).pop();
   }
 
   Color _getColorByIndex(int index) {
     const colors = [
-      Color.fromRGBO(76, 175, 80, 1),      // Verde
-      Color.fromRGBO(33, 150, 243, 1),     // Blu
-      Color.fromRGBO(255, 152, 0, 1),      // Arancione
-      Color.fromRGBO(156, 39, 176, 1),     // Viola
+      Color.fromRGBO(76, 175, 80, 1),    // Verde
+      Color.fromRGBO(33, 150, 243, 1),   // Blu
+      Color.fromRGBO(255, 152, 0, 1),    // Arancione
+      Color.fromRGBO(156, 39, 176, 1),   // Viola
+      Color.fromRGBO(244, 67, 54, 1),    // Rosso
+      Color.fromRGBO(0, 188, 212, 1),    // Ciano
     ];
     return colors[index % colors.length];
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('DATI REAL TIME'),
-        centerTitle: true,
-        elevation: 0,
-      ),
-      body: SafeArea(
-        child: Consumer<StreamingManager>(
-          builder: (context, streamingManager, _) {
-            final allSensorData = streamingManager.allSensorData;
-
-            // ⭐ CONVERTI IN LISTA PER AVERE INDICE
-            final sensorsEntries = allSensorData.entries.toList();
-
-            return Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: List.generate(
-                        sensorsEntries.length,
-                        (index) {
-                          final entry = sensorsEntries[index];
-                          final data = entry.value;
-                          if (data == null) return SizedBox.shrink();
-
-                          // ⭐ ESTRAI NOME E ICONA DAL SENSORE
-                          final sensorName = (data['sensor_name'] as String?) ?? 'Unknown';
-                          final color = _getColorByIndex(index);
-
-                          return _buildRow(
-                            sensorName: sensorName,
-                            data: data,
-                            color: color,
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: OutlinedButton.icon(
-                      onPressed: _stopStreamingAndExit,
-                      icon: const Icon(Icons.stop_circle, size: 22),
-                      label: const Text(
-                        'FERMA STREAM',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFFF4444),
-                        side: const BorderSide(color: Color(0xFFFF4444), width: 2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
-    );
+  String _getIconFromName(String name) {
+    final lower = name.toLowerCase();
+    if (lower.contains('ginocchio') && lower.contains('sup')) return '🔝';
+    if (lower.contains('ginocchio') && lower.contains('inf')) return '🔻';
+    if (lower.contains('calzin') || lower.contains('sock') || lower.contains('piede')) return '🧦';
+    if (lower.contains('braccio') || lower.contains('arm')) return '🦾';
+    if (lower.contains('destro') || lower.contains('right') || lower.contains('dx')) return '➡️';
+    if (lower.contains('sinistro') || lower.contains('left') || lower.contains('sx')) return '⬅️';
+    return '📍';
   }
 
-  Widget _buildRow({
-    required String sensorName,
-    required Map<String, dynamic> data,
-    required Color color,
-  }) {
-    String icon = _getIconFromName(sensorName);
+  bool _isSocksSensor(String name) {
+    final lower = name.toLowerCase();
+    return lower.contains('calzin') || lower.contains('sock') || lower.contains('piede') || lower.contains('foot');
+  }
 
+  @override
+Widget build(BuildContext context) {
+  return Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      title: const Text('📊 Sensori In Tempo Reale'),
+      centerTitle: true,
+      elevation: 0,
+    ),
+    body: SafeArea(
+      child: Consumer<StreamingManager>(
+        builder: (context, streamingManager, _) {
+          final allSensorData = streamingManager.allSensorData;
+          final sensorEntries = allSensorData.entries.toList();
+
+          return Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: List.generate(
+                      sensorEntries.length,
+                      (index) {
+                        final entry = sensorEntries[index];
+                        final data = entry.value;
+                        if (data == null) return const SizedBox.shrink();
+                        
+                        final sensorName = (data['sensor_name'] as String?) ?? 'Unknown';
+                        final color = _getColorByIndex(index);
+                        final icon = _getIconFromName(sensorName);
+                        final isSocks = _isSocksSensor(sensorName);
+
+                        // ⭐ Campi standard IMU
+                        const standardKeys = {
+                          'sensor_name',
+                          'timestamp',
+                          'accel_x',
+                          'accel_y',
+                          'accel_z',
+                          'gyro_x',
+                          'gyro_y',
+                          'gyro_z',
+                          'mag_x',
+                          'mag_y',
+                          'mag_z',
+                        };
+
+                        // ⭐ Estrai campi extra (pressioni)
+                        final extraFields = <String, double>{};
+                        if (isSocks) {
+                          data.forEach((k, v) {
+                            if (!standardKeys.contains(k)) {
+                              if (v is num) {
+                                extraFields[k] = v.toDouble();
+                              }
+                            }
+                          });
+                          
+                          // ⭐ DEBUG PRINT
+                          debugPrint('🧦 [$sensorName] È un calzino!');
+                          debugPrint('🧦 [$sensorName] Tutte le chiavi: ${data.keys.toList()}');
+                          debugPrint('🧦 [$sensorName] Campi extra trovati: ${extraFields.keys.toList()}');
+                          debugPrint('🧦 [$sensorName] Valori extra: $extraFields');
+                        }
+
+                        return _buildSensorCard(
+                          sensorName: sensorName,
+                          icon: icon,
+                          color: color,
+                          data: data,
+                          extraFields: extraFields,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: OutlinedButton.icon(
+                    onPressed: _stopStreamingAndExit,
+                    icon: const Icon(Icons.stop_circle, size: 22),
+                    label: const Text(
+                      'FERMA STREAM',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFFFF4444),
+                      side: const BorderSide(color: Color(0xFFFF4444), width: 2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    ),
+  );
+}
+
+
+
+  Widget _buildSensorCard({
+    required String sensorName,
+    required String icon,
+    required Color color,
+    required Map<String, dynamic> data,
+    required Map<String, double> extraFields,
+  }) {
     return Container(
       margin: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -164,6 +216,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
             const SizedBox(height: 12),
             Row(
               children: [
+                // Acc
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -176,6 +229,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
+                // Gyro
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -188,6 +242,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                   ),
                 ),
                 const SizedBox(width: 16),
+                // Mag
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -201,21 +256,15 @@ class _TrackingScreenState extends State<TrackingScreen> {
                 ),
               ],
             ),
+            if (extraFields.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildHeader('🦶 Pressione', color),
+              ...extraFields.entries.map((e) => _buildValue(e.key, e.value)),
+            ],
           ],
-        ),
-      ),
-    );
-  }
-
-  String _getIconFromName(String name) {
-    final lower = name.toLowerCase();
-    if (lower.contains('ginoc') && lower.contains('sup')) return '🦿';
-    if (lower.contains('ginoc') && lower.contains('inf')) return '🦿';
-    if (lower.contains('calzin') || lower.contains('sock') || lower.contains('piede')) return '🧦';
-    if (lower.contains('bracc') || lower.contains('arm')) return '🦾';
-    if (lower.contains('destr') || lower.contains('right') || lower.contains('dx')) return '➡️';
-    if (lower.contains('sinis') || lower.contains('left') || lower.contains('sx')) return '⬅️';
-    return '📍';
+        ), 
+      ),     
+    );   
   }
 
   Widget _buildHeader(String text, Color color) {
@@ -233,7 +282,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w600)),
-          Text(val.toStringAsFixed(3), style: const TextStyle(color: Color.fromRGBO(151, 201, 62, 1), fontSize: 9, fontFamily: 'Courier New', fontWeight: FontWeight.w600)),
+          Text(val.toStringAsFixed(3),
+            style: const TextStyle(
+              color: Color.fromRGBO(151, 201, 62, 1),
+              fontSize: 9,
+              fontFamily: 'Courier New',
+              fontWeight: FontWeight.w600,
+            )
+          ),
         ],
       ),
     );
