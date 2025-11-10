@@ -32,20 +32,67 @@ var isCalibrated = false;
 var domCache = {};
 var pendingUpdates = {};
 
-// ⭐ CONVERSIONE PRESSIONE (come tabella Sensoria)
-function convertPressureToPU(raw) {
-    // Baseline Sensoria: ~600 PU
-    // Range: 500-714 PU
-    // Variazioni: ±50 PU tipiche
+// ⭐ BASELINE PRESSIONI (calibrazione automatica)
+var pressureBaselines = {};
+
+// ⭐ PESO CORPOREO (da impostare o rilevare)
+var BODY_WEIGHT_KG = 75; // Modifica con il peso dell'atleta
+
+// ⭐ CONVERSIONE PRESSIONE - FORMULA SCIENTIFICA
+function initPressureBaseline(sensorName, sensorKey, rawValue) {
+    if (!pressureBaselines[sensorName]) {
+        pressureBaselines[sensorName] = {};
+    }
     
-    // I tuoi dati: -32768 a +32767
-    // Scala: raw / 50 → PU range ±600
-    var pu = Math.abs(raw / 50);
+    if (!pressureBaselines[sensorName][sensorKey]) {
+        // Calibra baseline: media prime 20 letture
+        if (!pressureBaselines[sensorName][sensorKey + '_buffer']) {
+            pressureBaselines[sensorName][sensorKey + '_buffer'] = [];
+        }
+        
+        var buffer = pressureBaselines[sensorName][sensorKey + '_buffer'];
+        buffer.push(rawValue);
+        
+        if (buffer.length >= 20) {
+            var sum = 0;
+            for (var i = 0; i < buffer.length; i++) sum += buffer[i];
+            pressureBaselines[sensorName][sensorKey] = sum / buffer.length;
+        }
+    }
+}
+
+function convertPressureToPUperKg(sensorName, sensorKey, rawValue) {
+    // Inizializza baseline
+    initPressureBaseline(sensorName, sensorKey, rawValue);
     
-    // Clamp 0-1000
-    if (pu > 1000) pu = 1000;
+    var baseline = pressureBaselines[sensorName][sensorKey];
+    if (!baseline) return 0; // Baseline non ancora calibrato
     
-    return pu;
+    // ⭐ FORMULA: ΔP = P_raw - P_baseline
+    var deltaP = rawValue - baseline;
+    
+    // ⭐ Variazioni negative = aumento pressione (inverti segno)
+    deltaP = -deltaP;
+    
+    // ⭐ NORMALIZZAZIONE: P_norm = ΔP / Peso(kg)
+    var pNorm = deltaP / BODY_WEIGHT_KG;
+    
+    // Solo valori positivi (pressione)
+    if (pNorm < 0) return 0;
+    
+    return pNorm;
+}
+
+// ⭐ BONGIORNO INDEX - FORMULA SCIENTIFICA
+function calculateBongiornoIndex(ax, ay, az) {
+    // BI = (|az| / √(ax² + ay² + az²)) × 100
+    var magnitude = Math.sqrt(ax * ax + ay * ay + az * az);
+    
+    if (magnitude === 0) return 0;
+    
+    var bi = (Math.abs(az) / magnitude) * 100;
+    
+    return bi;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -176,7 +223,14 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
         };
         
-        // ⭐ Copia 3 pressioni
+        // ⭐ CALCOLA BONGIORNO INDEX
+        convertedData.bongiorno_index = calculateBongiornoIndex(
+            convertedData.accel_x,
+            convertedData.accel_y,
+            convertedData.accel_z
+        );
+        
+        // Copia pressioni RAW (convertiamo dopo con baseline)
         for (var key in sensorData) {
             if (key.startsWith('pressure_')) {
                 convertedData[key] = sensorData[key];
@@ -211,6 +265,7 @@ function initializeSocketListeners() {
 
     socket.on('data_cleared', function() {
         sensors = {};
+        pressureBaselines = {};
         pitchSupBuffer = [];
         pitchInfBuffer = [];
         filteredPitchSup = 0;
@@ -274,7 +329,8 @@ function updateSensorCardOptimized(sensorName, data) {
             values: card.querySelectorAll('.sensor-value'),
             timestamp: card.querySelector('.sensor-timestamp'),
             status: card.querySelector('.status-indicator'),
-            pressures: card.querySelector('.sensor-pressures')
+            pressures: card.querySelector('.sensor-pressures'),
+            bongiornoIndex: card.querySelector('.bongiorno-index')
         };
     }
     
@@ -304,38 +360,51 @@ function updateSensorCardOptimized(sensorName, data) {
         }, 50);
     }
     
+    // ⭐ BONGIORNO INDEX
+    if (cached.bongiornoIndex && data.bongiorno_index !== undefined) {
+        var bi = data.bongiorno_index;
+        var biColor = '#97c93e';
+        if (bi > 50) biColor = '#ffa500';
+        if (bi > 70) biColor = '#ff4444';
+        
+        cached.bongiornoIndex.innerHTML = 
+            '<div style="background:rgba(151,201,62,0.1); padding:8px; border-radius:6px; margin-top:10px;">' +
+            '<div style="font-size:10px; color:#97c93e; font-weight:700; margin-bottom:4px;">⚡ BONGIORNO INDEX</div>' +
+            '<div style="font-size:24px; font-weight:700; color:' + biColor + ';">' + bi.toFixed(1) + '%</div>' +
+            '</div>';
+    }
+    
     // ⭐ AGGIORNA 3 PRESSIONI (S0, S1, S2)
     var pressureHtml = '';
     var hasPressure = false;
     var totalPressure = 0;
-    var sensorLabels = ['S0', 'S1', 'S2'];
+    var sensorLabels = ['S0 (Lat)', 'S1 (Med)', 'S2 (Heel)'];
     
     for (var i = 0; i <= 2; i++) {
         var raw = data['pressure_' + i];
         if (raw !== undefined) {
             hasPressure = true;
             
-            var pu = convertPressureToPU(raw);
-            totalPressure += pu;
+            var puPerKg = convertPressureToPUperKg(sensorName, 'pressure_' + i, raw);
+            totalPressure += puPerKg;
             
-            // Colore dinamico
             var color = '#666';
-            if (pu > 100) color = '#97c93e';
-            if (pu > 300) color = '#ffa500';
-            if (pu > 600) color = '#ff4444';
+            if (puPerKg > 1) color = '#97c93e';
+            if (puPerKg > 3) color = '#ffa500';
+            if (puPerKg > 5) color = '#ff4444';
             
-            pressureHtml += '<div style="font-size:12px; margin:4px 0; display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            pressureHtml += '<div style="font-size:11px; margin:4px 0; display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);">' +
                 '<span style="color:' + color + '; font-weight:700;">' + sensorLabels[i] + ':</span>' +
-                '<span><strong>' + pu.toFixed(0) + '</strong> <span style="color:#888; font-size:10px;">PU</span></span>' +
+                '<span><strong>' + puPerKg.toFixed(2) + '</strong> <span style="color:#888; font-size:9px;">PU/kg</span></span>' +
                 '</div>';
         }
     }
     
     if (hasPressure && cached.pressures) {
-        cached.pressures.innerHTML = '<div style="margin-top:14px; padding:12px; background:rgba(151,201,62,0.08); border-radius:8px; border:1px solid rgba(151,201,62,0.2);">' +
-            '<div style="font-size:11px; color:#97c93e; font-weight:700; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">' +
-                '<span>🦶 PRESSIONI PLANTARI</span>' +
-                '<span style="background:rgba(151,201,62,0.3); padding:4px 10px; border-radius:5px; font-size:10px;">Σ ' + totalPressure.toFixed(0) + ' PU</span>' +
+        cached.pressures.innerHTML = '<div style="margin-top:12px; padding:10px; background:rgba(151,201,62,0.08); border-radius:8px; border:1px solid rgba(151,201,62,0.2);">' +
+            '<div style="font-size:11px; color:#97c93e; font-weight:700; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">' +
+                '<span>🦶 PRESSIONI</span>' +
+                '<span style="background:rgba(151,201,62,0.3); padding:3px 8px; border-radius:4px; font-size:9px;">Σ ' + totalPressure.toFixed(2) + ' PU/kg</span>' +
             '</div>' +
             pressureHtml +
             '</div>';
@@ -357,16 +426,6 @@ function createSensorCardFast(sensorName, data) {
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
     
-    var accelX = (data.accel_x !== undefined) ? data.accel_x.toFixed(3) : '---';
-    var accelY = (data.accel_y !== undefined) ? data.accel_y.toFixed(3) : '---';
-    var accelZ = (data.accel_z !== undefined) ? data.accel_z.toFixed(3) : '---';
-    var gyroX = (data.gyro_x !== undefined) ? data.gyro_x.toFixed(3) : '---';
-    var gyroY = (data.gyro_y !== undefined) ? data.gyro_y.toFixed(3) : '---';
-    var gyroZ = (data.gyro_z !== undefined) ? data.gyro_z.toFixed(3) : '---';
-    var magX = (data.mag_x !== undefined) ? data.mag_x.toFixed(3) : '---';
-    var magY = (data.mag_y !== undefined) ? data.mag_y.toFixed(3) : '---';
-    var magZ = (data.mag_z !== undefined) ? data.mag_z.toFixed(3) : '---';
-    
     template.innerHTML = 
         '<div class="sensor-header">' +
             '<div>' + emoji + ' ' + sensorName + '</div>' +
@@ -374,22 +433,23 @@ function createSensorCardFast(sensorName, data) {
         '</div>' +
         '<div class="sensor-data-section">' +
             '<div class="sensor-data-section-title">📊 Acc (g)</div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">' + accelX + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">' + accelY + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">' + accelZ + '</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">---</span></div>' +
         '</div>' +
         '<div class="sensor-data-section">' +
             '<div class="sensor-data-section-title">🌀 Gyro (°/s)</div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">' + gyroX + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">' + gyroY + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">' + gyroZ + '</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">---</span></div>' +
         '</div>' +
         '<div class="sensor-data-section">' +
             '<div class="sensor-data-section-title">🧲 Mag (µT)</div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">' + magX + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">' + magY + '</span></div>' +
-            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">' + magZ + '</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">X:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">---</span></div>' +
+            '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">---</span></div>' +
         '</div>' +
+        '<div class="bongiorno-index"></div>' +
         '<div class="sensor-pressures"></div>' +
         '<span class="sensor-timestamp">--:--:--</span>';
     
@@ -457,6 +517,7 @@ function clearAllData() {
     fetch('/api/clear', { method: 'POST' })
         .then(function() {
             sensors = {};
+            pressureBaselines = {};
             pitchSupBuffer = [];
             pitchInfBuffer = [];
             filteredPitchSup = 0;

@@ -130,74 +130,48 @@ def get_sensors():
 # ⭐ ENDPOINT CHE RICEVE DATI DA FLUTTER
 @app.route('/api/data', methods=['POST'])
 def receive_data():
-    """Riceve dati da Flutter, filtra IMU e inoltra tutto via Socket.IO"""
+    """Riceve dati da Flutter (già filtrati) e inoltra via Socket.IO"""
     try:
         data = request.json
         sensor_name = data.get('sensor_name', 'Unknown')
         sensor_data = data.get('data', {})
         
-        print(f'\n🔵 HTTP POST da {sensor_name}')
-        print(f'   accel_x: {sensor_data.get("accel_x")}')
+        print(f'🔵 WebSocket da {sensor_name}')
         
-        # ⭐ CHECK PRESSIONI
-        pressure_keys = [k for k in sensor_data.keys() if k.startswith('pressure_')]
-        if pressure_keys:
-            print(f'   ✅ PRESSIONI: {len(pressure_keys)} sensori')
-            print(f'      p1={sensor_data.get("pressure_1")}, p2={sensor_data.get("pressure_2")}')
-        else:
-            print(f'   ❌ Nessuna pressione')
-        
-        # ⭐ CREA FILTRO SE NON ESISTE
-        if sensor_name not in sensors_filters:
-            sensors_filters[sensor_name] = SensorFilter(alpha=0.1)
-            print(f'   ✨ Filtro EMA creato')
-        
-        # ⭐ FILTRA SOLO I DATI IMU
-        filtered_imu = sensors_filters[sensor_name].filter_imu_data(
-            raw_accel_x=int(sensor_data.get('accel_x', 0)),
-            raw_accel_y=int(sensor_data.get('accel_y', 0)),
-            raw_accel_z=int(sensor_data.get('accel_z', 0)),
-            raw_gyro_x=int(sensor_data.get('gyro_x', 0)),
-            raw_gyro_y=int(sensor_data.get('gyro_y', 0)),
-            raw_gyro_z=int(sensor_data.get('gyro_z', 0)),
-            raw_mag_x=int(sensor_data.get('mag_x', 0)),
-            raw_mag_y=int(sensor_data.get('mag_y', 0)),
-            raw_mag_z=int(sensor_data.get('mag_z', 0)),
-        )
-        
-        # ⭐ CREA PAYLOAD COMPLETO: IMU FILTRATI + PRESSIONI RAW
+        # ⭐ NON FILTRARE - I dati arrivano già filtrati da Flutter!
         sensor_reading = {
             'timestamp': sensor_data.get('timestamp', datetime.utcnow().isoformat()),
-            **filtered_imu,  # IMU filtrati
+            'accel_x': sensor_data.get('accel_x', 0),
+            'accel_y': sensor_data.get('accel_y', 0),
+            'accel_z': sensor_data.get('accel_z', 0),
+            'gyro_x': sensor_data.get('gyro_x', 0),
+            'gyro_y': sensor_data.get('gyro_y', 0),
+            'gyro_z': sensor_data.get('gyro_z', 0),
+            'mag_x': sensor_data.get('mag_x', 0),
+            'mag_y': sensor_data.get('mag_y', 0),
+            'mag_z': sensor_data.get('mag_z', 0),
         }
         
-        # ⭐ COPIA TUTTE LE PRESSIONI (RAW, senza filtro)
+        # ⭐ COPIA PRESSIONI
         for key, value in sensor_data.items():
             if key.startswith('pressure_'):
                 sensor_reading[key] = value
         
-        # ⭐ SALVA E INOLTRA
         sensors_data[sensor_name] = sensor_reading
         sensors_status[sensor_name] = 'connected'
         
-        # ⭐ EMETTI VIA SOCKET.IO
+        # Broadcast
         socketio.emit('sensor_update', {
             'sensor_name': sensor_name,
-            'data': sensor_reading  # Include IMU + pressioni
-        }, namespace='/')
-        
-        if pressure_keys:
-            print(f'   🟢 Emesso via Socket.IO (IMU + {len(pressure_keys)} pressioni)\n')
-        else:
-            print(f'   🟢 Emesso via Socket.IO (solo IMU)\n')
+            'data': sensor_reading
+        }, broadcast=True)
         
         return jsonify({'status': 'success'}), 200
         
     except Exception as e:
-        print(f'❌ Errore: {e}')
-        import traceback
-        traceback.print_exc()
+        print(f'❌ WebSocket error: {e}')
         return jsonify({'status': 'error', 'message': str(e)}), 400
+
 
 @app.route('/api/clear', methods=['POST'])
 def clear_data():
