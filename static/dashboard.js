@@ -35,23 +35,31 @@ var isCalibrated = false;
 // ⭐ PERFORMANCE OPTIMIZATION: DOM CACHING
 var domCache = {};
 var pendingUpdates = {};
-var isRendering = false;
-
-// ⭐ PRESSURE DATA BUFFER
-var pressureDataBuffer = {
-    left: {},
-    right: {}
-};
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
     startFpsCounter();
-    initializePressureSensors();
-    startRenderLoop(); // ⭐ RENDER LOOP
+    startRenderLoop();
 });
 
-// ⭐ RENDER LOOP OTTIMIZZATO CON requestAnimationFrame
+// ⭐ CONVERSIONE PRESSIONE RAW → kg/m²
+function convertPressureToKgM2(raw) {
+    // Conversione empirica: normalizza il valore raw
+    // Assumiamo che i valori raw vadano da -32768 a 32767
+    // E che 0 = nessuna pressione, valori positivi = pressione
+    
+    // Formula semplice: prendi il valore assoluto e scala
+    // Se hai calibrazione specifica del sensore, modifica qui
+    var absRaw = Math.abs(raw);
+    
+    // Scala approssimativa: 1000 raw units ≈ 1 kg/m²
+    // Modifica questo fattore in base ai tuoi test
+    var kgM2 = absRaw / 100.0;
+    
+    return kgM2;
+}
+
 function startRenderLoop() {
     function render() {
         if (Object.keys(pendingUpdates).length > 0) {
@@ -62,40 +70,13 @@ function startRenderLoop() {
     requestAnimationFrame(render);
 }
 
-// ⭐ BATCH UPDATE DOM (invece di aggiornare per ogni pacchetto)
 function batchUpdateDOM() {
     Object.keys(pendingUpdates).forEach(function(sensorName) {
         var data = pendingUpdates[sensorName];
         updateSensorCardOptimized(sensorName, data);
     });
     
-    // Aggiorna pressioni
-    updatePressureDataOptimized();
-    
     pendingUpdates = {};
-}
-
-function initializePressureSensors() {
-    ['left', 'right'].forEach(function(side) {
-        var container = document.getElementById('heatmap-' + side);
-        if (!container) return;
-        
-        for (var i = 1; i <= 9; i++) {
-            var sensor = document.createElement('div');
-            sensor.className = 'pressure-sensor pressure-low';
-            sensor.id = 'p-' + side + '-' + i;
-            sensor.innerHTML = 
-                '<span class="sensor-label">S' + i + '</span>' +
-                '<span class="sensor-value">---</span>';
-            container.appendChild(sensor);
-            
-            // ⭐ CACHE DOM ELEMENTS
-            domCache['p-' + side + '-' + i] = {
-                element: sensor,
-                valueEl: sensor.querySelector('.sensor-value')
-            };
-        }
-    });
 }
 
 function resetHeartbeat() {
@@ -160,12 +141,14 @@ function advancedFilterWithOutlierRemoval(newValue, filteredValue, alpha, buffer
 
 function initializeSocketListeners() {
     socket.on('connect', function() {
+        console.log('✅ Connesso');
         isConnected = true;
         updateConnectionStatus(true);
         resetHeartbeat();
     });
 
     socket.on('disconnect', function() {
+        console.log('❌ Disconnesso');
         isConnected = false;
         updateConnectionStatus(false);
         clearTimeout(heartbeatTimer);
@@ -186,7 +169,6 @@ function initializeSocketListeners() {
         var sensorName = data.sensor_name;
         var sensorData = data.data;
         
-        // ⭐ CONVERTI SOLO UNA VOLTA
         var convertedData = {
             timestamp: sensorData.timestamp,
             accel_x: convertAccelerometerRaw(sensorData.accel_x),
@@ -200,12 +182,16 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z),
         };
         
-        sensors[sensorName] = convertedData;
+        // ⭐ COPIA PRESSIONI
+        for (var key in sensorData) {
+            if (key.startsWith('pressure_')) {
+                convertedData[key] = sensorData[key];
+            }
+        }
         
-        // ⭐ BATCH UPDATE invece di aggiornare subito
+        sensors[sensorName] = convertedData;
         pendingUpdates[sensorName] = convertedData;
         
-        // ⭐ FILTRAGGIO PITCH (per ginocchio)
         var n = sensorName.toLowerCase();
         var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
         
@@ -219,12 +205,6 @@ function initializeSocketListeners() {
             filteredPitchInf = advancedFilterWithOutlierRemoval(
                 pitch, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE, OUTLIER_THRESHOLD
             );
-        }
-        
-        // ⭐ BUFFER PRESSURE DATA
-        if (sensorData.pressure_1 !== undefined) {
-            var side = sensorName.toLowerCase().includes('sx') ? 'left' : 'right';
-            pressureDataBuffer[side] = sensorData;
         }
     });
 
@@ -243,102 +223,9 @@ function initializeSocketListeners() {
         filteredPitchInf = 0;
         calibrationOffset = 0;
         isCalibrated = false;
-        pressureDataBuffer = { left: {}, right: {} };
         renderSensors();
         resetHeartbeat();
     });
-}
-
-// ⭐ UPDATE PRESSURE DATA OTTIMIZZATO
-function updatePressureDataOptimized() {
-    var hasData = false;
-    
-    ['left', 'right'].forEach(function(side) {
-        var data = pressureDataBuffer[side];
-        if (!data || !data.pressure_1) return;
-        
-        hasData = true;
-        
-        for (var i = 1; i <= 9; i++) {
-            var value = data['pressure_' + i];
-            if (value === undefined) continue;
-            
-            var cached = domCache['p-' + side + '-' + i];
-            if (!cached) continue;
-            
-            cached.valueEl.textContent = Math.round(value);
-            
-            // ⭐ COLORE DINAMICO OTTIMIZZATO
-            var absValue = Math.abs(value);
-            var newClass = absValue < 1000 ? 'pressure-low' :
-                          absValue < 5000 ? 'pressure-medium' :
-                          absValue < 10000 ? 'pressure-high' : 'pressure-very-high';
-            
-            if (!cached.element.classList.contains(newClass)) {
-                cached.element.className = 'pressure-sensor ' + newClass;
-            }
-        }
-    });
-    
-    // Mostra/nascondi sezione
-    if (hasData) {
-        var section = document.getElementById('pressure-section');
-        if (section && section.style.display === 'none') {
-            section.style.display = 'block';
-        }
-    }
-}
-
-// ⭐ UPDATE SENSOR CARD OTTIMIZZATO
-function updateSensorCardOptimized(sensorName, data) {
-    var cacheKey = 'card-' + sensorName;
-    
-    if (!domCache[cacheKey]) {
-        var card = document.querySelector('[data-sensor="' + sensorName + '"]');
-        if (!card) {
-            createSensorCardFast(sensorName, data);
-            return;
-        }
-        
-        domCache[cacheKey] = {
-            card: card,
-            values: card.querySelectorAll('.sensor-value'),
-            timestamp: card.querySelector('.sensor-timestamp'),
-            status: card.querySelector('.status-indicator')
-        };
-    }
-    
-    var cached = domCache[cacheKey];
-    var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
-    
-    for (var i = 0; i < Math.min(cached.values.length, fields.length); i++) {
-        var value = data[fields[i]];
-        if (value !== undefined) {
-            cached.values[i].textContent = value.toFixed(3);
-        }
-    }
-    
-    if (cached.timestamp && data.timestamp) {
-        var date = new Date(data.timestamp);
-        cached.timestamp.textContent = 
-            String(date.getHours()).padStart(2, '0') + ':' +
-            String(date.getMinutes()).padStart(2, '0') + ':' +
-            String(date.getSeconds()).padStart(2, '0');
-    }
-    
-    if (cached.status) {
-        cached.status.classList.add('active');
-        if (cached.status.timeoutId) clearTimeout(cached.status.timeoutId);
-        cached.status.timeoutId = setTimeout(function() {
-            cached.status.classList.remove('active');
-        }, 50);
-    }
-    
-    // ⭐ UPDATE KNEE ANGLE (throttled)
-    if (!updateKneeAngleOptimized.lastCall || Date.now() - updateKneeAngleOptimized.lastCall > 50) {
-        updateKneeAngleOptimized();
-        updateKneeAngleOptimized.lastCall = Date.now();
-    }
 }
 
 function calibrateKnee() {
@@ -376,6 +263,80 @@ function updateKneeAngleOptimized() {
             '<div style="font-size: 11px; opacity: 0.8;"><span style="color: ' + statusColor + '; font-weight: 700;">' + statusText + '</span></div>' +
             '<button onclick="calibrateKnee()" style="margin-top: 12px; padding: 8px 16px; background: rgba(0,0,0,0.25); border: 1px solid rgba(0,0,0,0.5); border-radius: 6px; color: inherit; font-weight: 600; cursor: pointer; font-size: 12px; width: 100%;">📍 Calibra</button>' +
         '</div>';
+}
+
+// ⭐ UPDATE SENSOR CARD CON PRESSIONI
+function updateSensorCardOptimized(sensorName, data) {
+    var cacheKey = 'card-' + sensorName;
+    
+    if (!domCache[cacheKey]) {
+        var card = document.querySelector('[data-sensor="' + sensorName + '"]');
+        if (!card) {
+            createSensorCardFast(sensorName, data);
+            return;
+        }
+        
+        domCache[cacheKey] = {
+            card: card,
+            values: card.querySelectorAll('.sensor-value'),
+            timestamp: card.querySelector('.sensor-timestamp'),
+            status: card.querySelector('.status-indicator'),
+            pressures: card.querySelector('.sensor-pressures')
+        };
+    }
+    
+    var cached = domCache[cacheKey];
+    var fields = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z', 'mag_x', 'mag_y', 'mag_z'];
+    
+    for (var i = 0; i < Math.min(cached.values.length, fields.length); i++) {
+        var value = data[fields[i]];
+        if (value !== undefined) {
+            cached.values[i].textContent = value.toFixed(3);
+        }
+    }
+    
+    if (cached.timestamp && data.timestamp) {
+        var date = new Date(data.timestamp);
+        cached.timestamp.textContent = 
+            String(date.getHours()).padStart(2, '0') + ':' +
+            String(date.getMinutes()).padStart(2, '0') + ':' +
+            String(date.getSeconds()).padStart(2, '0');
+    }
+    
+    if (cached.status) {
+        cached.status.classList.add('active');
+        if (cached.status.timeoutId) clearTimeout(cached.status.timeoutId);
+        cached.status.timeoutId = setTimeout(function() {
+            cached.status.classList.remove('active');
+        }, 50);
+    }
+    
+    // ⭐ AGGIORNA PRESSIONI
+    var pressureHtml = '';
+    var hasPressure = false;
+    for (var i = 1; i <= 9; i++) {
+        var raw = data['pressure_' + i];
+        if (raw !== undefined) {
+            hasPressure = true;
+            var kgM2 = convertPressureToKgM2(raw);
+            pressureHtml += '<div style="font-size:11px; margin:2px 0; display:flex; justify-content:space-between;">' +
+                '<span style="color:#97c93e;">P' + i + ':</span>' +
+                '<span>' + kgM2.toFixed(2) + ' <span style="color:#888;">kg/m²</span></span>' +
+                '</div>';
+        }
+    }
+    
+    if (hasPressure && cached.pressures) {
+        cached.pressures.innerHTML = '<div style="margin-top:12px; padding:8px; background:rgba(151,201,62,0.1); border-radius:6px;">' +
+            '<div style="font-size:10px; color:#97c93e; font-weight:600; margin-bottom:6px;">🦶 PRESSIONI PLANTARI</div>' +
+            pressureHtml +
+            '</div>';
+    }
+    
+    if (!updateKneeAngleOptimized.lastCall || Date.now() - updateKneeAngleOptimized.lastCall > 50) {
+        updateKneeAngleOptimized();
+        updateKneeAngleOptimized.lastCall = Date.now();
+    }
 }
 
 function createSensorCardFast(sensorName, data) {
@@ -421,6 +382,7 @@ function createSensorCardFast(sensorName, data) {
             '<div class="sensor-data-row"><span class="sensor-data-label">Y:</span><span class="sensor-value">' + magY + '</span></div>' +
             '<div class="sensor-data-row"><span class="sensor-data-label">Z:</span><span class="sensor-value">' + magZ + '</span></div>' +
         '</div>' +
+        '<div class="sensor-pressures"></div>' +  // ⭐ Qui vanno le pressioni
         '<span class="sensor-timestamp">--:--:--</span>';
     
     grid.appendChild(template);
@@ -493,7 +455,6 @@ function clearAllData() {
             filteredPitchInf = 0;
             calibrationOffset = 0;
             isCalibrated = false;
-            pressureDataBuffer = { left: {}, right: {} };
             domCache = {};
             renderSensors();
         });

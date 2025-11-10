@@ -5,125 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sensoria Dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css">
-    <style>
-        /* ⭐ STILI PER PRESSIONI */
-        #pressure-section {
-            margin-top: 30px;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .pressure-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-        
-        .pressure-header h2 {
-            margin: 0;
-            font-size: 24px;
-            font-weight: 600;
-        }
-        
-        .pressure-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-        }
-        
-        .pressure-foot {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 20px;
-        }
-        
-        .pressure-foot h3 {
-            text-align: center;
-            margin: 0 0 20px 0;
-            font-size: 18px;
-            font-weight: 600;
-            color: #97c93e;
-        }
-        
-        .pressure-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-        }
-        
-        .pressure-sensor {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 12px;
-            padding: 16px;
-            text-align: center;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .pressure-sensor::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255, 255, 255, 0.1);
-            opacity: 0;
-            transition: opacity 0.3s;
-        }
-        
-        .pressure-sensor:hover::before {
-            opacity: 1;
-        }
-        
-        .sensor-label {
-            display: block;
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.7);
-            margin-bottom: 4px;
-            font-weight: 500;
-        }
-        
-        .sensor-value {
-            display: block;
-            font-size: 20px;
-            font-weight: bold;
-            color: white;
-        }
-        
-        /* Colori dinamici in base alla pressione */
-        .pressure-low {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        }
-        
-        .pressure-medium {
-            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
-        }
-        
-        .pressure-high {
-            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
-        }
-        
-        .pressure-very-high {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        }
-        
-        @media (max-width: 768px) {
-            .pressure-container {
-                grid-template-columns: 1fr;
-            }
-        }
-    </style>
 </head>
 <body style="background-color: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
     
     <div class="dashboard-header">
-        <h1 class="dashboard-title">📊 Sensoria Dashboard</h1>
+        <h1 class="dashboard-title">Sensoria Dashboard</h1>
         <div class="dashboard-info">
             <div id="connection-status">
                 <span class="dot"></span> Connesso
@@ -144,30 +30,6 @@
         </div>
         
         <div id="sensors-grid"></div>
-        
-        <!-- ⭐ SEZIONE PRESSIONI -->
-        <div id="pressure-section" style="display: none;">
-            <div class="pressure-header">
-                <h2>🦶 Sensori Pressione Plantare</h2>
-            </div>
-            <div class="pressure-container">
-                <!-- Calzino SX -->
-                <div class="pressure-foot">
-                    <h3>Calzino SX</h3>
-                    <div class="pressure-grid" id="heatmap-left">
-                        <!-- Popolato da JavaScript -->
-                    </div>
-                </div>
-                
-                <!-- Calzino DX -->
-                <div class="pressure-foot">
-                    <h3>Calzino DX</h3>
-                    <div class="pressure-grid" id="heatmap-right">
-                        <!-- Popolato da JavaScript -->
-                    </div>
-                </div>
-            </div>
-        </div>
         
         <div style="margin-top: 40px; text-align: center; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
             <button id="calibrateButton" onclick="calibrateKnee()" style="
@@ -202,64 +64,5 @@
     
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <script src="/static/dashboard.js"></script>
-    
-    <script>
-        // ⭐ CREA SENSORI PRESSIONE (9 per piede)
-        function createPressureSensors() {
-            ['left', 'right'].forEach(side => {
-                const container = document.getElementById(`heatmap-${side}`);
-                for (let i = 1; i <= 9; i++) {
-                    const sensor = document.createElement('div');
-                    sensor.className = 'pressure-sensor pressure-low';
-                    sensor.id = `p-${side}-${i}`;
-                    sensor.innerHTML = `
-                        <span class="sensor-label">S${i}</span>
-                        <span class="sensor-value">---</span>
-                    `;
-                    container.appendChild(sensor);
-                }
-            });
-        }
-        
-        // Crea i sensori all'avvio
-        createPressureSensors();
-        
-        // ⭐ FUNZIONE PER AGGIORNARE PRESSIONI (chiamala dal tuo dashboard.js)
-        window.updatePressureData = function(sensorName, data) {
-            if (!data.pressure_1) return;
-            
-            // Mostra sezione
-            document.getElementById('pressure-section').style.display = 'block';
-            
-            // Determina lato (sx/dx)
-            const side = sensorName.toLowerCase().includes('sx') ? 'left' : 'right';
-            
-            // Aggiorna i 9 sensori
-            for (let i = 1; i <= 9; i++) {
-                const value = data[`pressure_${i}`];
-                if (value === undefined) continue;
-                
-                const sensorEl = document.getElementById(`p-${side}-${i}`);
-                if (!sensorEl) continue;
-                
-                const valueEl = sensorEl.querySelector('.sensor-value');
-                valueEl.textContent = Math.round(value);
-                
-                // Colore dinamico in base al valore
-                sensorEl.classList.remove('pressure-low', 'pressure-medium', 'pressure-high', 'pressure-very-high');
-                const absValue = Math.abs(value);
-                
-                if (absValue < 1000) {
-                    sensorEl.classList.add('pressure-low');
-                } else if (absValue < 5000) {
-                    sensorEl.classList.add('pressure-medium');
-                } else if (absValue < 10000) {
-                    sensorEl.classList.add('pressure-high');
-                } else {
-                    sensorEl.classList.add('pressure-very-high');
-                }
-            }
-        };
-    </script>
 </body>
 </html>
