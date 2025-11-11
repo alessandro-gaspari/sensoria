@@ -230,7 +230,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                         devicesProvider.deviceNames,
                       );
                       
-                      _showMessage('✅ Streaming avviato!');
+                      
                       
                       if (mounted) {
                         Navigator.push(

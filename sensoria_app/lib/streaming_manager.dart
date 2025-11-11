@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'dart:async';
-import 'package:sensoria_cs/utils/sensor_filter.dart';
 
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
-  static const int TARGET_HZ = 50;
+  static const int TARGET_HZ = 100;
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
   
   final Map<String, StreamSubscription> _activeStreams = {};
@@ -15,7 +14,6 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, int> _Hz = {};
-  final Map<String, SensorFilter> _sensorFilters = {};
   
   IO.Socket? _socket;
   bool _isSocketConnected = false;
@@ -90,9 +88,9 @@ class StreamingManager extends ChangeNotifier {
     
     _connectWebSocket();
     
-    debugPrint('\n🚀 INIZIO STREAMING @ ${TARGET_HZ}Hz via WebSocket');
+    debugPrint('\n🚀 INIZIO STREAMING RAW @ ${TARGET_HZ}Hz via WebSocket');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
-    debugPrint('🌐 Server: $SERVER_URL\n');
+    debugPrint('⚠️ MODALITÀ RAW: ZERO FILTRI, ZERO CONVERSIONI\n');
     
     int successCount = 0;
     
@@ -149,7 +147,7 @@ class StreamingManager extends ChangeNotifier {
       }
     }
     
-    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz\n');
+    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz RAW\n');
     notifyListeners();
   }
   
@@ -166,9 +164,8 @@ class StreamingManager extends ChangeNotifier {
       _latestData[deviceId] = null;
       _Hz[deviceId] = 0;
       _lastSendTime[deviceId] = DateTime.now();
-      _sensorFilters[deviceId] = SensorFilter(alpha: 0.12);
       
-      debugPrint('🎬 [$deviceName] Streaming @ ${TARGET_HZ}Hz');
+      debugPrint('🎬 [$deviceName] Streaming RAW @ ${TARGET_HZ}Hz');
       
       _startSendTimer(deviceId, deviceName);
       
@@ -183,21 +180,36 @@ class StreamingManager extends ChangeNotifier {
           if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
             packetCounter++;
             
+            // ⭐ STAMPA TUTTI I PACCHETTI PER DEBUG PRESSIONI
+            if (packetCounter <= 30) {  // ⭐ STAMPA SOLO I PRIMI 30 PACCHETTI
+              debugPrint('🔵 [$deviceName] Pkt #$packetCounter (tipo ${packetCounter % 3}): ${value.map((b) => b.toString().padLeft(3)).join(' ')}');
+            }
+
+                        
             // Pacchetto 1 di 3: IMU
             if (packetCounter % 3 == 1) {
               imuBuffer = List.from(value);
               pressureData = {};
             }
-            // Pacchetto 2 di 3: Pressioni (3 sensori: S0, S1, S2)
-            else if (packetCounter % 3 == 2 && imuBuffer != null) {
-              // ⭐ SOLO 3 SENSORI (bytes 2-7)
-              for (int i = 2; i < 8; i += 2) {
-                final sensorIdx = (i - 2) ~/ 2;  // 0, 1, 2
-                final val = value[i] | (value[i + 1] << 8);
-                final pressure = val > 32767 ? val - 65536 : val;
-                pressureData['pressure_$sensorIdx'] = pressure.toDouble();
-              }
-            }
+            // Pacchetto 2 di 3: Pressioni (3 sensori)
+            // Pacchetto 2 di 3: Pressioni dai bytes 6-19
+            // Pacchetto 2 di 3: Pressioni dai bytes 8-13
+// Pacchetto 2 di 3: Leggi TUTTI gli 8 sensori (16 bytes: 8 sensori × 2 bytes)
+else if (packetCounter % 3 == 2 && imuBuffer != null) {
+  // ⭐ Leggi 8 sensori di pressione da offset 2 (o 4, o 6...)
+  for (int i = 0; i < 8; i++) {
+    int offset = 2 + (i * 2);  // Offset: 2,4,6,8,10,12,14,16
+    if (offset + 1 < value.length) {
+      final val = value[offset] | (value[offset + 1] << 8);
+      final pressure = val > 32767 ? val - 65536 : val;
+      pressureData['pressure_$i'] = pressure.toDouble();
+      if (packetCounter <= 30) debugPrint('  📍 S$i @ offset$offset: $pressure');
+    }
+  }
+}
+
+
+
             // Pacchetto 3 di 3: Completamento
             else if (packetCounter % 3 == 0 && imuBuffer != null) {
               _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
@@ -218,7 +230,7 @@ class StreamingManager extends ChangeNotifier {
       );
       
       _activeStreams[deviceId] = subscription;
-      debugPrint('🟢 [$deviceName] STREAMING ATTIVO!\n');
+      debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
       notifyListeners();
       
     } catch (e) {
@@ -237,19 +249,20 @@ class StreamingManager extends ChangeNotifier {
     final packetNum = _packetCounts[deviceId]!;
     
     try {
-      final parsedData = _parseAndFilterIMUData(imuData, deviceId, deviceName);
+      // ⭐ DATI RAW (nessuna conversione)
+      final rawData = _parseRawIMUData(imuData);
       
-      // ⭐ AGGIUNGI 3 PRESSIONI
-      parsedData.addAll(pressureData);
+      // ⭐ AGGIUNGI 3 PRESSIONI RAW
+      rawData.addAll(pressureData);
       
-      if (packetNum % 100 == 0 && pressureData.isNotEmpty) {
-        debugPrint('🦶 [$deviceName] S0=${pressureData['pressure_0']}, S1=${pressureData['pressure_1']}, S2=${pressureData['pressure_2']}');
+      if (packetNum % 100 == 0) {
+        debugPrint('📦 [$deviceName] #$packetNum | AX=${rawData['accel_x']?.toInt()}, P0=${pressureData['pressure_0']?.toInt()}, P1=${pressureData['pressure_1']?.toInt()}, P2=${pressureData['pressure_2']?.toInt()}');
       }
       
       _latestData[deviceId] = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
         'sensor_name': deviceName,
-        ...parsedData,
+        ...rawData,
       };
       
       final now = DateTime.now();
@@ -302,11 +315,8 @@ class StreamingManager extends ChangeNotifier {
     }
   }
   
-  Map<String, double> _parseAndFilterIMUData(
-    List<int> data,
-    String deviceId,
-    String deviceName,
-  ) {
+  // ⭐ PARSING RAW CON OFFSET CORRETTI
+  Map<String, double> _parseRawIMUData(List<int> data) {
     if (data.length < 20) return {};
     
     int readInt16LE(int offset) {
@@ -315,30 +325,18 @@ class StreamingManager extends ChangeNotifier {
       return val > 32767 ? val - 65536 : val;
     }
     
-    final rawAccelX = readInt16LE(2);
-    final rawAccelY = readInt16LE(4);
-    final rawAccelZ = readInt16LE(6);
-    final rawGyroX = readInt16LE(8);
-    final rawGyroY = readInt16LE(10);
-    final rawGyroZ = readInt16LE(12);
-    final rawMagX = readInt16LE(14);
-    final rawMagY = readInt16LE(16);
-    final rawMagZ = readInt16LE(18);
-    
-    final filter = _sensorFilters[deviceId];
-    if (filter == null) return {};
-    
-    return filter.filterIMUData(
-      rawAccelX: rawAccelX,
-      rawAccelY: rawAccelY,
-      rawAccelZ: rawAccelZ,
-      rawGyroX: rawGyroX,
-      rawGyroY: rawGyroY,
-      rawGyroZ: rawGyroZ,
-      rawMagX: rawMagX,
-      rawMagY: rawMagY,
-      rawMagZ: rawMagZ,
-    );
+    // ⭐ OFFSET CORRETTI (saltando header 0xF0 0x10 e counter bytes 2-3)
+    return {
+      'accel_x': readInt16LE(4).toDouble(),   // ⭐ Offset 4
+      'accel_y': readInt16LE(6).toDouble(),
+      'accel_z': readInt16LE(8).toDouble(),
+      'gyro_x': readInt16LE(10).toDouble(),
+      'gyro_y': readInt16LE(12).toDouble(),
+      'gyro_z': readInt16LE(14).toDouble(),
+      'mag_x': readInt16LE(16).toDouble(),
+      'mag_y': readInt16LE(18).toDouble(),
+      'mag_z': 0.0,  // ⭐ Non c'è spazio
+    };
   }
   
   void _cleanupStreaming(String deviceId) {
@@ -349,7 +347,6 @@ class StreamingManager extends ChangeNotifier {
     _sendTimers.remove(deviceId);
     _Hz.remove(deviceId);
     _lastSendTime.remove(deviceId);
-    _sensorFilters.remove(deviceId);
   }
   
   Future<void> stopStreaming(String deviceId) async {
@@ -385,7 +382,6 @@ class StreamingManager extends ChangeNotifier {
     _latestData.clear();
     _Hz.clear();
     _lastSendTime.clear();
-    _sensorFilters.clear();
     
     _socket?.disconnect();
     _isSocketConnected = false;

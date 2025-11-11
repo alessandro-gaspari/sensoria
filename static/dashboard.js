@@ -1,3 +1,4 @@
+// ⭐ SENSORIA DASHBOARD - Ottimizzato per 8 sensori di pressione
 var socket = io({
     reconnection: true,
     reconnectionDelay: 100,
@@ -17,14 +18,7 @@ var FILTER_ALPHA = 0.12;
 var BUFFER_SIZE = 8;
 var OUTLIER_THRESHOLD = 15;
 
-// ⭐ PRESSURE SETTINGS
-var BODY_WEIGHT_KG = 1; // Cambia con il peso reale
-var BASELINE_WARMUP = 20;
-var BASELINE_ALPHA = 0.003;
-var PRESS_MIN_DELTA = 8;
-var PRESS_ALPHA = 0.22;
-var PU_CLAMP = 1000;
-
+// ⭐ STATE
 var sensors = {};
 var isConnected = false;
 var frameCount = 0;
@@ -42,7 +36,6 @@ var isCalibrated = false;
 
 var domCache = {};
 var pendingUpdates = {};
-var pressState = {};
 
 // ⭐ CONVERSIONE IMU
 function convertAccelerometerRaw(raw) {
@@ -55,53 +48,6 @@ function convertGyroscopeRaw(raw) {
 
 function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
-}
-
-// ⭐ GESTIONE PRESSIONI CON BASELINE
-function ps(sensorName) {
-    if (!pressState[sensorName]) pressState[sensorName] = {};
-    return pressState[sensorName];
-}
-
-function initPressureSlot(sensorName, key) {
-    var s = ps(sensorName);
-    if (!s[key]) s[key] = { count: 0, sum: 0, baseline: null, ema: 0 };
-}
-
-function computePressurePUkg(sensorName, key, raw) {
-    initPressureSlot(sensorName, key);
-    var slot = ps(sensorName)[key];
-    
-    // Baseline warmup
-    if (slot.baseline === null && slot.count < BASELINE_WARMUP) {
-        slot.count++;
-        slot.sum += raw;
-        if (slot.count >= BASELINE_WARMUP) {
-            slot.baseline = slot.sum / slot.count;
-        }
-        return 0;
-    }
-    
-    if (slot.baseline === null) slot.baseline = raw;
-    
-    // Aggiorna lentamente baseline
-    if (Math.abs(raw - slot.baseline) < 5) {
-        slot.baseline = slot.baseline * (1 - BASELINE_ALPHA) + raw * BASELINE_ALPHA;
-    }
-    
-    // ΔP = -(raw - baseline) → negativo = pressione
-    var deltaP = -(raw - slot.baseline);
-    
-    if (Math.abs(deltaP) < PRESS_MIN_DELTA) deltaP = 0;
-    
-    // Normalizza per peso
-    var pu = deltaP / BODY_WEIGHT_KG;
-    pu = Math.max(0, Math.min(PU_CLAMP, pu));
-    
-    // EMA smoothing
-    slot.ema = slot.ema * (1 - PRESS_ALPHA) + pu * PRESS_ALPHA;
-    
-    return slot.ema;
 }
 
 // ⭐ BUFFER E FILTRI
@@ -176,10 +122,9 @@ function startFpsCounter() {
         lastFrameTime = now;
         
         var fpsEl = document.getElementById('fps-counter');
-        if (fpsEl) fpsEl.textContent = (currentFps || 0) + ' Hz';  // ⭐ Protezione
+        if (fpsEl) fpsEl.textContent = (currentFps || 0) + ' Hz';
     }, 1000);
 }
-
 
 // ⭐ SOCKET LISTENERS
 function initializeSocketListeners() {
@@ -225,9 +170,10 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z || 0),
         };
         
-        // Copia pressioni
-        for (var key in sensorData) {
-            if (key.startsWith('pressure_')) {
+        // ⭐ Copia TUTTE le pressioni (0-7)
+        for (var i = 0; i <= 7; i++) {
+            var key = 'pressure_' + i;
+            if (sensorData[key] !== undefined) {
                 convertedData[key] = sensorData[key];
             }
         }
@@ -260,7 +206,6 @@ function initializeSocketListeners() {
 
     socket.on('data_cleared', function() {
         sensors = {};
-        pressState = {};
         pitchSupBuffer = [];
         pitchInfBuffer = [];
         filteredPitchSup = 0;
@@ -356,38 +301,33 @@ function updateSensorCardOptimized(sensorName, data) {
         }, 50);
     }
     
-    // ⭐ PRESSIONI 3 SENSORI
+    // ⭐ PRESSIONI RAW - 8 SENSORI (S0-S7)
     var pressureHtml = '';
     var hasPressure = false;
-    var totalPressure = 0;
-    var sensorLabels = ['Laterale', 'Mediale', 'Tallone'];
+    var sensorLabels = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'];
     
-    for (var i = 0; i <= 2; i++) {
+    for (var i = 0; i <= 7; i++) {
         var raw = data['pressure_' + i];
         if (raw !== undefined) {
             hasPressure = true;
             
-            var pu = computePressurePUkg(sensorName, 'pressure_' + i, raw);
-            totalPressure += pu;
-            
+            // Colore basato su valore assoluto
+            var absVal = Math.abs(raw);
             var color = '#666';
-            if (pu > 1) color = '#97c93e';
-            if (pu > 2) color = '#ffa500';
-            if (pu > 5) color = '#ff4444';
+            if (absVal > 100) color = '#97c93e';
+            if (absVal > 1000) color = '#ffa500';
+            if (absVal > 5000) color = '#ff4444';
             
-            pressureHtml += '<div style="font-size:11px; margin:3px 0; display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.05);">' +
+            pressureHtml += '<div style="font-size:10px; margin:2px 0; display:flex; justify-content:space-between; padding:2px 0; border-bottom:1px solid rgba(255,255,255,0.05);">' +
                 '<span style="color:' + color + '; font-weight:700;">' + sensorLabels[i] + ':</span>' +
-                '<span><strong>' + pu.toFixed(2) + '</strong> <span style="color:#888; font-size:9px;">PU/kg</span></span>' +
+                '<span><strong>' + raw.toFixed(0) + '</strong> <span style="color:#888; font-size:8px;">RAW</span></span>' +
                 '</div>';
         }
     }
     
     if (hasPressure && cached.pressures) {
-        cached.pressures.innerHTML = '<div style="margin-top:12px; padding:10px; background:rgba(151,201,62,0.08); border-radius:8px; border:1px solid rgba(151,201,62,0.2);">' +
-            '<div style="font-size:11px; color:#97c93e; font-weight:700; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">' +
-                '<span>🦶 PRESSIONI</span>' +
-                '<span style="background:rgba(151,201,62,0.3); padding:3px 8px; border-radius:4px; font-size:9px;">Σ ' + totalPressure.toFixed(2) + ' PU/kg</span>' +
-            '</div>' +
+        cached.pressures.innerHTML = '<div style="margin-top:10px; padding:8px; background:rgba(151,201,62,0.08); border-radius:6px; border:1px solid rgba(151,201,62,0.2);">' +
+            '<div style="font-size:10px; color:#97c93e; font-weight:700; margin-bottom:6px;">🦶 PRESSIONI RAW</div>' +
             pressureHtml +
             '</div>';
     }
@@ -499,7 +439,6 @@ function clearAllData() {
     fetch('/api/clear', { method: 'POST' })
         .then(function() {
             sensors = {};
-            pressState = {};
             pitchSupBuffer = [];
             pitchInfBuffer = [];
             filteredPitchSup = 0;

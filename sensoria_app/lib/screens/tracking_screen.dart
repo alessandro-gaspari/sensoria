@@ -274,24 +274,25 @@ Widget build(BuildContext context) {
     );
   }
 
-  Widget _buildValue(String label, dynamic value) {
-    final val = (value as double?) ?? 0.0;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w600)),
-          Text(val.toStringAsFixed(3),
-            style: const TextStyle(
-              color: Color.fromRGBO(151, 201, 62, 1),
-              fontSize: 9,
-              fontFamily: 'Courier New',
-              fontWeight: FontWeight.w600,
-            )
-          ),
-        ],
-      ),
-    );
-  }
+Widget _buildValue(String label, dynamic value) {
+  final val = (value as double?) ?? 0.0;
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w600)),
+        Text(val.toInt().toString(),  // ⭐ CAMBIATO: mostra come INT invece di .toStringAsFixed(3)
+          style: const TextStyle(
+            color: Color.fromRGBO(151, 201, 62, 1),
+            fontSize: 9,
+            fontFamily: 'Courier New',
+            fontWeight: FontWeight.w600,
+          )
+        ),
+      ],
+    ),
+  );
+}
+
 }
