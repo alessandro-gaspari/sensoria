@@ -186,7 +186,7 @@ function updateConnectionStatus(connected) {
     }
     if (countEl) {
         var count = Object.keys(sensors).length;
-        countEl.textContent = count + ' Sensore' + (count !== 1 ? 'i' : '');
+        countEl.textContent = count + ' Sensor' + (count !== 1 ? 'i' : 'e');
     }
 }
 
