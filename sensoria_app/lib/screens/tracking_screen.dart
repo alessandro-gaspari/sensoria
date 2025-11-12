@@ -43,9 +43,9 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
   String _getIconFromName(String name) {
     final lower = name.toLowerCase();
-    if (lower.contains('ginocchio') && lower.contains('sup')) return '🔝';
-    if (lower.contains('ginocchio') && lower.contains('inf')) return '🔻';
-    if (lower.contains('calzin') || lower.contains('sock') || lower.contains('piede')) return '🧦';
+    if (lower.contains('ginoc') && lower.contains('sup')) return '🦿🔺';
+    if (lower.contains('ginoc') && lower.contains('inf')) return '🦿🔻';
+    if (lower.contains('calz') || lower.contains('sock') || lower.contains('piede')) return '🧦';
     if (lower.contains('braccio') || lower.contains('arm')) return '🦾';
     return '📍';
   }
@@ -171,7 +171,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('📊 Acc (g)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                        Text('📊 Acc (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
                                         _buildValue('X', data['accel_x']),
                                         _buildValue('Y', data['accel_y']),
                                         _buildValue('Z', data['accel_z']),
@@ -183,7 +183,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('🌀 Gyr (°/s)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                        Text('🌀 Gyr (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
                                         _buildValue('X', data['gyro_x']),
                                         _buildValue('Y', data['gyro_y']),
                                         _buildValue('Z', data['gyro_z']),
@@ -195,7 +195,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        Text('🧲 Mag (µT)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                        Text('🧲 Mag (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
                                         _buildValue('X', data['mag_x']),
                                         _buildValue('Y', data['mag_y']),
                                         _buildValue('Z', data['mag_z']),
@@ -206,7 +206,7 @@ class _TrackingScreenState extends State<TrackingScreen> {
                               ),
                               if (extraFields.isNotEmpty) ...[
                                 const SizedBox(height: 16),
-                                Text('🦶 Pressioni RAW (S0-S7)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+                                Text('⬇️ Pressioni RAW (S0-S7)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
                                 const SizedBox(height: 6),
                                 Wrap(
                                   spacing: 8,
