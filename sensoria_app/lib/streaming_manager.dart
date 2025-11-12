@@ -146,63 +146,92 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _setupStreaming({
-    required String deviceId,
-    required String deviceName,
-    required BluetoothCharacteristic rxChar,
-  }) async {
-    try {
-      await rxChar.setNotifyValue(true);
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      _packetCounts[deviceId] = 0;
-      _latestData[deviceId] = {
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-        'sensor_name': deviceName,
-      };
-      _lastSendTime[deviceId] = DateTime.now();
-
-      debugPrint('🎬 [$deviceName] Streaming attivo ($activeProtocol)');
-
-      _startSendTimer(deviceId, deviceName);
-
-      final subscription = rxChar.lastValueStream.listen(
-        (value) {
-          if (value.isEmpty || value.length != 20) return;
-          final parsed = parseSensoriaPacket(value, protocol: activeProtocol);
-          _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
-          final packetNum = _packetCounts[deviceId]!;
-
-          _latestData[deviceId] = {
-            'timestamp': DateTime.now().toUtc().toIso8601String(),
-            'sensor_name': deviceName,
-            ...parsed,
-          };
-          if (packetNum % 32 == 0) {
-            debugPrint('   #$packetNum | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
+Future<void> _setupStreaming({
+  required String deviceId,
+  required String deviceName,
+  required BluetoothCharacteristic rxChar,
+}) async {
+  try {
+    await rxChar.setNotifyValue(true);
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    _packetCounts[deviceId] = 0;
+    _latestData[deviceId] = {
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'sensor_name': deviceName,
+    };
+    _lastSendTime[deviceId] = DateTime.now();
+    
+    debugPrint('🎬 [$deviceName] Streaming attivo ($activeProtocol)');
+    _startSendTimer(deviceId, deviceName);
+    
+    final subscription = rxChar.lastValueStream.listen(
+      (value) {
+        if (value.isEmpty || value.length != 20) return;
+        
+        final parsed = parseSensoriaPacket(value, protocol: activeProtocol);
+        _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
+        final packetNum = _packetCounts[deviceId]!;
+        
+        // ⭐ FILTRO: Se è un Core/Ginocchio, NON includere le pressure
+        final isCoreDevice = deviceName.toLowerCase().contains('ginocchio') ||
+                              deviceName.toLowerCase().contains('core') ||
+                              deviceName.toLowerCase().contains('knee');
+        
+        Map<String, dynamic> dataToSend = {
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'sensor_name': deviceName,
+        };
+        
+        // Aggiungi IMU
+        dataToSend['accel_x'] = parsed['accel_x'];
+        dataToSend['accel_y'] = parsed['accel_y'];
+        dataToSend['accel_z'] = parsed['accel_z'];
+        dataToSend['gyro_x'] = parsed['gyro_x'];
+        dataToSend['gyro_y'] = parsed['gyro_y'];
+        dataToSend['gyro_z'] = parsed['gyro_z'];
+        dataToSend['mag_x'] = parsed['mag_x'];
+        dataToSend['mag_y'] = parsed['mag_y'];
+        dataToSend['mag_z'] = parsed['mag_z'];
+        
+        // Aggiungi pressure SOLO se NON è un Core
+        if (!isCoreDevice) {
+          for (int i = 0; i <= 7; i++) {
+            final key = 'pressure_$i';
+            if (parsed.containsKey(key)) {
+              dataToSend[key] = parsed[key];
+            }
           }
-          _lastSendTime[deviceId] = DateTime.now();
-          notifyListeners();
-        },
-        onError: (error) {
-          debugPrint('❌ [$deviceName] Stream error: $error');
-          _cleanupStreaming(deviceId);
-          notifyListeners();
-        },
-        onDone: () {
-          debugPrint('⚠️ [$deviceName] Stream done');
-          _cleanupStreaming(deviceId);
-          notifyListeners();
-        },
-      );
-      _activeStreams[deviceId] = subscription;
-      debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
-      notifyListeners();
-    } catch (e) {
-      debugPrint('❌ [$deviceName] Setup error: $e');
-      rethrow;
-    }
+        }
+        
+        _latestData[deviceId] = dataToSend;
+        
+        if (packetNum % 32 == 0) {
+          debugPrint('   #$packetNum | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
+        }
+        _lastSendTime[deviceId] = DateTime.now();
+        notifyListeners();
+      },
+      onError: (error) {
+        debugPrint('❌ [$deviceName] Stream error: $error');
+        _cleanupStreaming(deviceId);
+        notifyListeners();
+      },
+      onDone: () {
+        debugPrint('⚠️ [$deviceName] Stream done');
+        _cleanupStreaming(deviceId);
+        notifyListeners();
+      },
+    );
+    _activeStreams[deviceId] = subscription;
+    debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
+    notifyListeners();
+  } catch (e) {
+    debugPrint('❌ [$deviceName] Setup error: $e');
+    rethrow;
   }
+}
+
 
   void _startSendTimer(String deviceId, String deviceName) {
     _sendTimers[deviceId]?.cancel();

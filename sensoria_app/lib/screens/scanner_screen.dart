@@ -568,7 +568,6 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                               
                                               try {
                                                 await devicesProvider.connectDevice(device);
-                                                _showMessage('$deviceName connesso!');
                                               } catch (e) {
                                                 _showMessage('Errore: ${e.toString().replaceAll('Exception: ', '')}');
                                               }

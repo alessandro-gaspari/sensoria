@@ -72,9 +72,20 @@ function initializeSocketListeners() {
         pendingUpdates[sensorName] = sensorData;
     });
     socket.on('sensor_disconnected', function(data) {
-        var sensorCard = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
-        if (sensorCard) sensorCard.classList.add('disconnected');
+    if (!data.sensor_name) return;
+    
+    // Rimuovi i dati sensore localmente
+    delete sensors[data.sensor_name];
+    delete pendingUpdates[data.sensor_name];
+    
+    // Rimuovi la card dal DOM
+    var card = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
+    if (card) card.remove();
+    
+    // Aggiorna la visualizzazione sensori
+    renderSensors();
     });
+
     socket.on('data_cleared', function() {
         sensors = {};
         domCache = {};
