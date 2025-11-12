@@ -8,8 +8,7 @@ class StreamingManager extends ChangeNotifier {
   static const int TARGET_HZ = 100;
   static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
 
-  // Cambia qui: "G20" = solo pressione/IMU, "H20" = pressione+IMU+MAG
-  String activeProtocol = "H20";       // <---- SWITCHA QUI "G20" <-> "H20"/"I20"
+  String activeProtocol = "H20"; // Cambio protocollo se serve
 
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
@@ -24,16 +23,19 @@ class StreamingManager extends ChangeNotifier {
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
 
   Map<String, bool> get streamingStatus =>
-    Map.from(_activeStreams.map((key, value) => MapEntry(key, true)));
+      Map.from(_activeStreams.map((key, value) => MapEntry(key, true)));
   Map<String, Map<String, dynamic>?> get allSensorData => Map.from(_latestData);
-  Iterable<String> get iterating => _latestData.keys;
+
+  StreamingManager() {
+    _connectWebSocket();
+  }
 
   @override
   void dispose() {
     debugPrint('🛑 StreamingManager DISPOSE');
+    stopAll();
     _socket?.disconnect();
     _socket?.dispose();
-    stopAll();
     super.dispose();
   }
 
@@ -42,26 +44,30 @@ class StreamingManager extends ChangeNotifier {
       debugPrint('✅ WebSocket già connesso');
       return;
     }
+
     debugPrint('🔌 Connessione WebSocket a $SERVER_URL...');
-    _socket = IO.io(SERVER_URL,
-        IO.OptionBuilder()
-            .setTransports(['websocket'])
-            .enableAutoConnect()
-            .setReconnectionDelay(1000)
-            .setReconnectionAttempts(5)
-            .build());
+    _socket = IO.io(SERVER_URL, IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .enableAutoConnect()
+        .setReconnectionDelay(1000)
+        .setReconnectionAttempts(5)
+        .build());
+
     _socket!.onConnect((_) {
       debugPrint('✅ WebSocket CONNESSO');
       _isSocketConnected = true;
     });
+
     _socket!.onDisconnect((_) {
       debugPrint('❌ WebSocket DISCONNESSO');
       _isSocketConnected = false;
     });
+
     _socket!.onConnectError((error) {
       debugPrint('❌ WebSocket errore connessione: $error');
       _isSocketConnected = false;
     });
+
     _socket!.onError((error) {
       debugPrint('❌ WebSocket errore: $error');
     });
@@ -79,13 +85,8 @@ class StreamingManager extends ChangeNotifier {
       Map<String, String> deviceNames) async {
     if (connectedDevices.isEmpty) return;
 
-    _connectWebSocket();
-
     debugPrint('\n🚀 INIZIO STREAMING @${TARGET_HZ}Hz (protocollo $activeProtocol)');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
-    deviceNames.forEach((id, name) => debugPrint('   🔹 $name'));
-
-    int successCount = 0;
 
     for (var entry in connectedDevices.entries) {
       final deviceId = entry.key;
@@ -94,7 +95,6 @@ class StreamingManager extends ChangeNotifier {
 
       if (_activeStreams.containsKey(deviceId)) {
         debugPrint('⚠️ [$deviceName] Già in streaming, skip\n');
-        successCount++;
         continue;
       }
 
@@ -133,83 +133,69 @@ class StreamingManager extends ChangeNotifier {
           deviceName: deviceName,
           rxChar: rxChar,
         );
-
-        successCount++;
       } catch (e) {
         debugPrint('❌ [$deviceName] Errore: $e\n');
       }
     }
 
-    debugPrint(
-        '🎉 Streaming attivo: $successCount/${connectedDevices.length} @ $TARGET_HZ Hz');
+    debugPrint('🎉 Streaming attivo: ${_activeStreams.length}/${connectedDevices.length} @ $TARGET_HZ Hz');
     debugPrint('📊 Sensori tracciati: ${_latestData.keys.toList()}\n');
     notifyListeners();
   }
 
-Future<void> _setupStreaming({
-  required String deviceId,
-  required String deviceName,
-  required BluetoothCharacteristic rxChar,
-}) async {
-  try {
+  Future<void> _setupStreaming({
+    required String deviceId,
+    required String deviceName,
+    required BluetoothCharacteristic rxChar,
+  }) async {
     await rxChar.setNotifyValue(true);
     await Future.delayed(const Duration(milliseconds: 200));
-    
+
     _packetCounts[deviceId] = 0;
-    _latestData[deviceId] = {
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
-      'sensor_name': deviceName,
-    };
+    _latestData[deviceId] = {'timestamp': DateTime.now().toUtc().toIso8601String(), 'sensor_name': deviceName};
     _lastSendTime[deviceId] = DateTime.now();
-    
+
     debugPrint('🎬 [$deviceName] Streaming attivo ($activeProtocol)');
     _startSendTimer(deviceId, deviceName);
-    
+
     final subscription = rxChar.lastValueStream.listen(
       (value) {
         if (value.isEmpty || value.length != 20) return;
-        
+
         final parsed = parseSensoriaPacket(value, protocol: activeProtocol);
         _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
-        final packetNum = _packetCounts[deviceId]!;
-        
-        // ⭐ FILTRO: Se è un Core/Ginocchio, NON includere le pressure
+
         final isCoreDevice = deviceName.toLowerCase().contains('ginocchio') ||
-                              deviceName.toLowerCase().contains('core') ||
-                              deviceName.toLowerCase().contains('knee');
-        
+            deviceName.toLowerCase().contains('core') ||
+            deviceName.toLowerCase().contains('knee');
+
         Map<String, dynamic> dataToSend = {
           'timestamp': DateTime.now().toUtc().toIso8601String(),
           'sensor_name': deviceName,
+          'accel_x': parsed['accel_x'],
+          'accel_y': parsed['accel_y'],
+          'accel_z': parsed['accel_z'],
+          'gyro_x': parsed['gyro_x'],
+          'gyro_y': parsed['gyro_y'],
+          'gyro_z': parsed['gyro_z'],
+          'mag_x': parsed['mag_x'],
+          'mag_y': parsed['mag_y'],
+          'mag_z': parsed['mag_z'],
         };
-        
-        // Aggiungi IMU
-        dataToSend['accel_x'] = parsed['accel_x'];
-        dataToSend['accel_y'] = parsed['accel_y'];
-        dataToSend['accel_z'] = parsed['accel_z'];
-        dataToSend['gyro_x'] = parsed['gyro_x'];
-        dataToSend['gyro_y'] = parsed['gyro_y'];
-        dataToSend['gyro_z'] = parsed['gyro_z'];
-        dataToSend['mag_x'] = parsed['mag_x'];
-        dataToSend['mag_y'] = parsed['mag_y'];
-        dataToSend['mag_z'] = parsed['mag_z'];
-        
-        // Aggiungi pressure SOLO se NON è un Core
+
         if (!isCoreDevice) {
           for (int i = 0; i <= 7; i++) {
             final key = 'pressure_$i';
-            if (parsed.containsKey(key)) {
-              dataToSend[key] = parsed[key];
-            }
+            if (parsed.containsKey(key)) dataToSend[key] = parsed[key];
           }
         }
-        
+
         _latestData[deviceId] = dataToSend;
-        
-        if (packetNum % 32 == 0) {
-          debugPrint('   #$packetNum | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
-        }
         _lastSendTime[deviceId] = DateTime.now();
+
+        if (_packetCounts[deviceId]! % 32 == 0) {
+          debugPrint('   #${_packetCounts[deviceId]} | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
+        }
         notifyListeners();
       },
       onError: (error) {
@@ -226,12 +212,7 @@ Future<void> _setupStreaming({
     _activeStreams[deviceId] = subscription;
     debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
     notifyListeners();
-  } catch (e) {
-    debugPrint('❌ [$deviceName] Setup error: $e');
-    rethrow;
   }
-}
-
 
   void _startSendTimer(String deviceId, String deviceName) {
     _sendTimers[deviceId]?.cancel();
@@ -244,15 +225,15 @@ Future<void> _setupStreaming({
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
     final latestData = _latestData[deviceId];
     if (latestData == null || latestData.isEmpty) return;
+
     if (_socket == null || !_isSocketConnected) {
+      debugPrint('❌ WebSocket non connesso, provo a connettere...');
       _connectWebSocket();
       return;
     }
+
     try {
-      _socket!.emit('sensor_data', {
-        'sensor_name': deviceName,
-        'data': latestData,
-      });
+      _socket!.emit('sensor_data', {'sensor_name': deviceName, 'data': latestData});
     } catch (e) {
       debugPrint('❌ [$deviceName] WebSocket send error: $e');
     }
@@ -284,7 +265,9 @@ Future<void> _setupStreaming({
     for (var timer in _sendTimers.values) timer.cancel();
     _sendTimers.clear();
     for (var id in _activeStreams.keys.toList()) {
-      try { await _activeStreams[id]?.cancel(); } catch (e) {}
+      try {
+        await _activeStreams[id]?.cancel();
+      } catch (e) {}
     }
     _activeStreams.clear();
     _packetCounts.clear();
@@ -297,13 +280,11 @@ Future<void> _setupStreaming({
   }
 }
 
-// UNIVERSAL PARSER (H20/I20 con magnetometro se richiesto)
 Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"}) {
   int b(int i) => data[i] & 0xFF;
 
   if (protocol == "H20" || protocol == "I20") {
     return {
-      // Pressione channels [0-3]
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
       'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
@@ -312,20 +293,17 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"
       'pressure_5': 0.0,
       'pressure_6': 0.0,
       'pressure_7': 0.0,
-      // IMU
       'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
       'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
       'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
       'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
       'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
       'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-      // Magnetometro RAW 10bit packed
       'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
       'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
       'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
     };
   } else {
-    // Default G20: solo pressione/IMU, mag = 0
     var pressures = {
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
@@ -335,24 +313,16 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"
       'pressure_5': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
       'pressure_6': (0x3FF & ((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F))).toDouble(),
       'pressure_7': 0.0,
-    };
-    var accel0 = 0x3FF & ((b(12) << 6) | (b(13) >> 2));
-    var accel1 = 0x3FF & ((b(13) << 8) | b(14));
-    var accel2 = 0x3FF & ((b(15) << 2) | (b(16) >> 6));
-    var gyro0  = 0x3FF & ((b(16) << 4) | (b(17) >> 4));
-    var gyro1  = 0x3FF & ((b(17) << 6) | (b(18) >> 2));
-    var gyro2  = 0x3FF & ((b(18) << 8) | b(19));
-    return {
-      ...pressures,
-      'accel_x': accel0.toDouble(),
-      'accel_y': accel1.toDouble(),
-      'accel_z': accel2.toDouble(),
-      'gyro_x': gyro0.toDouble(),
-      'gyro_y': gyro1.toDouble(),
-      'gyro_z': gyro2.toDouble(),
+      'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
+      'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
+      'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+      'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
+      'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
+      'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
       'mag_x': 0.0,
       'mag_y': 0.0,
       'mag_z': 0.0,
     };
+    return pressures;
   }
 }
