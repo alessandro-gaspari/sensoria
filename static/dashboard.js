@@ -1,4 +1,3 @@
-// ⭐ SENSORIA DASHBOARD - Ottimizzato per 8 sensori di pressione
 var socket = io({
     reconnection: true,
     reconnectionDelay: 100,
@@ -8,17 +7,14 @@ var socket = io({
     upgrade: false,
 });
 
-// ⭐ SCALE FACTORS
 var S_ACC = 4096;
 var S_GYRO = 65.54;
 var S_MAG = 0.3;
 
-// ⭐ FILTERING PARAMETERS
 var FILTER_ALPHA = 0.12;
 var BUFFER_SIZE = 8;
 var OUTLIER_THRESHOLD = 15;
 
-// ⭐ STATE
 var sensors = {};
 var isConnected = false;
 var frameCount = 0;
@@ -37,7 +33,6 @@ var isCalibrated = false;
 var domCache = {};
 var pendingUpdates = {};
 
-// ⭐ CONVERSIONE IMU
 function convertAccelerometerRaw(raw) {
     return raw / S_ACC;
 }
@@ -50,7 +45,6 @@ function convertMagnetometerRaw(raw) {
     return raw * S_MAG;
 }
 
-// ⭐ BUFFER E FILTRI
 function getBufferAverage(buffer) {
     if (buffer.length === 0) return 0;
     var sum = 0;
@@ -80,7 +74,6 @@ function advancedFilterWithOutlierRemoval(newValue, filteredValue, alpha, buffer
     return alpha * avg + (1 - alpha) * filteredValue;
 }
 
-// ⭐ INIT
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
     fetchInitialData();
@@ -88,7 +81,6 @@ document.addEventListener('DOMContentLoaded', function() {
     startRenderLoop();
 });
 
-// ⭐ RENDER LOOP
 function startRenderLoop() {
     function render() {
         if (Object.keys(pendingUpdates).length > 0) {
@@ -126,7 +118,6 @@ function startFpsCounter() {
     }, 1000);
 }
 
-// ⭐ SOCKET LISTENERS
 function initializeSocketListeners() {
     socket.on('connect', function() {
         console.log('✅ Connesso');
@@ -170,7 +161,6 @@ function initializeSocketListeners() {
             mag_z: convertMagnetometerRaw(sensorData.mag_z || 0),
         };
         
-        // ⭐ Copia TUTTE le pressioni (0-7)
         for (var i = 0; i <= 7; i++) {
             var key = 'pressure_' + i;
             if (sensorData[key] !== undefined) {
@@ -184,13 +174,13 @@ function initializeSocketListeners() {
         var n = sensorName.toLowerCase();
         var pitch = calculatePitch(convertedData.accel_x, convertedData.accel_z);
         
-        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1 || n.indexOf('upper') !== -1 || n.indexOf('top') !== -1) {
+        if (n.indexOf('sup') !== -1 || n.indexOf('sopra') !== -1) {
             filteredPitchSup = advancedFilterWithOutlierRemoval(
                 pitch, filteredPitchSup, FILTER_ALPHA, pitchSupBuffer, BUFFER_SIZE, OUTLIER_THRESHOLD
             );
         }
         
-        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1 || n.indexOf('lower') !== -1 || n.indexOf('bottom') !== -1) {
+        if (n.indexOf('inf') !== -1 || n.indexOf('sotto') !== -1) {
             filteredPitchInf = advancedFilterWithOutlierRemoval(
                 pitch, filteredPitchInf, FILTER_ALPHA, pitchInfBuffer, BUFFER_SIZE, OUTLIER_THRESHOLD
             );
@@ -217,7 +207,6 @@ function initializeSocketListeners() {
     });
 }
 
-// ⭐ GINOCCHIO
 function calibrateKnee() {
     calibrationOffset = filteredPitchSup - filteredPitchInf;
     isCalibrated = true;
@@ -255,7 +244,6 @@ function updateKneeAngleOptimized() {
         '</div>';
 }
 
-// ⭐ UPDATE CARD
 function updateSensorCardOptimized(sensorName, data) {
     var cacheKey = 'card-' + sensorName;
     
@@ -301,7 +289,6 @@ function updateSensorCardOptimized(sensorName, data) {
         }, 50);
     }
     
-    // ⭐ PRESSIONI RAW - 8 SENSORI (S0-S7)
     var pressureHtml = '';
     var hasPressure = false;
     var sensorLabels = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'];
@@ -311,7 +298,6 @@ function updateSensorCardOptimized(sensorName, data) {
         if (raw !== undefined) {
             hasPressure = true;
             
-            // Colore basato su valore assoluto
             var absVal = Math.abs(raw);
             var color = '#666';
             if (absVal > 100) color = '#97c93e';
@@ -338,7 +324,6 @@ function updateSensorCardOptimized(sensorName, data) {
     }
 }
 
-// ⭐ CREATE CARD
 function createSensorCardFast(sensorName, data) {
     var grid = document.getElementById('sensors-grid');
     var currentSensors = grid.querySelectorAll('[data-sensor]').length;

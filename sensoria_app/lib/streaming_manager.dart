@@ -10,20 +10,19 @@ class StreamingManager extends ChangeNotifier {
   
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
-  final Map<String, Map<String, dynamic>?> _latestData = {};
+  final Map<String, Map<String, dynamic>> _latestData = {};
   final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
-  final Map<String, int> _Hz = {};
   
   IO.Socket? _socket;
   bool _isSocketConnected = false;
   
-  bool isStreaming(String deviceId) => _activeStreams.containsKey(deviceId);
+  bool get isStreaming => _activeStreams.isNotEmpty;
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
   
-  Map<String, bool> get streamingStatus => Map.from(_activeStreams.map(
-    (key, value) => MapEntry(key, true),
-  ));
+  Map<String, bool> get streamingStatus => Map.from(
+    _activeStreams.map((key, value) => MapEntry(key, true)),
+  );
 
   Map<String, Map<String, dynamic>?> get allSensorData => Map.from(_latestData);
 
@@ -89,7 +88,8 @@ class StreamingManager extends ChangeNotifier {
     _connectWebSocket();
     
     debugPrint('\n🚀 INIZIO STREAMING RAW @ ${TARGET_HZ}Hz via WebSocket');
-    debugPrint('📊 Dispositivi: ${connectedDevices.length}');
+    debugPrint('📊 Dispositivi da connettere: ${connectedDevices.length}');
+    deviceNames.forEach((id, name) => debugPrint('   🔹 $name'));
     debugPrint('⚠️ MODALITÀ RAW: ZERO FILTRI, ZERO CONVERSIONI\n');
     
     int successCount = 0;
@@ -100,14 +100,15 @@ class StreamingManager extends ChangeNotifier {
       final deviceName = deviceNames[deviceId] ?? 'Unknown';
       
       if (_activeStreams.containsKey(deviceId)) {
-        debugPrint('⚠️ [$deviceName] Già in streaming\n');
+        debugPrint('⚠️ [$deviceName] Già in streaming, skip\n');
+        successCount++;
         continue;
       }
       
       try {
         final connectionState = await device.connectionState.first;
         if (connectionState != BluetoothConnectionState.connected) {
-          debugPrint('❌ [$deviceName] Non connesso\n');
+          debugPrint('❌ [$deviceName] Non connesso, skip\n');
           continue;
         }
         
@@ -130,7 +131,7 @@ class StreamingManager extends ChangeNotifier {
         }
         
         if (rxChar == null) {
-          debugPrint('   ❌ Channel 0 non trovato\n');
+          debugPrint('   ❌ Characteristic non trovata, skip\n');
           continue;
         }
         
@@ -147,7 +148,8 @@ class StreamingManager extends ChangeNotifier {
       }
     }
     
-    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz RAW\n');
+    debugPrint('🎉 Streaming attivo: $successCount/${connectedDevices.length} @ ${TARGET_HZ}Hz RAW');
+    debugPrint('📊 Sensori tracciati: ${_latestData.keys.toList()}\n');
     notifyListeners();
   }
   
@@ -161,8 +163,10 @@ class StreamingManager extends ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 200));
       
       _packetCounts[deviceId] = 0;
-      _latestData[deviceId] = null;
-      _Hz[deviceId] = 0;
+      _latestData[deviceId] = {
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'sensor_name': deviceName,
+      };
       _lastSendTime[deviceId] = DateTime.now();
       
       debugPrint('🎬 [$deviceName] Streaming RAW @ ${TARGET_HZ}Hz');
@@ -177,43 +181,51 @@ class StreamingManager extends ChangeNotifier {
         (value) {
           if (value.isEmpty) return;
           
+          // ⭐ CALZINI: Header 0xF0 0x10, protocollo ciclico 3-pacchetti
           if (value.length == 20 && value[0] == 0xF0 && value[1] == 0x10) {
             packetCounter++;
             
-            // ⭐ STAMPA TUTTI I PACCHETTI PER DEBUG PRESSIONI
-            if (packetCounter <= 30) {  // ⭐ STAMPA SOLO I PRIMI 30 PACCHETTI
-              debugPrint('🔵 [$deviceName] Pkt #$packetCounter (tipo ${packetCounter % 3}): ${value.map((b) => b.toString().padLeft(3)).join(' ')}');
+            if (packetCounter <= 10) {
+              debugPrint('🔵 [$deviceName] CALZINO Pkt #$packetCounter (tipo ${packetCounter % 3})');
             }
-
-                        
-            // Pacchetto 1 di 3: IMU
+            
             if (packetCounter % 3 == 1) {
               imuBuffer = List.from(value);
               pressureData = {};
             }
-            // Pacchetto 2 di 3: Pressioni (3 sensori)
-            // Pacchetto 2 di 3: Pressioni dai bytes 6-19
-            // Pacchetto 2 di 3: Pressioni dai bytes 8-13
-// Pacchetto 2 di 3: Leggi TUTTI gli 8 sensori (16 bytes: 8 sensori × 2 bytes)
-else if (packetCounter % 3 == 2 && imuBuffer != null) {
-  // ⭐ Leggi 8 sensori di pressione da offset 2 (o 4, o 6...)
-  for (int i = 0; i < 8; i++) {
-    int offset = 2 + (i * 2);  // Offset: 2,4,6,8,10,12,14,16
-    if (offset + 1 < value.length) {
-      final val = value[offset] | (value[offset + 1] << 8);
-      final pressure = val > 32767 ? val - 65536 : val;
-      pressureData['pressure_$i'] = pressure.toDouble();
-      if (packetCounter <= 30) debugPrint('  📍 S$i @ offset$offset: $pressure');
-    }
-  }
-}
-
-
-
-            // Pacchetto 3 di 3: Completamento
+            
+            else if (packetCounter % 3 == 2 && imuBuffer != null) {
+              for (int i = 0; i < 8; i++) {
+                int offset = 2 + (i * 2);
+                if (offset + 1 < value.length) {
+                  final val = value[offset] | (value[offset + 1] << 8);
+                  final pressure = val > 32767 ? val - 65536 : val;
+                  pressureData['pressure_$i'] = pressure.toDouble();
+                }
+              }
+            }
+            
             else if (packetCounter % 3 == 0 && imuBuffer != null) {
               _processCompletePacket(imuBuffer!, pressureData, deviceId, deviceName);
               imuBuffer = null;
+            }
+          }
+          
+          // ⭐ SENSORIA CORE: Header 0x2A 0x59, pacchetto singolo
+          else if (value.length == 20 && value[0] == 0x2A && value[1] == 0x59) {
+            packetCounter++;
+            
+            if (packetCounter <= 10) {
+              debugPrint('🟣 [$deviceName] SENSORIA CORE Pkt #$packetCounter');
+            }
+            
+            _processSensoriaCorePacket(value, deviceId, deviceName);
+          }
+          
+          // ⭐ HEADER SCONOSCIUTO
+          else {
+            if (packetCounter <= 5) {
+              debugPrint('❓ [$deviceName] Header: 0x${value[0].toRadixString(16)} 0x${value[1].toRadixString(16)}');
             }
           }
         },
@@ -239,6 +251,7 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
     }
   }
   
+  // ⭐ PROCESSA PACCHETTO COMPLETO (CALZINI)
   void _processCompletePacket(
     List<int> imuData,
     Map<String, double> pressureData,
@@ -249,15 +262,8 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
     final packetNum = _packetCounts[deviceId]!;
     
     try {
-      // ⭐ DATI RAW (nessuna conversione)
       final rawData = _parseRawIMUData(imuData);
-      
-      // ⭐ AGGIUNGI 3 PRESSIONI RAW
       rawData.addAll(pressureData);
-      
-      if (packetNum % 100 == 0) {
-        debugPrint('📦 [$deviceName] #$packetNum | AX=${rawData['accel_x']?.toInt()}, P0=${pressureData['pressure_0']?.toInt()}, P1=${pressureData['pressure_1']?.toInt()}, P2=${pressureData['pressure_2']?.toInt()}');
-      }
       
       _latestData[deviceId] = {
         'timestamp': DateTime.now().toUtc().toIso8601String(),
@@ -265,15 +271,43 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
         ...rawData,
       };
       
-      final now = DateTime.now();
-      final lastSend = _lastSendTime[deviceId];
-      if (lastSend != null) {
-        final elapsed = now.difference(lastSend).inMilliseconds;
-        if (elapsed > 0) {
-          _Hz[deviceId] = (1000 ~/ elapsed);
-        }
+      if (packetNum % 50 == 0) {
+        debugPrint('📦 [$deviceName] #$packetNum | AX=${rawData['accel_x']?.toInt()}, P0=${pressureData['pressure_0']?.toInt()}');
+        debugPrint('📊 MANAGER: ${_latestData.length} sensori tracciati');
       }
       
+      _lastSendTime[deviceId] = DateTime.now();
+      notifyListeners();
+      
+    } catch (e) {
+      debugPrint('   ⚠️ Parse error: $e');
+    }
+  }
+  
+  // ⭐ PROCESSA PACCHETTO SENSORIA CORE (SINGOLO)
+  void _processSensoriaCorePacket(
+    List<int> data,
+    String deviceId,
+    String deviceName,
+  ) {
+    _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
+    final packetNum = _packetCounts[deviceId]!;
+    
+    try {
+      final rawData = _parseSensoriaCoreIMU(data);
+      
+      _latestData[deviceId] = {
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+        'sensor_name': deviceName,
+        ...rawData,
+      };
+      
+      if (packetNum % 50 == 0) {
+        debugPrint('📦 [$deviceName] #$packetNum | AX=${rawData['accel_x']?.toInt()}, GX=${rawData['gyro_x']?.toInt()}');
+        debugPrint('📊 MANAGER: ${_latestData.length} sensori tracciati');
+      }
+      
+      _lastSendTime[deviceId] = DateTime.now();
       notifyListeners();
       
     } catch (e) {
@@ -295,7 +329,7 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
     final latestData = _latestData[deviceId];
     
-    if (latestData == null) return;
+    if (latestData == null || latestData.isEmpty) return;
     
     if (_socket == null || !_isSocketConnected) {
       _connectWebSocket();
@@ -307,15 +341,12 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
         'sensor_name': deviceName,
         'data': latestData,
       });
-      
-      _lastSendTime[deviceId] = DateTime.now();
-      
     } catch (e) {
       debugPrint('❌ [$deviceName] WebSocket send error: $e');
     }
   }
   
-  // ⭐ PARSING RAW CON OFFSET CORRETTI
+  // ⭐ PARSING IMU CALZINI
   Map<String, double> _parseRawIMUData(List<int> data) {
     if (data.length < 20) return {};
     
@@ -325,9 +356,8 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
       return val > 32767 ? val - 65536 : val;
     }
     
-    // ⭐ OFFSET CORRETTI (saltando header 0xF0 0x10 e counter bytes 2-3)
     return {
-      'accel_x': readInt16LE(4).toDouble(),   // ⭐ Offset 4
+      'accel_x': readInt16LE(4).toDouble(),
       'accel_y': readInt16LE(6).toDouble(),
       'accel_z': readInt16LE(8).toDouble(),
       'gyro_x': readInt16LE(10).toDouble(),
@@ -335,7 +365,31 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
       'gyro_z': readInt16LE(14).toDouble(),
       'mag_x': readInt16LE(16).toDouble(),
       'mag_y': readInt16LE(18).toDouble(),
-      'mag_z': 0.0,  // ⭐ Non c'è spazio
+      'mag_z': 0.0,
+    };
+  }
+  
+  // ⭐ PARSING IMU SENSORIA CORE
+  Map<String, double> _parseSensoriaCoreIMU(List<int> data) {
+    if (data.length < 20) return {};
+    
+    int readInt16LE(int offset) {
+      if (offset + 1 >= data.length) return 0;
+      int val = data[offset] | (data[offset + 1] << 8);
+      return val > 32767 ? val - 65536 : val;
+    }
+    
+    // ⭐ OFFSET DA VERIFICARE (provo con gli stessi dei calzini)
+    return {
+      'accel_x': readInt16LE(4).toDouble(),
+      'accel_y': readInt16LE(6).toDouble(),
+      'accel_z': readInt16LE(8).toDouble(),
+      'gyro_x': readInt16LE(10).toDouble(),
+      'gyro_y': readInt16LE(12).toDouble(),
+      'gyro_z': readInt16LE(14).toDouble(),
+      'mag_x': readInt16LE(16).toDouble(),
+      'mag_y': readInt16LE(18).toDouble(),
+      'mag_z': 0.0,
     };
   }
   
@@ -345,7 +399,6 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
     _latestData.remove(deviceId);
     _sendTimers[deviceId]?.cancel();
     _sendTimers.remove(deviceId);
-    _Hz.remove(deviceId);
     _lastSendTime.remove(deviceId);
   }
   
@@ -355,9 +408,10 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
     try {
       await _activeStreams[deviceId]?.cancel();
       _cleanupStreaming(deviceId);
+      debugPrint('🛑 STOP STREAMING: $deviceId');
       notifyListeners();
     } catch (e) {
-      debugPrint('❌ Error: $e');
+      debugPrint('❌ Error stopping $deviceId: $e');
     }
   }
   
@@ -380,7 +434,6 @@ else if (packetCounter % 3 == 2 && imuBuffer != null) {
     _activeStreams.clear();
     _packetCounts.clear();
     _latestData.clear();
-    _Hz.clear();
     _lastSendTime.clear();
     
     _socket?.disconnect();
