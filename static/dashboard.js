@@ -72,20 +72,13 @@ function initializeSocketListeners() {
         pendingUpdates[sensorName] = sensorData;
     });
     socket.on('sensor_disconnected', function(data) {
-    if (!data.sensor_name) return;
-    
-    // Rimuovi i dati sensore localmente
-    delete sensors[data.sensor_name];
-    delete pendingUpdates[data.sensor_name];
-    
-    // Rimuovi la card dal DOM
-    var card = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
-    if (card) card.remove();
-    
-    // Aggiorna la visualizzazione sensori
-    renderSensors();
+        if (!data.sensor_name) return;
+        delete sensors[data.sensor_name];
+        delete pendingUpdates[data.sensor_name];
+        var card = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
+        if (card) card.remove();
+        renderSensors();
     });
-
     socket.on('data_cleared', function() {
         sensors = {};
         domCache = {};
@@ -110,7 +103,6 @@ function updateSensorCardDynamic(sensorName, data) {
     }
     var cached = domCache[cacheKey];
 
-    // Render all fields raw (skip sensor_name & timestamp for table, shown below)
     let html = '';
     Object.keys(data).forEach(function(key) {
         if (key === 'timestamp' || key === 'sensor_name') return;
@@ -121,7 +113,6 @@ function updateSensorCardDynamic(sensorName, data) {
     });
     if (cached.content) cached.content.innerHTML = html;
 
-    // Show timestamp
     if (cached.timestamp && data.timestamp) {
         var date = new Date(data.timestamp);
         cached.timestamp.textContent =
@@ -129,7 +120,7 @@ function updateSensorCardDynamic(sensorName, data) {
             String(date.getMinutes()).padStart(2, '0') + ':' +
             String(date.getSeconds()).padStart(2, '0');
     }
-    // Flash indicator
+
     if (cached.status) {
         cached.status.classList.add('active');
         if (cached.status.timeoutId) clearTimeout(cached.status.timeoutId);
