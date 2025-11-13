@@ -6,14 +6,12 @@ import 'dart:async';
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
   static const int TARGET_HZ = 100;
-  static const int INTERVAL_MS = 1000 ~/ TARGET_HZ;
 
-  String activeProtocol = "H20"; // Cambio protocollo se serve
+  String activeProtocol = "H20";
 
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
   final Map<String, Map<String, dynamic>> _latestData = {};
-  final Map<String, Timer> _sendTimers = {};
   final Map<String, DateTime> _lastSendTime = {};
 
   IO.Socket? _socket;
@@ -88,6 +86,11 @@ class StreamingManager extends ChangeNotifier {
     debugPrint('\n🚀 INIZIO STREAMING @${TARGET_HZ}Hz (protocollo $activeProtocol)');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
 
+    if (!_isSocketConnected) {
+      _connectWebSocket();
+      await Future.delayed(const Duration(seconds: 1));
+    }
+
     for (var entry in connectedDevices.entries) {
       final deviceId = entry.key;
       final device = entry.value;
@@ -100,6 +103,7 @@ class StreamingManager extends ChangeNotifier {
 
       try {
         final connectionState = await device.connectionState.first;
+        debugPrint('[$deviceName] connection state: $connectionState');
         if (connectionState != BluetoothConnectionState.connected) {
           debugPrint('❌ [$deviceName] Non connesso, skip\n');
           continue;
@@ -128,10 +132,18 @@ class StreamingManager extends ChangeNotifier {
           continue;
         }
 
+        try {
+          final mtu = await device.requestMtu(512);
+          debugPrint('📶 [$deviceName] MTU: $mtu bytes');
+        } catch (e) {
+          debugPrint('⚠️ MTU request failed: $e');
+        }
+
         await _setupStreaming(
           deviceId: deviceId,
           deviceName: deviceName,
           rxChar: rxChar,
+          device: device,
         );
       } catch (e) {
         debugPrint('❌ [$deviceName] Errore: $e\n');
@@ -147,17 +159,23 @@ class StreamingManager extends ChangeNotifier {
     required String deviceId,
     required String deviceName,
     required BluetoothCharacteristic rxChar,
+    required BluetoothDevice device,
   }) async {
+    // Assicurati di resettare notify per evitare blocchi
+    await rxChar.setNotifyValue(false);
+    await Future.delayed(const Duration(milliseconds: 200));
     await rxChar.setNotifyValue(true);
     await Future.delayed(const Duration(milliseconds: 200));
 
     _packetCounts[deviceId] = 0;
-    _latestData[deviceId] = {'timestamp': DateTime.now().toUtc().toIso8601String(), 'sensor_name': deviceName};
+    _latestData[deviceId] = {
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'sensor_name': deviceName
+    };
     _lastSendTime[deviceId] = DateTime.now();
 
     debugPrint('🎬 [$deviceName] Streaming attivo ($activeProtocol)');
-    _startSendTimer(deviceId, deviceName);
-
+    
     final subscription = rxChar.lastValueStream.listen(
       (value) {
         if (value.isEmpty || value.length != 20) return;
@@ -196,6 +214,8 @@ class StreamingManager extends ChangeNotifier {
         if (_packetCounts[deviceId]! % 32 == 0) {
           debugPrint('   #${_packetCounts[deviceId]} | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
         }
+
+        _sendDataViaWebSocket(deviceId, deviceName);
         notifyListeners();
       },
       onError: (error) {
@@ -212,14 +232,6 @@ class StreamingManager extends ChangeNotifier {
     _activeStreams[deviceId] = subscription;
     debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
     notifyListeners();
-  }
-
-  void _startSendTimer(String deviceId, String deviceName) {
-    _sendTimers[deviceId]?.cancel();
-    _sendTimers[deviceId] = Timer.periodic(
-      Duration(milliseconds: INTERVAL_MS),
-      (timer) => _sendDataViaWebSocket(deviceId, deviceName),
-    );
   }
 
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
@@ -243,8 +255,6 @@ class StreamingManager extends ChangeNotifier {
     _activeStreams.remove(deviceId);
     _packetCounts.remove(deviceId);
     _latestData.remove(deviceId);
-    _sendTimers[deviceId]?.cancel();
-    _sendTimers.remove(deviceId);
     _lastSendTime.remove(deviceId);
   }
 
@@ -256,30 +266,38 @@ class StreamingManager extends ChangeNotifier {
       debugPrint('🛑 STOP STREAMING: $deviceId');
       notifyListeners();
     } catch (e) {
-      debugPrint('❌ Error stopping $deviceId: $e');
+      debugPrint('❌ Errore stoppando $deviceId: $e');
     }
   }
 
   Future<void> stopAll() async {
     debugPrint('\n🛑 STOP ALL STREAMS');
-    for (var timer in _sendTimers.values) timer.cancel();
-    _sendTimers.clear();
-    for (var id in _activeStreams.keys.toList()) {
+
+    // NOTE: non disconnettere socket qui per permettere riuso
+    for (var deviceId in _activeStreams.keys.toList()) {
       try {
-        await _activeStreams[id]?.cancel();
-      } catch (e) {}
+        // Se hai accesso al BluetoothDevice in mappa _deviceMap,
+        // disattiva notify così (se possibile)
+        // final device = _deviceMap[deviceId];
+        // await device.characteristic.setNotifyValue(false);
+        // Per ora cancella subscription
+        await _activeStreams[deviceId]?.cancel();
+      } catch (e) {
+        debugPrint('❌ Errore disabling notify per $deviceId: $e');
+      }
     }
+
     _activeStreams.clear();
     _packetCounts.clear();
     _latestData.clear();
     _lastSendTime.clear();
-    _socket?.disconnect();
-    _isSocketConnected = false;
+
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
   }
 }
 
+// Parsing sensori come già fornito...
 Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"}) {
   int b(int i) => data[i] & 0xFF;
 
