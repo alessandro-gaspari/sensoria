@@ -1,4 +1,3 @@
-//pr
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:geolocator/geolocator.dart';
@@ -139,16 +138,44 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
     });
     _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
       if (mounted) {
+        final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
         setState(() {
-          _sensoriaDevices = results.where((result) {
+          var scannedSensoria = results.where((result) {
             String deviceName = result.device.advName.toLowerCase();
             String platformName = result.device.platformName.toLowerCase();
             return deviceName.contains('sensoria') || platformName.contains('sensoria');
           }).toList();
-          _sensoriaDevices = _sensoriaDevices.fold<List<ScanResult>>([], (list, item) {
-            if (!list.any((element) => element.device.remoteId == item.device.remoteId)) list.add(item);
+
+          scannedSensoria = scannedSensoria.fold<List<ScanResult>>([], (list, item) {
+            if (!list.any((element) => element.device.remoteId == item.device.remoteId)) {
+              list.add(item);
+            }
             return list;
           });
+
+          // Inserisci sempre i dispositivi connessi che non sono nella scansione
+          for (var entry in devicesProvider.connectedDevices.entries) {
+            final deviceId = entry.key;
+            final device = entry.value;
+            if (!scannedSensoria.any((sr) => sr.device.remoteId.toString() == deviceId)) {
+              scannedSensoria.add(ScanResult(
+                device: device,
+                advertisementData: AdvertisementData(
+                  advName: device.platformName,
+                  txPowerLevel: 0,
+                  appearance: 0,
+                  connectable: true,
+                  manufacturerData: {},
+                  serviceData: {},
+                  serviceUuids: [],
+                ),
+                rssi: -50,
+                timeStamp: DateTime.now(),
+              ));
+            }
+          }
+
+          _sensoriaDevices = scannedSensoria;
         });
       }
     });
@@ -207,31 +234,29 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
   }
 
   Widget _buildStreamingControls(ConnectedDevicesProvider devicesProvider) {
-  final streamingManager = Provider.of<StreamingManager>(context);
-  final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
-  
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16),
-    child: Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 70),
-        child: SizedBox(
-          height: 56,
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: hasActiveStreams
+    final streamingManager = Provider.of<StreamingManager>(context);
+    final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 70),
+          child: SizedBox(
+            height: 56,
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: hasActiveStreams
                 ? null
                 : () async {
                     try {
                       final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-                      
+
                       await streamingManager.startAllStreaming(
                         devicesProvider.connectedDevices,
                         devicesProvider.deviceNames,
                       );
-                      
-                      
-                      
+
                       if (mounted) {
                         Navigator.push(
                           context,
@@ -244,36 +269,35 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                       _showMessage('❌ Errore: $e');
                     }
                   },
-            icon: const Icon(Icons.play_arrow, size: 22),
-            label: const Text(
-              'AVVIA TRACKING',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-                color: Color.fromRGBO(151, 201, 62, 1),
+              icon: const Icon(Icons.play_arrow, size: 22),
+              label: const Text(
+                'AVVIA TRACKING',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: Color.fromRGBO(151, 201, 62, 1),
+                ),
               ),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.transparent,
-              foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
-              side: const BorderSide(
-                color: Color.fromRGBO(151, 201, 62, 1),
-                width: 2,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
+                side: const BorderSide(
+                  color: Color.fromRGBO(151, 201, 62, 1),
+                  width: 2,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+                shadowColor: Colors.transparent,
               ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              elevation: 0,
-              shadowColor: Colors.transparent,
             ),
           ),
         ),
       ),
-    ),
-  );
-}
-
+    );
+  }
 
   @override
   void dispose() {
@@ -288,7 +312,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Image.asset('assets/logo_Clean.png', height: 40),
@@ -316,8 +340,8 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                   child: Row(
                     children: [
                       const Icon(
-                        Icons.sensors, 
-                        color: Color.fromRGBO(151, 201, 62, 1), 
+                        Icons.sensors,
+                        color: Color.fromRGBO(151, 201, 62, 1),
                         size: 20,
                       ),
                       const SizedBox(width: 8),
@@ -333,20 +357,18 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                     ],
                   ),
                 ),
-                
                 Container(
                   width: 1,
                   height: 24,
                   color: const Color.fromRGBO(89, 89, 92, 0.3),
                 ),
-                
                 Expanded(
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       Icon(
-                        _getGpsIcon(), 
-                        color: _getGpsColor(), 
+                        _getGpsIcon(),
+                        color: _getGpsColor(),
                         size: 20,
                       ),
                       const SizedBox(width: 8),
@@ -365,7 +387,6 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
               ],
             ),
           ),
-          
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: SizedBox(
@@ -377,7 +398,14 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                     ? Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: const [
-                          SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF000000)))),
+                          SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                valueColor:
+                                    AlwaysStoppedAnimation<Color>(Color(0xFF000000)),
+                              )),
                           SizedBox(width: 14),
                           Text('SCANSIONE IN CORSO...'),
                         ],
@@ -387,18 +415,18 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                         children: [
                           const Icon(Icons.radar, size: 22),
                           const SizedBox(width: 10),
-                          Text(devicesProvider.connectedCount == 0 ? 'AVVIA SCANSIONE' : 'CONNETTI ALTRO SENSORE'),
+                          Text(devicesProvider.connectedCount == 0
+                              ? 'AVVIA SCANSIONE'
+                              : 'CONNETTI ALTRO SENSORE'),
                         ],
                       ),
               ),
             ),
           ),
-          
           if (devicesProvider.connectedCount > 0) ...[
             const SizedBox(height: 16),
             _buildStreamingControls(devicesProvider),
           ],
-          
           if (!devicesProvider.canConnectMore) ...[
             const Padding(
               padding: EdgeInsets.all(16),
@@ -408,9 +436,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
               ),
             ),
           ],
-
           const SizedBox(height: 20),
-
           Expanded(
             child: _sensoriaDevices.isEmpty
                 ? Center(
@@ -426,17 +452,35 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                   final offsetY = math.sin(2 * t) * 8;
                                   return Transform.translate(
                                     offset: Offset(offsetX, offsetY),
-                                    child: const Icon(Icons.search, size: 64, color: Color.fromRGBO(151, 201, 62, 1)),
+                                    child: const Icon(
+                                      Icons.search,
+                                      size: 64,
+                                      color: Color.fromRGBO(151, 201, 62, 1),
+                                    ),
                                   );
                                 },
                               )
-                            : const Icon(Icons.bluetooth_searching, size: 64, color: Color.fromRGBO(89, 89, 92, 0.5)),
+                            : const Icon(Icons.bluetooth_searching,
+                                size: 64, color: Color.fromRGBO(89, 89, 92, 0.5)),
                         const SizedBox(height: 20),
-                        Text(_isScanning ? 'Ricerca dispositivi...' : 'Nessun dispositivo trovato',
-                            style: TextStyle(color: _isScanning ? const Color.fromRGBO(151, 201, 62, 1) : const Color.fromRGBO(89, 89, 92, 1), fontSize: 16, fontWeight: FontWeight.w500)),
+                        Text(
+                          _isScanning ? 'Ricerca dispositivi...' : 'Nessun dispositivo trovato',
+                          style: TextStyle(
+                            color: _isScanning
+                                ? const Color.fromRGBO(151, 201, 62, 1)
+                                : const Color.fromRGBO(89, 89, 92, 1),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                         if (!_isScanning) ...[
                           const SizedBox(height: 8),
-                          const Text('Premi il pulsante per avviare\nla scansione', textAlign: TextAlign.center, style: TextStyle(color: Color.fromRGBO(89, 89, 92, 0.7), fontSize: 14)),
+                          const Text(
+                            'Premi il pulsante per avviare\nla scansione',
+                            textAlign: TextAlign.center,
+                            style:
+                                TextStyle(color: Color.fromRGBO(89, 89, 92, 0.7), fontSize: 14),
+                          ),
                         ],
                       ],
                     ),
@@ -452,13 +496,11 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                       final deviceEmoji = _getDeviceEmoji(deviceType, device, devicesProvider);
                       final deviceTypeName = _getDeviceTypeName(deviceType);
                       final isAlreadyConnected = devicesProvider.isConnected(device);
-                      
+
                       return Container(
                         margin: const EdgeInsets.only(bottom: 12),
                         child: Material(
-                          color: isAlreadyConnected 
-                              ? const Color(0xFF1F2E1A)
-                              : const Color(0xFF1A1A1A),
+                          color: isAlreadyConnected ? const Color(0xFF1F2E1A) : const Color(0xFF1A1A1A),
                           borderRadius: BorderRadius.circular(16),
                           child: InkWell(
                             borderRadius: BorderRadius.circular(16),
@@ -468,7 +510,7 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(16),
                                 border: Border.all(
-                                  color: isAlreadyConnected 
+                                  color: isAlreadyConnected
                                       ? const Color.fromRGBO(151, 201, 62, 0.6)
                                       : const Color.fromRGBO(89, 89, 92, 0.3),
                                   width: isAlreadyConnected ? 2 : 1,
@@ -501,29 +543,30 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                           children: [
                                             Expanded(
                                               child: Text(
-                                                deviceName, 
+                                                deviceName,
                                                 style: const TextStyle(
-                                                  color: Color.fromRGBO(151, 201, 62, 1), 
-                                                  fontWeight: FontWeight.w600, 
-                                                  fontSize: 16, 
+                                                  color: Color.fromRGBO(151, 201, 62, 1),
+                                                  fontWeight: FontWeight.w600,
+                                                  fontSize: 16,
                                                   letterSpacing: 0.3,
-                                                ), 
-                                                maxLines: 1, 
+                                                ),
+                                                maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
                                             if (isAlreadyConnected)
                                               Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                padding: const EdgeInsets.symmetric(
+                                                    horizontal: 8, vertical: 4),
                                                 decoration: BoxDecoration(
                                                   color: const Color.fromRGBO(151, 201, 62, 1),
                                                   borderRadius: BorderRadius.circular(8),
                                                 ),
                                                 child: const Text(
-                                                  'CONNESSO', 
+                                                  'CONNESSO',
                                                   style: TextStyle(
-                                                    color: Color(0xFF000000), 
-                                                    fontSize: 10, 
+                                                    color: Color(0xFF000000),
+                                                    fontSize: 10,
                                                     fontWeight: FontWeight.w700,
                                                   ),
                                                 ),
@@ -532,20 +575,20 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          deviceTypeName, 
+                                          deviceTypeName,
                                           style: const TextStyle(
-                                            color: Color.fromRGBO(151, 201, 62, 0.7), 
-                                            fontSize: 13, 
-                                            fontWeight: FontWeight.w500, 
+                                            color: Color.fromRGBO(151, 201, 62, 0.7),
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
                                             letterSpacing: 0.3,
                                           ),
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          device.remoteId.toString(), 
+                                          device.remoteId.toString(),
                                           style: const TextStyle(
-                                            color: Color.fromRGBO(89, 89, 92, 1), 
-                                            fontSize: 11, 
+                                            color: Color.fromRGBO(89, 89, 92, 1),
+                                            fontSize: 11,
                                             letterSpacing: 0.3,
                                           ),
                                         ),
@@ -553,41 +596,51 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
                                     ),
                                   ),
                                   const SizedBox(width: 8),
-                                  
                                   Material(
                                     color: Colors.transparent,
                                     child: InkWell(
                                       borderRadius: BorderRadius.circular(12),
-                                      onTap: isAlreadyConnected 
-                                          ? null 
-                                          : () async {
-                                              if (!devicesProvider.canConnectMore) {
-                                                _showMessage('Massimo 6 sensori');
-                                                return;
-                                              }
-                                              
-                                              try {
-                                                await devicesProvider.connectDevice(device);
-                                              } catch (e) {
-                                                _showMessage('Errore: ${e.toString().replaceAll('Exception: ', '')}');
-                                              }
-                                            },
+                                      onTap: () async {
+                                        if (isAlreadyConnected) {
+                                          try {
+                                            await devicesProvider.disconnectDevice(device);
+                                          } catch (e) {
+                                            _showMessage('Errore disconnessione: $e');
+                                          }
+                                        } else {
+                                          if (!devicesProvider.canConnectMore) {
+                                            _showMessage('Massimo 6 sensori raggiunto');
+                                            return;
+                                          }
+                                          try {
+                                            await devicesProvider.connectDevice(device);
+                                          } catch (e) {
+                                            _showMessage('Errore connessione: $e');
+                                          }
+                                        }
+                                      },
                                       child: Container(
                                         width: 44,
                                         height: 44,
                                         decoration: BoxDecoration(
                                           color: isAlreadyConnected
-                                              ? const Color.fromRGBO(151, 201, 62, 0.2)
+                                              ? const Color.fromARGB(54, 255, 0, 0)
                                               : const Color.fromRGBO(151, 201, 62, 0.15),
                                           borderRadius: BorderRadius.circular(12),
                                           border: Border.all(
-                                            color: const Color.fromRGBO(151, 201, 62, 0.3),
+                                            color: isAlreadyConnected
+                                                ? const Color.fromARGB(255, 255, 0, 0)
+                                                : const Color.fromRGBO(151, 201, 62, 0.3),
                                             width: 1,
                                           ),
                                         ),
                                         child: Icon(
-                                          isAlreadyConnected ? Icons.check : Icons.link,
-                                          color: const Color.fromRGBO(151, 201, 62, 1),
+                                          isAlreadyConnected
+                                              ? Icons.remove_circle_outline
+                                              : Icons.link,
+                                          color: isAlreadyConnected
+                                              ? const Color.fromARGB(255, 255, 0, 0)
+                                              : const Color.fromRGBO(151, 201, 62, 1),
                                           size: 22,
                                         ),
                                       ),

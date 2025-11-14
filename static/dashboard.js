@@ -14,6 +14,7 @@ var lastFrameTime = Date.now();
 var currentFps = 0;
 var domCache = {};
 var pendingUpdates = {};
+var lastUpdateTime = 0;
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -24,7 +25,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
 function startRenderLoop() {
     function render() {
-        if (Object.keys(pendingUpdates).length > 0) batchUpdateDOM();
+        const now = performance.now();
+        // Aggiorna DOM max ogni 33ms (~30fps) per evitare sovraccarico
+        if (Object.keys(pendingUpdates).length > 0 && (now - lastUpdateTime > 33)) {
+            batchUpdateDOM();
+            lastUpdateTime = now;
+        }
         requestAnimationFrame(render);
     }
     requestAnimationFrame(render);
@@ -34,6 +40,7 @@ function batchUpdateDOM() {
     Object.keys(pendingUpdates).forEach(function(sensorName) {
         updateSensorCardDynamic(sensorName, pendingUpdates[sensorName]);
     });
+    // IMPORTANTE: svuota la coda per evitare accumulo
     pendingUpdates = {};
 }
 
@@ -68,7 +75,11 @@ function initializeSocketListeners() {
         frameCount++;
         var sensorName = data.sensor_name;
         var sensorData = data.data;
+        
+        // Aggiorna sempre i dati interni (100Hz)
         sensors[sensorName] = sensorData;
+        
+        // Accoda per aggiornamento DOM batch (30fps)
         pendingUpdates[sensorName] = sensorData;
     });
     socket.on('sensor_disconnected', function(data) {
@@ -82,6 +93,7 @@ function initializeSocketListeners() {
     socket.on('data_cleared', function() {
         sensors = {};
         domCache = {};
+        pendingUpdates = {};
         renderSensors();
     });
 }
@@ -103,14 +115,51 @@ function updateSensorCardDynamic(sensorName, data) {
     }
     var cached = domCache[cacheKey];
 
+    // Costruisci HTML solo con dati cambiati per ridurre overhead
     let html = '';
+    
+    // Separa IMU e pressione
+    let imuData = {};
+    let pressureData = {};
+    
     Object.keys(data).forEach(function(key) {
         if (key === 'timestamp' || key === 'sensor_name') return;
-        html += '<div class="sensor-data-row">' +
-            '<span class="sensor-data-label">' + key + ':</span>' +
-            '<span class="sensor-value">' + data[key] + '</span>' +
-            '</div>';
+        
+        if (key.startsWith('accel_') || key.startsWith('gyro_') || key.startsWith('mag_')) {
+            imuData[key] = data[key];
+        } else if (key.startsWith('pressure_')) {
+            pressureData[key] = data[key];
+        }
     });
+    
+    // Sezione IMU
+    if (Object.keys(imuData).length > 0) {
+        html += '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">📊 IMU Data</div>';
+        Object.keys(imuData).forEach(function(key) {
+            html += '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">' + key + ':</span>' +
+                    '<span class="sensor-value">' + Math.round(imuData[key]) + '</span>' +
+                    '</div>';
+        });
+        html += '</div>';
+    }
+    
+    // Sezione Pressione
+    if (Object.keys(pressureData).length > 0) {
+        html += '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">⬇️ Pressione (S0-S7)</div>';
+        Object.keys(pressureData).sort().forEach(function(key) {
+            var val = Math.round(pressureData[key]);
+            var colorClass = val > 5000 ? 'high' : val > 1000 ? 'medium' : 'low';
+            html += '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">' + key + ':</span>' +
+                    '<span class="sensor-value ' + colorClass + '">' + val + '</span>' +
+                    '</div>';
+        });
+        html += '</div>';
+    }
+    
     if (cached.content) cached.content.innerHTML = html;
 
     if (cached.timestamp && data.timestamp) {
@@ -158,6 +207,7 @@ function renderSensors() {
     var sensorNames = Object.keys(sensors);
     grid.innerHTML = '';
     domCache = {};
+    pendingUpdates = {};
     if (sensorNames.length === 0) {
         grid.style.display = 'none';
         emptyState.classList.add('visible');
@@ -206,6 +256,7 @@ function clearAllData() {
         .then(function() {
             sensors = {};
             domCache = {};
+            pendingUpdates = {};
             renderSensors();
         });
 }
