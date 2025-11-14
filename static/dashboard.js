@@ -1,51 +1,64 @@
-// sensoria-100hz-graph.js
-// Versione completa: batch 100Hz, socket, UI ottimizzato e grafico realtime (100Hz)
+// sensoria-upplot-100hz.js
+// Versione completa: socket + UI ottimizzata + uPlot realtime 100Hz (4 grafici)
+// Richiede: socket.io client e uPlot (CSS+JS) caricati nella pagina
 
 (function () {
     'use strict';
 
-    // =========================
     // CONFIG
-    // =========================
-    const TICK_MS = 10; // 100 Hz
+    const TICK_MS = 10;               // 100 Hz
     const STATUS_BLINK_MS = 50;
-    const CHART_SAMPLERATE_MS = 10; // 100Hz, allineato a TICK_MS
-    const CHART_HISTORY_SECONDS = 5; // quanti secondi mostrare sul grafico
-    const MAX_POINTS = Math.ceil(CHART_HISTORY_SECONDS * 1000 / CHART_SAMPLERATE_MS);
+    const MAX_DATA_POINTS = 100;      // punti per grafico (configurabile)
+    const CHART_HEIGHT = 140;
+    const CHART_WIDTH = 480;
 
-    // Lista sensori di default (se vuoi la prendi dalla connessione iniziale)
-    // Puoi lasciare vuoto e verranno creati quando arrivano dati
-    var sensorIds = []; // popoleremo da /api o socket
-
-    // =========================
-    // STATO E CACHE
-    // =========================
-    var sensors = {};          // ultima snapshot per sensore { sensorName: data }
-    var pendingUpdates = {};   // buffer aggiornamenti in arrivo { sensorName: data }
-    var domCache = {};         // cache DOM per sensore { sensorName: {fields,timestamp,status,lastValues,card} }
-    var isConnected = false;
-    var frameCount = 0;
-    var lastFpsTime = Date.now();
-    var currentFps = 0;
-
-    // Chart data per sensor (circular buffer)
-    var chartBuffers = {}; // sensorName -> {buffer: Float32Array, head: int, length: int}
-    var selectedSensor = null;
-
-    // Canvas / drawing
-    var canvas, canvasCtx, canvasW, canvasH, devicePixelRatio = window.devicePixelRatio || 1;
-
-    // =========================
-    // SOCKET.IO
-    // =========================
+    // Socket (manteniamo le tue opzioni originali)
     var socket = io({
         reconnection: true,
         reconnectionDelay: 100,
         reconnectionDelayMax: 1000,
+        reconnectionAttempts: 5,
         transports: ['websocket'],
         upgrade: false
     });
 
+    // Stato globale
+    var sensors = {};           // snapshot ultima per sensore
+    var pendingUpdates = {};    // buffer inbound { sensorName: data }
+    var domCache = {};          // cache DOM per card (key = 'card-'+sensorName)
+    var isConnected = false;
+    var frameCount = 0;
+    var lastFrameTime = Date.now();
+    var currentFps = 0;
+
+    // Chart objects (uPlot instances)
+    var uCharts = {
+        accel: null,
+        gyro: null,
+        mag: null,
+        pressure: null
+    };
+
+    // Buffers per sensor: chartBuffers[sensorName] = { ts:[], accel:{x:[],y:[],z:[]}, ... }
+    var chartBuffers = {};
+
+    // UI state
+    var selectedSensor = null;
+    var chartsInitialized = false;
+
+    // DOM ready init
+    document.addEventListener('DOMContentLoaded', function () {
+        initializeSocketListeners();
+        ensureBaseDOM();
+        fetchInitialData();
+        startBatchLoop();
+        startFpsCounter();
+        bindSensorSelector();
+    });
+
+    // --------------------
+    // SOCKET LISTENERS
+    // --------------------
     socket.on('connect', function () {
         isConnected = true;
         updateConnectionStatus(true);
@@ -54,120 +67,93 @@
         isConnected = false;
         updateConnectionStatus(false);
     });
-
-    // supporta due formati: "connection_response" con snapshot o "sensor_update"/"sensor_data"
     socket.on('connection_response', function (data) {
         if (data && data.sensors) {
             sensors = data.sensors;
-            sensorIds = Object.keys(sensors);
-            renderSensors(); // build UI initial
+            renderSensors();
         }
     });
-
-    socket.on('sensor_data', function (data) {
-        // expected: { sensor_name: '...', ...fields... } or batch object
-        if (!data) return;
-        // If server sends an object of many sensors, handle gracefully
-        if (data.sensors && typeof data.sensors === 'object') {
-            for (var n in data.sensors) {
-                pendingUpdates[n] = data.sensors[n];
-            }
-        } else if (data.sensor_name) {
-            pendingUpdates[data.sensor_name] = data;
-        }
-        frameCount++;
-    });
-
     socket.on('sensor_update', function (data) {
+        if (!data || !data.sensor_name) return;
+        // data format expected: { sensor_name: '...', timestamp: 123, accel_x:..., ... }
+        frameCount++;
+        pendingUpdates[data.sensor_name] = data;
+    });
+    socket.on('sensor_data', function (data) {
+        // support alternative event name
         if (!data) return;
         if (data.sensor_name) {
             pendingUpdates[data.sensor_name] = data;
             frameCount++;
         }
     });
-
     socket.on('sensor_disconnected', function (data) {
         if (!data || !data.sensor_name) return;
         var name = data.sensor_name;
         delete sensors[name];
         delete pendingUpdates[name];
         removeSensorDom(name);
-        // if removed sensor was selected for chart, switch to another
-        if (selectedSensor === name) {
-            selectedSensor = sensorIds.length ? sensorIds[0] : null;
-        }
+        if (selectedSensor === name) selectedSensor = null;
         updateConnectionStatus(isConnected);
     });
-
     socket.on('data_cleared', function () {
         sensors = {};
         pendingUpdates = {};
         domCache = {};
         chartBuffers = {};
-        sensorIds = [];
         selectedSensor = null;
-        renderSensors(); // clear UI
+        renderSensors();
     });
 
-    // =========================
-    // INIT
-    // =========================
-    document.addEventListener('DOMContentLoaded', function () {
-        ensureBaseDOM();
-        fetchInitialData();
-        startBatchLoop();
-        startFpsCounter();
-        initChartCanvas(); // prepara canvas - crea se non presente
-        startChartLoop();
-    });
-
-    // =========================
-    // FETCH INIZIALE
-    // =========================
+    // --------------------
+    // FETCH INITIAL
+    // --------------------
     function fetchInitialData() {
         fetch('/api/sensors')
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 if (data && data.sensors) {
                     sensors = data.sensors;
-                    sensorIds = Object.keys(sensors);
                     renderSensors();
                 }
             })
-            .catch(function () {
-                // ignore
-            });
+            .catch(function () { /* silent */ });
     }
 
-    // =========================
-    // BATCH LOOP 100Hz (UI updates + chart buffer push)
-    // =========================
+    // --------------------
+    // BATCH LOOP (100Hz)
+    // --------------------
     function startBatchLoop() {
         setInterval(function () {
+            // nothing pending -> skip
             if (!hasPending()) return;
 
-            // per ogni sensore in pending, applichiamo
+            // apply each pending snapshot
             for (var name in pendingUpdates) {
                 var snapshot = pendingUpdates[name];
-
-                // aggiorniamo stato globale
+                // update global snapshot
                 sensors[name] = snapshot;
 
-                // se non esiste nella lista sensori -> nuovo sensore
-                if (sensorIds.indexOf(name) === -1) {
-                    sensorIds.push(name);
-                }
+                // ensure DOM card exists
+                ensureCardExists(name, snapshot);
 
-                // appendiamo al buffer grafico il valore da tracciare (scegliamo la prima numeric property utile)
-                ensureChartBufferFor(name);
-                pushSampleToChart(name, selectPrimaryValue(snapshot));
+                // ensure chart buffer exists
+                ensureChartBuffer(name);
 
-                // aggiorniamo la UI (differenziale)
-                applyUpdateToDom(name, snapshot);
+                // push sample into buffer (timestamp + values)
+                pushSampleBuffers(name, snapshot);
             }
 
-            // svuotiamo il buffer
+            // clear buffer (new object to avoid property deletes)
             pendingUpdates = {};
+
+            // update DOM (differenziale)
+            batchUpdateDOM();
+
+            // update charts for selectedSensor
+            if (chartsInitialized && selectedSensor) {
+                updateAllChartsFor(selectedSensor);
+            }
         }, TICK_MS);
     }
 
@@ -176,84 +162,72 @@
         return false;
     }
 
-    // =========================
-    // DOM: assicurati che elementi base esistano
-    // =========================
+    // --------------------
+    // DOM: ensure base elements and sensor cards
+    // --------------------
     function ensureBaseDOM() {
-        // sensors-grid
+        // sensors grid
         if (!document.getElementById('sensors-grid')) {
             var g = document.createElement('div');
             g.id = 'sensors-grid';
-            // default minimal styles if not present (l'utente può sovrascrivere nel CSS)
             g.style.display = 'grid';
             g.style.gridTemplateColumns = 'repeat(auto-fill, minmax(220px, 1fr))';
             g.style.gap = '10px';
+            g.style.padding = '8px';
             document.body.appendChild(g);
         }
+
+        // empty-state
         if (!document.getElementById('empty-state')) {
             var e = document.createElement('div');
             e.id = 'empty-state';
             e.textContent = 'Nessun sensore connesso';
             e.className = 'visible';
+            e.style.padding = '12px';
             document.body.appendChild(e);
         }
-        // fps-counter
-        if (!document.getElementById('fps-counter')) {
-            var f = document.createElement('div');
-            f.id = 'fps-counter';
-            f.style.position = 'fixed';
-            f.style.right = '10px';
-            f.style.top = '10px';
-            f.style.background = 'rgba(0,0,0,0.5)';
-            f.style.color = '#fff';
-            f.style.padding = '4px 8px';
-            f.style.borderRadius = '6px';
-            document.body.appendChild(f);
-        }
-        // connection-status
-        if (!document.getElementById('connection-status')) {
-            var s = document.createElement('div');
-            s.id = 'connection-status';
-            s.style.position = 'fixed';
-            s.style.left = '10px';
-            s.style.top = '10px';
-            s.style.background = 'rgba(0,0,0,0.5)';
-            s.style.color = '#fff';
-            s.style.padding = '4px 8px';
-            s.style.borderRadius = '6px';
-            document.body.appendChild(s);
-        }
-        // sensor-count
-        if (!document.getElementById('sensor-count')) {
-            var c = document.createElement('div');
-            c.id = 'sensor-count';
-            c.style.position = 'fixed';
-            c.style.left = '10px';
-            c.style.top = '44px';
-            c.style.background = 'rgba(0,0,0,0.25)';
-            c.style.color = '#fff';
-            c.style.padding = '4px 8px';
-            c.style.borderRadius = '6px';
-            document.body.appendChild(c);
-        }
-        // canvas for chart
-        if (!document.getElementById('realtime-chart')) {
-            var canvasEl = document.createElement('canvas');
-            canvasEl.id = 'realtime-chart';
-            canvasEl.style.position = 'fixed';
-            canvasEl.style.right = '10px';
-            canvasEl.style.bottom = '10px';
-            canvasEl.style.width = '480px';
-            canvasEl.style.height = '160px';
-            canvasEl.style.border = '1px solid rgba(0,0,0,0.2)';
-            canvasEl.style.background = '#0b1220';
-            document.body.appendChild(canvasEl);
+
+        // charts container
+        if (!document.getElementById('charts-container')) {
+            var cc = document.createElement('div');
+            cc.id = 'charts-container';
+            cc.style.display = 'none';
+            cc.style.position = 'fixed';
+            cc.style.right = '10px';
+            cc.style.bottom = '10px';
+            cc.style.width = (CHART_WIDTH + 20) + 'px';
+            cc.style.maxWidth = (CHART_WIDTH + 20) + 'px';
+            cc.style.background = 'rgba(0,0,0,0.6)';
+            cc.style.padding = '8px';
+            cc.style.borderRadius = '8px';
+            document.body.appendChild(cc);
+
+            // selector
+            var sel = document.createElement('select');
+            sel.id = 'chart-sensor-select';
+            sel.style.width = '100%';
+            sel.style.marginBottom = '6px';
+            cc.appendChild(sel);
+
+            // charts canvas placeholders
+            var c1 = document.createElement('div'); c1.id = 'accel-wrap'; c1.style.height = CHART_HEIGHT + 'px'; c1.style.marginBottom = '6px';
+            var canvasA = document.createElement('div'); canvasA.id = 'accel-chart'; c1.appendChild(canvasA);
+            cc.appendChild(c1);
+
+            var c2 = document.createElement('div'); c2.id = 'gyro-wrap'; c2.style.height = CHART_HEIGHT + 'px'; c2.style.marginBottom = '6px';
+            var canvasG = document.createElement('div'); canvasG.id = 'gyro-chart'; c2.appendChild(canvasG);
+            cc.appendChild(c2);
+
+            var c3 = document.createElement('div'); c3.id = 'mag-wrap'; c3.style.height = CHART_HEIGHT + 'px'; c3.style.marginBottom = '6px';
+            var canvasM = document.createElement('div'); canvasM.id = 'mag-chart'; c3.appendChild(canvasM);
+            cc.appendChild(c3);
+
+            var c4 = document.createElement('div'); c4.id = 'pressure-wrap'; c4.style.height = CHART_HEIGHT + 'px';
+            var canvasP = document.createElement('div'); canvasP.id = 'pressure-chart'; c4.appendChild(canvasP);
+            cc.appendChild(c4);
         }
     }
 
-    // =========================
-    // Render (crea tutte le card sensori)
-    // =========================
     function renderSensors() {
         var grid = document.getElementById('sensors-grid');
         var emptyState = document.getElementById('empty-state');
@@ -261,38 +235,50 @@
 
         grid.innerHTML = '';
         domCache = {};
-        chartBuffers = {};
-        selectedSensor = null;
+        pendingUpdates = {}; // clear pending
 
-        var any = false;
-        for (var name in sensors) {
-            any = true;
-            createSensorCard(name, sensors[name]);
-        }
-
-        if (!any) {
+        var keys = Object.keys(sensors);
+        if (keys.length === 0) {
             grid.style.display = 'none';
             emptyState.classList.add('visible');
-        } else {
-            grid.style.display = 'grid';
-            emptyState.classList.remove('visible');
+            var cc = document.getElementById('charts-container'); if (cc) cc.style.display = 'none';
+            return;
         }
 
+        keys.forEach(function (name) {
+            createSensorCard(name, sensors[name]);
+            ensureChartBuffer(name);
+        });
+
+        grid.style.display = 'grid';
+        emptyState.classList.remove('visible');
         updateConnectionStatus(isConnected);
+        updateSensorSelector();
     }
 
-    function createSensorCard(name, data) {
+    function createSensorCard(sensorName, data) {
         var grid = document.getElementById('sensors-grid');
         if (!grid) return;
 
-        var wrapper = document.createElement('div');
-        wrapper.className = 'sensor-col connected';
-        wrapper.setAttribute('data-sensor', name);
-        wrapper.style.padding = '8px';
-        wrapper.style.borderRadius = '8px';
-        wrapper.style.background = '#fff';
-        wrapper.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
-        wrapper.style.fontFamily = 'sans-serif';
+        var card = document.createElement('div');
+        card.className = 'sensor-col connected';
+        card.setAttribute('data-sensor', sensorName);
+        card.style.padding = '8px';
+        card.style.borderRadius = '8px';
+        card.style.background = '#fff';
+        card.style.cursor = 'pointer';
+        card.style.userSelect = 'none';
+        card.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)';
+        card.addEventListener('click', function () {
+            selectedSensor = sensorName;
+            highlightSelectedCard(sensorName);
+            // on first selection, init charts
+            if (!chartsInitialized) {
+                initCharts();
+                chartsInitialized = true;
+            }
+            updateSensorSelector(); // keep selection in dropdown synced
+        });
 
         // header
         var header = document.createElement('div');
@@ -303,31 +289,30 @@
         header.style.marginBottom = '6px';
 
         var title = document.createElement('div');
-        title.textContent = getSensorEmoji(name) + ' ' + name;
+        title.textContent = getSensorEmoji(sensorName) + ' ' + sensorName;
         title.style.fontWeight = '600';
 
         var status = document.createElement('div');
-        status.className = 'status-indicator active';
+        status.className = 'status-indicator';
         status.style.width = '10px';
         status.style.height = '10px';
         status.style.borderRadius = '50%';
-        status.style.background = '#2ecc71';
+        status.style.background = '#ddd';
 
         header.appendChild(title);
         header.appendChild(status);
-        wrapper.appendChild(header);
+        card.appendChild(header);
 
-        // fields
-        var fieldsContainer = document.createElement('div');
-        fieldsContainer.className = 'sensor-fields';
+        // fields container
+        var fields = document.createElement('div');
+        fields.className = 'sensor-fields';
 
-        // determiniamo keys
+        // detect keys and build rows
         var keys = [];
         for (var k in data) {
             if (k === 'timestamp' || k === 'sensor_name') continue;
             keys.push(k);
         }
-        // sort for stability
         keys.sort();
 
         keys.forEach(function (key) {
@@ -349,12 +334,11 @@
 
             row.appendChild(label);
             row.appendChild(value);
-            fieldsContainer.appendChild(row);
+            fields.appendChild(row);
         });
 
-        wrapper.appendChild(fieldsContainer);
+        card.appendChild(fields);
 
-        // timestamp
         var ts = document.createElement('span');
         ts.className = 'sensor-timestamp';
         ts.textContent = '--:--:--';
@@ -362,303 +346,444 @@
         ts.style.marginTop = '6px';
         ts.style.fontSize = '12px';
         ts.style.color = '#666';
-        wrapper.appendChild(ts);
+        card.appendChild(ts);
 
-        // click to select for chart
-        wrapper.style.cursor = 'pointer';
-        wrapper.addEventListener('click', function () {
-            selectedSensor = name;
-            // visual feedback
-            highlightSelectedCard(name);
-        });
+        grid.appendChild(card);
+        // cache DOM
+        cacheDomForCard(sensorName, card);
+    }
 
-        grid.appendChild(wrapper);
-
-        // cache immediately
-        cacheDomForCard(name, wrapper);
-
-        // ensure chart buffer
-        ensureChartBufferFor(name);
-
-        // if no sensor selected, select first
-        if (!selectedSensor) selectedSensor = name;
-
-        // update connection status count
-        updateConnectionStatus(isConnected);
+    function ensureCardExists(sensorName, snapshot) {
+        var cacheKey = 'card-' + sensorName;
+        if (domCache[cacheKey]) return;
+        var existing = document.querySelector('[data-sensor="' + sensorName + '"]');
+        if (!existing) {
+            createSensorCard(sensorName, snapshot || {});
+        } else {
+            cacheDomForCard(sensorName, existing);
+        }
     }
 
     function cacheDomForCard(sensorName, card) {
-        var cacheObj = {
+        var cacheKey = 'card-' + sensorName;
+        var valueElements = {};
+        card.querySelectorAll('.sensor-data-row').forEach(function (row) {
+            var label = row.querySelector('.sensor-data-label');
+            var value = row.querySelector('.sensor-value');
+            if (label && value) {
+                // normalize label key (remove colon)
+                var key = label.textContent.replace(':', '').trim();
+                valueElements[key] = value;
+            }
+        });
+        domCache[cacheKey] = {
             card: card,
-            fields: {},
+            content: card.querySelector('.sensor-fields'),
             timestamp: card.querySelector('.sensor-timestamp'),
             status: card.querySelector('.status-indicator'),
-            lastValues: {}
+            valueElements: valueElements,
+            lastData: {}
         };
-
-        card.querySelectorAll('.sensor-data-row').forEach(function (row) {
-            var k = row.dataset.key;
-            if (!k) return;
-            var v = row.querySelector('.sensor-value');
-            if (v) cacheObj.fields[k] = v;
-        });
-
-        domCache[sensorName] = cacheObj;
     }
 
     function removeSensorDom(sensorName) {
         var card = document.querySelector('[data-sensor="' + sensorName + '"]');
         if (card) card.remove();
-        if (domCache[sensorName]) delete domCache[sensorName];
+        var cacheKey = 'card-' + sensorName;
+        if (domCache[cacheKey]) delete domCache[cacheKey];
         if (chartBuffers[sensorName]) delete chartBuffers[sensorName];
-        var idx = sensorIds.indexOf(sensorName);
-        if (idx !== -1) sensorIds.splice(idx, 1);
+        updateSensorSelector();
     }
 
-    // =========================
-    // APPLY UPDATE (differenziale, minimale)
-    // =========================
-    function applyUpdateToDom(sensorName, data) {
-        // create card if not present
-        if (!domCache[sensorName]) {
-            var card = document.querySelector('[data-sensor="' + sensorName + '"]');
-            if (!card) {
-                createSensorCard(sensorName, data);
-                // ensure cache
-                card = document.querySelector('[data-sensor="' + sensorName + '"]');
-                if (!card) return;
-            } else {
-                cacheDomForCard(sensorName, card);
-            }
+    // apply all pending updates to DOM (differential)
+    function batchUpdateDOM() {
+        for (var cacheKey in domCache) {
+            // nothing here - we update per-sensor below
         }
+        // iterate sensors currently updated (we pushed samples earlier)
+        for (var sensorName in sensors) {
+            var snapshot = sensors[sensorName];
+            updateSensorCardDynamic(sensorName, snapshot);
+        }
+    }
 
-        var cache = domCache[sensorName];
-        var last = cache.lastValues;
+    function updateSensorCardDynamic(sensorName, data) {
+        var cacheKey = 'card-' + sensorName;
+        var cached = domCache[cacheKey];
+        if (!cached) return;
+
+        var valueElements = cached.valueElements;
+        var lastData = cached.lastData;
 
         for (var key in data) {
             if (key === 'timestamp' || key === 'sensor_name') continue;
-            var newVal = Math.round(data[key]);
-            if (last[key] !== newVal) {
-                last[key] = newVal;
-                var el = cache.fields[key];
-                if (el) el.textContent = newVal;
-                // pressure style
-                if (key.indexOf('pressure_') === 0 && el) {
-                    var cls = (newVal > 5000) ? 'high' : (newVal > 1000 ? 'medium' : 'low');
-                    el.className = 'sensor-value ' + cls;
+            var newValue = Math.round(data[key]);
+            if (lastData[key] !== newValue) {
+                lastData[key] = newValue;
+                var element = valueElements[key];
+                if (element) {
+                    element.textContent = newValue;
+                    if (key.indexOf('pressure_') === 0) {
+                        var colorClass = 'low';
+                        if (newValue > 5000) colorClass = 'high';
+                        else if (newValue > 1000) colorClass = 'medium';
+                        element.className = 'sensor-value ' + colorClass;
+                    }
                 }
             }
         }
 
-        if (data.timestamp && cache.timestamp) {
-            var d = new Date(data.timestamp);
-            var ts = pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
-            if (cache.timestamp.textContent !== ts) cache.timestamp.textContent = ts;
+        if (cached.timestamp && data.timestamp) {
+            var date = new Date(data.timestamp);
+            var timeStr = pad2(date.getHours()) + ':' + pad2(date.getMinutes()) + ':' + pad2(date.getSeconds());
+            if (cached.timestamp.textContent !== timeStr) cached.timestamp.textContent = timeStr;
         }
 
-        if (cache.status) {
-            cache.status.style.background = '#2ecc71';
-            if (cache.status._timeout) clearTimeout(cache.status._timeout);
-            cache.status._timeout = setTimeout(function (s) {
-                return function () { s.style.background = '#ddd'; };
-            }(cache.status), STATUS_BLINK_MS);
+        if (cached.status) {
+            cached.status.style.background = '#2ecc71';
+            if (cached.status._timeout) clearTimeout(cached.status._timeout);
+            cached.status._timeout = setTimeout(function (s) { return function () { s.style.background = '#ddd'; }; }(cached.status), STATUS_BLINK_MS);
         }
     }
 
-    // =========================
-    // CONNECTION UI
-    // =========================
-    function updateConnectionStatus(connected) {
-        var statusEl = document.getElementById('connection-status');
-        var countEl = document.getElementById('sensor-count');
-        if (statusEl) {
-            statusEl.innerHTML = connected ? '<span class="dot" style="color:#2ecc71">●</span> Connesso' : '<span class="dot" style="color:#e74c3c">●</span> Disconnesso';
+    // --------------------
+    // Chart buffers and push
+    // --------------------
+    function ensureChartBuffer(sensorName) {
+        if (chartBuffers[sensorName]) return;
+        chartBuffers[sensorName] = {
+            ts: [],
+            accel: { x: [], y: [], z: [] },
+            gyro: { x: [], y: [], z: [] },
+            mag: { x: [], y: [], z: [] },
+            pressure: { s0: [], s1: [], s2: [], s3: [], s4: [], s5: [], s6: [], s7: [] }
+        };
+    }
+
+    function pushSampleBuffers(sensorName, snapshot) {
+        var buf = chartBuffers[sensorName];
+        if (!buf) return;
+
+        var t = (snapshot.timestamp !== undefined) ? Number(snapshot.timestamp) : Date.now();
+
+        // push ts as number (uPlot expects x axis numeric)
+        buf.ts.push(t);
+        if (buf.ts.length > MAX_DATA_POINTS) buf.ts.shift();
+
+        // accel
+        if (snapshot.accel_x !== undefined) {
+            buf.accel.x.push(Number(snapshot.accel_x));
+            buf.accel.y.push(Number(snapshot.accel_y));
+            buf.accel.z.push(Number(snapshot.accel_z));
+            if (buf.accel.x.length > MAX_DATA_POINTS) { buf.accel.x.shift(); buf.accel.y.shift(); buf.accel.z.shift(); }
+        } else {
+            // keep arrays in sync by pushing NaN so uPlot stretches correctly
+            buf.accel.x.push(NaN); buf.accel.y.push(NaN); buf.accel.z.push(NaN);
+            if (buf.accel.x.length > MAX_DATA_POINTS) { buf.accel.x.shift(); buf.accel.y.shift(); buf.accel.z.shift(); }
         }
-        if (countEl) {
-            var c = 0;
-            for (var k in sensors) c++;
-            countEl.textContent = c + ' Sensor' + (c !== 1 ? 'i' : 'e');
+
+        // gyro
+        if (snapshot.gyro_x !== undefined) {
+            buf.gyro.x.push(Number(snapshot.gyro_x));
+            buf.gyro.y.push(Number(snapshot.gyro_y));
+            buf.gyro.z.push(Number(snapshot.gyro_z));
+            if (buf.gyro.x.length > MAX_DATA_POINTS) { buf.gyro.x.shift(); buf.gyro.y.shift(); buf.gyro.z.shift(); }
+        } else {
+            buf.gyro.x.push(NaN); buf.gyro.y.push(NaN); buf.gyro.z.push(NaN);
+            if (buf.gyro.x.length > MAX_DATA_POINTS) { buf.gyro.x.shift(); buf.gyro.y.shift(); buf.gyro.z.shift(); }
+        }
+
+        // mag
+        if (snapshot.mag_x !== undefined) {
+            buf.mag.x.push(Number(snapshot.mag_x));
+            buf.mag.y.push(Number(snapshot.mag_y));
+            buf.mag.z.push(Number(snapshot.mag_z));
+            if (buf.mag.x.length > MAX_DATA_POINTS) { buf.mag.x.shift(); buf.mag.y.shift(); buf.mag.z.shift(); }
+        } else {
+            buf.mag.x.push(NaN); buf.mag.y.push(NaN); buf.mag.z.push(NaN);
+            if (buf.mag.x.length > MAX_DATA_POINTS) { buf.mag.x.shift(); buf.mag.y.shift(); buf.mag.z.shift(); }
+        }
+
+        // pressure S0..S7
+        var hasPressure = false;
+        for (var i = 0; i <= 7; i++) {
+            var key = 'pressure_' + i;
+            if (snapshot[key] !== undefined) {
+                hasPressure = true;
+                chartBuffers[sensorName].pressure['s' + i].push(Number(snapshot[key]));
+            } else {
+                chartBuffers[sensorName].pressure['s' + i].push(NaN);
+            }
+            if (chartBuffers[sensorName].pressure['s' + i].length > MAX_DATA_POINTS) {
+                chartBuffers[sensorName].pressure['s' + i].shift();
+            }
         }
     }
 
-    // =========================
-    // FPS counter (aggiornamenti ricevuti)
-    // =========================
+    // --------------------
+    // CHARTS: init uPlot instances
+    // --------------------
+    function initCharts() {
+        // require uPlot loaded
+        if (typeof uPlot === 'undefined') {
+            console.error('uPlot non trovato. Importa uPlot prima di questo script.');
+            return;
+        }
+
+        // common opts helper
+        function baseOpts(title) {
+            return {
+                id: title,
+                width: CHART_WIDTH,
+                height: CHART_HEIGHT,
+                plugins: [],
+                scales: {
+                    x: { time: false, auto: true },
+                    y: { auto: true }
+                },
+                series: [] // filled per chart
+            };
+        }
+
+        // ACCEL (3 series)
+        var accelOpts = {
+            ...baseOpts('accel'),
+            series: [
+                { label: 't' }, // x axis placeholder
+                { label: 'X', stroke: '#ff6384', width: 1.5 },
+                { label: 'Y', stroke: '#36a2eb', width: 1.5 },
+                { label: 'Z', stroke: '#4bc0c0', width: 1.5 }
+            ],
+            axes: [
+                { show: false }, // x axis hidden
+                { show: true }
+            ]
+        };
+        var accelTarget = document.getElementById('accel-chart');
+        uCharts.accel = new uPlot(accelOpts, [ [/* timestamps */], [], [], [] ], accelTarget);
+
+        // GYRO
+        var gyroOpts = {
+            ...baseOpts('gyro'),
+            series: [
+                { label: 't' },
+                { label: 'X', stroke: '#ff9f40', width: 1.5 },
+                { label: 'Y', stroke: '#9966ff', width: 1.5 },
+                { label: 'Z', stroke: '#ffcd56', width: 1.5 }
+            ],
+            axes: [{ show: false }, { show: true }]
+        };
+        var gyroTarget = document.getElementById('gyro-chart');
+        uCharts.gyro = new uPlot(gyroOpts, [ [], [], [], [] ], gyroTarget);
+
+        // MAG
+        var magOpts = {
+            ...baseOpts('mag'),
+            series: [
+                { label: 't' },
+                { label: 'X', stroke: '#c9cbcf', width: 1.5 },
+                { label: 'Y', stroke: '#4bc0c0', width: 1.5 },
+                { label: 'Z', stroke: '#ff6384', width: 1.5 }
+            ],
+            axes: [{ show: false }, { show: true }]
+        };
+        var magTarget = document.getElementById('mag-chart');
+        uCharts.mag = new uPlot(magOpts, [ [], [], [], [] ], magTarget);
+
+        // PRESSURE (8 series)
+        var pressureSeries = [ { label: 't' } ];
+        var pressureColors = ['#ff6384','#36a2eb','#ffce56','#4bc0c0','#9966ff','#ff9f40','#c9cbcf','#e7e9ed'];
+        for (var i = 0; i < 8; i++) pressureSeries.push({ label: 'S' + i, stroke: pressureColors[i], width: 1 });
+        var pressOpts = {
+            ...baseOpts('pressure'),
+            series: pressureSeries,
+            axes: [{ show: false }, { show: true }]
+        };
+        var pressTarget = document.getElementById('pressure-chart');
+        // data arrays: timestamps + 8 series
+        var emptySeries = [ [] ];
+        for (var i = 0; i < 8; i++) emptySeries.push([]);
+        uCharts.pressure = new uPlot(pressOpts, emptySeries, pressTarget);
+
+        chartsInitialized = true;
+    }
+
+    // --------------------
+    // CHARTS: update drawings for selected sensor
+    // --------------------
+    function updateAllChartsFor(sensorName) {
+        var buf = chartBuffers[sensorName];
+        if (!buf) {
+            // clear charts
+            clearCharts();
+            return;
+        }
+
+        // build base x as numeric timestamps / or synthetic 0..n-1 if timestamps not meaningful
+        var x = buf.ts.length ? buf.ts.slice() : syntheticX(buf.accel.x.length);
+
+        // accel
+        if (uCharts.accel) {
+            var aX = buf.accel.x.slice();
+            var aY = buf.accel.y.slice();
+            var aZ = buf.accel.z.slice();
+            // ensure same lengths
+            syncLengths([x, aX, aY, aZ]);
+            uCharts.accel.setData([x, aX, aY, aZ]);
+        }
+
+        // gyro
+        if (uCharts.gyro) {
+            var gX = buf.gyro.x.slice();
+            var gY = buf.gyro.y.slice();
+            var gZ = buf.gyro.z.slice();
+            syncLengths([x, gX, gY, gZ]);
+            uCharts.gyro.setData([x, gX, gY, gZ]);
+        }
+
+        // mag
+        if (uCharts.mag) {
+            var mX = buf.mag.x.slice();
+            var mY = buf.mag.y.slice();
+            var mZ = buf.mag.z.slice();
+            syncLengths([x, mX, mY, mZ]);
+            uCharts.mag.setData([x, mX, mY, mZ]);
+        }
+
+        // pressure
+        if (uCharts.pressure) {
+            var pSeries = [x];
+            for (var i = 0; i <= 7; i++) {
+                pSeries.push(buf.pressure['s' + i].slice());
+            }
+            // sync all lengths
+            syncLengths(pSeries);
+            uCharts.pressure.setData(pSeries);
+            // show or hide pressure container based on presence
+            var pressureContainer = document.getElementById('pressure-wrap');
+            if (pressureContainer) {
+                var hasAny = false;
+                for (var i = 0; i <= 7; i++) {
+                    if (buf.pressure['s' + i].some(function (v) { return !isNaN(v); })) { hasAny = true; break; }
+                }
+                pressureContainer.style.display = hasAny ? 'block' : 'none';
+            }
+        }
+    }
+
+    function clearCharts() {
+        if (!chartsInitialized) return;
+        var empty = [ [] ];
+        empty.length = 1 + 3; // timestamps + 3 series
+        empty.fill([]);
+        try {
+            if (uCharts.accel) uCharts.accel.setData([[], [], [], []]);
+            if (uCharts.gyro) uCharts.gyro.setData([[], [], [], []]);
+            if (uCharts.mag) uCharts.mag.setData([[], [], [], []]);
+            if (uCharts.pressure) {
+                var arr = [ [] ];
+                for (var i = 0; i < 8; i++) arr.push([]);
+                uCharts.pressure.setData(arr);
+            }
+        } catch (e) { /* ignore timing */ }
+    }
+
+    // helper: ensure all arrays same length by prepending NaN on shorter ones (uPlot expects same length)
+    function syncLengths(arrays) {
+        var max = 0;
+        arrays.forEach(function (a) { if (a.length > max) max = a.length; });
+        for (var i = 0; i < arrays.length; i++) {
+            while (arrays[i].length < max) arrays[i].unshift(NaN);
+        }
+    }
+
+    function syntheticX(n) {
+        var r = new Array(n);
+        for (var i = 0; i < n; i++) r[i] = i;
+        return r;
+    }
+
+    // --------------------
+    // SENSOR SELECT UI
+    // --------------------
+    function bindSensorSelector() {
+        var sel = document.getElementById('chart-sensor-select');
+        if (sel) {
+            sel.addEventListener('change', function (e) {
+                selectedSensor = e.target.value || null;
+                if (selectedSensor && !chartsInitialized) {
+                    initCharts();
+                }
+                // when select changes we immediately update charts
+                if (selectedSensor && chartsInitialized) updateAllChartsFor(selectedSensor);
+            });
+        }
+    }
+
+    function updateSensorSelector() {
+        var sel = document.getElementById('chart-sensor-select');
+        var cc = document.getElementById('charts-container');
+        if (!sel || !cc) return;
+        sel.innerHTML = '';
+        var opt0 = document.createElement('option');
+        opt0.value = '';
+        opt0.textContent = '-- Seleziona sensore --';
+        sel.appendChild(opt0);
+
+        var first = null;
+        Object.keys(sensors).forEach(function (name) {
+            var opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            sel.appendChild(opt);
+            if (!first) first = name;
+        });
+
+        if (!selectedSensor && first) {
+            // auto-select first available sensor
+            selectedSensor = first;
+            sel.value = first;
+        } else if (selectedSensor) {
+            sel.value = selectedSensor;
+        }
+
+        // show/hide charts container
+        cc.style.display = (Object.keys(sensors).length > 0) ? 'block' : 'none';
+    }
+
+    // --------------------
+    // Utility: highlight selected card
+    // --------------------
+    function highlightSelectedCard(name) {
+        for (var k in domCache) {
+            var c = domCache[k].card;
+            if (c) c.style.border = 'none';
+        }
+        var cacheKey = 'card-' + name;
+        if (domCache[cacheKey] && domCache[cacheKey].card) {
+            domCache[cacheKey].card.style.border = '2px solid #3498db';
+        }
+    }
+
+    // --------------------
+    // FPS counter
+    // --------------------
     function startFpsCounter() {
         setInterval(function () {
             var now = Date.now();
-            var elapsed = (now - lastFpsTime) / 1000;
+            var elapsed = (now - lastFrameTime) / 1000;
             currentFps = Math.round(frameCount / elapsed) || 0;
             frameCount = 0;
-            lastFpsTime = now;
-            var el = document.getElementById('fps-counter');
-            if (el) el.textContent = currentFps + ' Hz';
+            lastFrameTime = now;
+            var fpsEl = document.getElementById('fps-counter');
+            if (fpsEl) fpsEl.textContent = currentFps + ' Hz';
         }, 1000);
     }
 
-    // =========================
-    // Chart: inizializzazione e loop (100Hz)
-    // =========================
-    function initChartCanvas() {
-        canvas = document.getElementById('realtime-chart');
-        if (!canvas) return;
-        canvasCtx = canvas.getContext('2d');
-
-        resizeCanvasToDisplaySize();
-        window.addEventListener('resize', resizeCanvasToDisplaySize);
-    }
-
-    function resizeCanvasToDisplaySize() {
-        if (!canvas) return;
-        // match CSS size to pixel size for crisp lines
-        var rect = canvas.getBoundingClientRect();
-        canvasW = Math.max(100, Math.floor(rect.width));
-        canvasH = Math.max(40, Math.floor(rect.height));
-        canvas.width = Math.floor(canvasW * devicePixelRatio);
-        canvas.height = Math.floor(canvasH * devicePixelRatio);
-        canvas.style.width = canvasW + 'px';
-        canvas.style.height = canvasH + 'px';
-        canvasCtx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-    }
-
-    function startChartLoop() {
-        setInterval(function () {
-            // disegna il grafico per selectedSensor
-            if (!canvas || !canvasCtx) return;
-            if (!selectedSensor) {
-                drawEmptyChart();
-                return;
-            }
-            drawChartFor(selectedSensor);
-        }, CHART_SAMPLERATE_MS);
-    }
-
-    function drawEmptyChart() {
-        canvasCtx.clearRect(0, 0, canvasW, canvasH);
-        canvasCtx.fillStyle = '#07101a';
-        canvasCtx.fillRect(0, 0, canvasW, canvasH);
-        canvasCtx.fillStyle = '#7f8c8d';
-        canvasCtx.font = '12px sans-serif';
-        canvasCtx.fillText('Nessun sensore selezionato', 10, 20);
-    }
-
-    function drawChartFor(sensorName) {
-        var bufObj = chartBuffers[sensorName];
-        if (!bufObj) {
-            drawEmptyChart();
-            return;
-        }
-        var buffer = bufObj.buffer;
-        var len = bufObj.length;
-        var head = bufObj.head;
-
-        // background
-        canvasCtx.clearRect(0, 0, canvasW, canvasH);
-        canvasCtx.fillStyle = '#07101a';
-        canvasCtx.fillRect(0, 0, canvasW, canvasH);
-
-        // axis grid simple
-        canvasCtx.strokeStyle = 'rgba(255,255,255,0.06)';
-        canvasCtx.lineWidth = 1;
-        canvasCtx.beginPath();
-        for (var g = 1; g <= 3; g++) {
-            var y = (canvasH / 4) * g;
-            canvasCtx.moveTo(0, y);
-            canvasCtx.lineTo(canvasW, y);
-        }
-        canvasCtx.stroke();
-
-        // compute min/max from actual buffer range for autoscale
-        if (len <= 1) {
-            // nothing to plot
-            canvasCtx.fillStyle = '#9ba7b0';
-            canvasCtx.font = '12px sans-serif';
-            canvasCtx.fillText('Attesa dati...', 10, 20);
-            return;
-        }
-        var min = Number.POSITIVE_INFINITY;
-        var max = Number.NEGATIVE_INFINITY;
-        for (var i = 0; i < len; i++) {
-            var idx = (head - len + i + buffer.length) % buffer.length;
-            var v = buffer[idx];
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
-        if (min === max) { min -= 0.5; max += 0.5; }
-
-        // path draw
-        canvasCtx.lineWidth = 1.5;
-        canvasCtx.strokeStyle = '#4cd137'; // non impostiamo palette comunque, ma è ok qui
-        canvasCtx.beginPath();
-
-        for (var i = 0; i < len; i++) {
-            var idx = (head - len + i + buffer.length) % buffer.length;
-            var v = buffer[idx];
-            var t = i / (MAX_POINTS - 1); // normalized time 0..1
-            var x = Math.round(t * (canvasW - 10)) + 5;
-            // map v to canvasY
-            var y = canvasH - 8 - ((v - min) / (max - min)) * (canvasH - 16);
-            if (i === 0) canvasCtx.moveTo(x, y); else canvasCtx.lineTo(x, y);
-        }
-        canvasCtx.stroke();
-
-        // draw current value
-        var latestIdx = (head - 1 + buffer.length) % buffer.length;
-        var latestVal = buffer[latestIdx];
-        canvasCtx.fillStyle = '#ffffff';
-        canvasCtx.font = '12px sans-serif';
-        canvasCtx.fillText(sensorName + ' : ' + Number(latestVal).toFixed(2), 8, 14);
-
-        // draw min/max
-        canvasCtx.fillStyle = '#9ba7b0';
-        canvasCtx.font = '10px sans-serif';
-        canvasCtx.fillText('min: ' + Number(min).toFixed(2), canvasW - 120, canvasH - 26);
-        canvasCtx.fillText('max: ' + Number(max).toFixed(2), canvasW - 120, canvasH - 12);
-    }
-
-    // =========================
-    // Chart buffer helpers
-    // =========================
-    function ensureChartBufferFor(sensorName) {
-        if (chartBuffers[sensorName]) return;
-        var buf = new Float32Array(MAX_POINTS);
-        chartBuffers[sensorName] = { buffer: buf, head: 0, length: 0 };
-    }
-
-    function pushSampleToChart(sensorName, value) {
-        if (typeof value !== 'number' || isNaN(value)) return;
-        ensureChartBufferFor(sensorName);
-        var cb = chartBuffers[sensorName];
-        cb.buffer[cb.head] = value;
-        cb.head = (cb.head + 1) % cb.buffer.length;
-        if (cb.length < cb.buffer.length) cb.length++;
-    }
-
-    // Select primary numeric field from snapshot (prefer accel_, gyro_, pressure_ otherwise first numeric)
-    function selectPrimaryValue(snapshot) {
-        if (!snapshot) return 0;
-        var order = ['accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z'];
-        for (var i = 0; i < order.length; i++) {
-            if (snapshot[order[i]] !== undefined && !isNaN(snapshot[order[i]])) return Number(snapshot[order[i]]);
-        }
-        // pressure first if present
-        for (var k in snapshot) {
-            if (k.indexOf('pressure_') === 0 && !isNaN(snapshot[k])) return Number(snapshot[k]);
-        }
-        // fallback: first numeric prop
-        for (var k2 in snapshot) {
-            if (k2 === 'sensor_name' || k2 === 'timestamp') continue;
-            var v = snapshot[k2];
-            if (typeof v === 'number' || (!isNaN(v) && String(v).trim() !== '')) return Number(v);
-        }
-        return 0;
-    }
-
-    // =========================
-    // util
-    // =========================
+    // --------------------
+    // Helpers
+    // --------------------
     function pad2(n) { return (n < 10 ? '0' : '') + n; }
-
     function getSensorEmoji(name) {
         var n = (name || '').toLowerCase();
         if (n.indexOf('ginocchio') !== -1 || n.indexOf('knee') !== -1) return '🦿';
@@ -667,41 +792,53 @@
         return '📱';
     }
 
-    function highlightSelectedCard(name) {
-        // rimetti tutto normale e evidenzia selezionato
-        for (var k in domCache) {
-            var c = domCache[k].card;
-            if (c) c.style.border = 'none';
+    function updateConnectionStatus(connected) {
+        var statusEl = document.getElementById('connection-status');
+        var countEl = document.getElementById('sensor-count');
+        if (statusEl) {
+            statusEl.className = connected ? '' : 'disconnected';
+            statusEl.innerHTML = '<span class="dot"></span> ' + (connected ? 'Connesso' : 'Disconnesso');
         }
-        var cache = domCache[name];
-        if (cache && cache.card) {
-            cache.card.style.border = '2px solid #3498db';
+        if (countEl) {
+            var count = Object.keys(sensors).length;
+            countEl.textContent = count + ' Sensor' + (count !== 1 ? 'i' : 'e');
         }
     }
 
-    // =========================
-    // helper: pick first numeric property (if you want to send specific field, modify selectPrimaryValue)
-    // =========================
+    // --------------------
+    // reset chart data (clear buffers and chart visuals)
+    // --------------------
+    function resetChartData() {
+        chartBuffers = {};
+        if (chartsInitialized) clearCharts();
+    }
 
-    // =========================
-    // Public utility: clear all data (esposto globalmente se vuoi chiamarlo)
-    // =========================
+    // --------------------
+    // start/stop helpers (exposed)
+    // --------------------
     window.sensoria = window.sensoria || {};
+    window.sensoria.resetChartData = resetChartData;
     window.sensoria.clearAllData = function () {
-        if (!confirm('Pulire dati?')) return;
+        if (!confirm('Pulire tutti i dati?')) return;
         fetch('/api/clear', { method: 'POST' }).then(function () {
             sensors = {};
             pendingUpdates = {};
             domCache = {};
             chartBuffers = {};
-            sensorIds = [];
             selectedSensor = null;
             renderSensors();
+            resetChartData();
         });
     };
 
-    // =========================
-    // END
-    // =========================
+    // --------------------
+    // Export internal for debugging
+    // --------------------
+    window._sensoria_internal = {
+        sensors: sensors,
+        chartBuffers: chartBuffers,
+        uCharts: uCharts
+    };
 
+    // ---- end IIFE
 })();
