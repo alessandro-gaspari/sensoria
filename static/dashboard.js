@@ -336,8 +336,10 @@ function clearAllData() {
 }
 
 // ============================================
-// GRAFICI uPlot
+// GRAFICI uPlot - CON PAN/ZOOM
 // ============================================
+
+var maxDataPoints = 500; // Aumentato da 100 a 500 per vista più ampia
 
 function initCharts() {
     var accelDiv = document.getElementById('accel-chart');
@@ -347,14 +349,55 @@ function initCharts() {
     
     if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
     
+    // Opzioni comuni con pan/zoom abilitato
     var commonOpts = {
         width: accelDiv.offsetWidth,
         height: 200,
-        cursor: { show: false },
-        legend: { show: true },
+        cursor: {
+            show: true,
+            drag: {
+                x: true,  // Pan orizzontale
+                y: false
+            }
+        },
+        legend: { 
+            show: true,
+            live: false  // Mostra sempre tutti i valori
+        },
+        scales: {
+            x: {
+                time: true,
+                auto: false,  // Controllo manuale della scala
+                range: function(u, min, max) {
+                    // Mostra ultimi 10 secondi di dati
+                    var now = Date.now() / 1000;
+                    return [now - 10, now];
+                }
+            },
+            y: {
+                auto: true,
+                range: function(u, min, max) {
+                    // Aggiungi padding per vedere meglio i valori
+                    var padding = (max - min) * 0.1;
+                    return [min - padding, max + padding];
+                }
+            }
+        },
         axes: [
-            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 } },
-            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 } }
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                values: function(u, vals) {
+                    return vals.map(function(v) {
+                        return new Date(v * 1000).toLocaleTimeString();
+                    });
+                }
+            },
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                size: 50
+            }
         ],
         series: [
             { label: 'Time' },
@@ -366,32 +409,73 @@ function initCharts() {
 
     charts.accel = new uPlot(commonOpts, chartData.accel, accelDiv);
     
-    charts.gyro = new uPlot(Object.assign({}, commonOpts, {
-        series: [
-            { label: 'Time' },
-            { label: 'X', stroke: '#ff9f40', width: 2 },
-            { label: 'Y', stroke: '#9966ff', width: 2 },
-            { label: 'Z', stroke: '#ffcd56', width: 2 }
-        ]
-    }), chartData.gyro, gyroDiv);
+    // Gyro con colori diversi
+    var gyroOpts = JSON.parse(JSON.stringify(commonOpts));
+    gyroOpts.series = [
+        { label: 'Time' },
+        { label: 'X', stroke: '#ff9f40', width: 2 },
+        { label: 'Y', stroke: '#9966ff', width: 2 },
+        { label: 'Z', stroke: '#ffcd56', width: 2 }
+    ];
+    charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
     
-    charts.mag = new uPlot(Object.assign({}, commonOpts, {
-        series: [
-            { label: 'Time' },
-            { label: 'X', stroke: '#c9cbcf', width: 2 },
-            { label: 'Y', stroke: '#4bc0c0', width: 2 },
-            { label: 'Z', stroke: '#ff6384', width: 2 }
-        ]
-    }), chartData.mag, magDiv);
+    // Magnetometro
+    var magOpts = JSON.parse(JSON.stringify(commonOpts));
+    magOpts.series = [
+        { label: 'Time' },
+        { label: 'X', stroke: '#c9cbcf', width: 2 },
+        { label: 'Y', stroke: '#4bc0c0', width: 2 },
+        { label: 'Z', stroke: '#ff6384', width: 2 }
+    ];
+    charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
     
-    charts.pressure = new uPlot({
+    // Pressioni con più serie
+    var pressureOpts = {
         width: pressureDiv.offsetWidth,
         height: 250,
-        cursor: { show: false },
-        legend: { show: true },
+        cursor: {
+            show: true,
+            drag: {
+                x: true,
+                y: false
+            }
+        },
+        legend: { 
+            show: true,
+            live: false
+        },
+        scales: {
+            x: {
+                time: true,
+                auto: false,
+                range: function(u, min, max) {
+                    var now = Date.now() / 1000;
+                    return [now - 10, now];
+                }
+            },
+            y: {
+                auto: true,
+                range: function(u, min, max) {
+                    var padding = (max - min) * 0.1;
+                    return [min - padding, max + padding];
+                }
+            }
+        },
         axes: [
-            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 } },
-            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 } }
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                values: function(u, vals) {
+                    return vals.map(function(v) {
+                        return new Date(v * 1000).toLocaleTimeString();
+                    });
+                }
+            },
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                size: 50
+            }
         ],
         series: [
             { label: 'Time' },
@@ -404,7 +488,39 @@ function initCharts() {
             { label: 'S6', stroke: '#c9cbcf', width: 1.5 },
             { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
         ]
-    }, chartData.pressure, pressureDiv);
+    };
+    
+    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+    
+    // Aggiungi listener per wheel zoom
+    addZoomControls();
+}
+
+function addZoomControls() {
+    // Zoom con rotella del mouse
+    [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
+        if (!chart) return;
+        
+        chart.root.addEventListener('wheel', function(e) {
+            e.preventDefault();
+            
+            var scales = chart.scales;
+            var xScale = scales.x;
+            var range = xScale.max - xScale.min;
+            var delta = e.deltaY > 0 ? 1.1 : 0.9; // Zoom in/out
+            var newRange = range * delta;
+            
+            // Limiti: min 1 secondo, max tutto lo storico
+            if (newRange < 1) newRange = 1;
+            if (newRange > maxDataPoints / 10) newRange = maxDataPoints / 10;
+            
+            var center = (xScale.max + xScale.min) / 2;
+            chart.setScale('x', {
+                min: center - newRange / 2,
+                max: center + newRange / 2
+            });
+        });
+    });
 }
 
 function updateCharts(sensorName, data) {
@@ -412,6 +528,7 @@ function updateCharts(sensorName, data) {
 
     var timestamp = Date.now() / 1000;
 
+    // Accelerometro
     if (data.accel_x !== undefined) {
         chartData.accel[0].push(timestamp);
         chartData.accel[1].push(data.accel_x);
@@ -428,6 +545,7 @@ function updateCharts(sensorName, data) {
         charts.accel.setData(chartData.accel);
     }
 
+    // Giroscopio
     if (data.gyro_x !== undefined) {
         chartData.gyro[0].push(timestamp);
         chartData.gyro[1].push(data.gyro_x);
@@ -444,6 +562,7 @@ function updateCharts(sensorName, data) {
         charts.gyro.setData(chartData.gyro);
     }
 
+    // Magnetometro
     if (data.mag_x !== undefined) {
         chartData.mag[0].push(timestamp);
         chartData.mag[1].push(data.mag_x);
@@ -460,6 +579,7 @@ function updateCharts(sensorName, data) {
         charts.mag.setData(chartData.mag);
     }
 
+    // Pressioni
     if (data.pressure_0 !== undefined) {
         chartData.pressure[0].push(timestamp);
         for (var i = 0; i <= 7; i++) {
