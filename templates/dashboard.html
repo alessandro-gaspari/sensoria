@@ -5,16 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sensoria Dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css">
-
-    <!-- uPlot -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.30/dist/uPlot.iife.min.js"></script>
-
-    <!-- ⚠️ RIMOSSO Chart.js -->
+    <!-- uPlot CSS e JS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
 </head>
-
 <body style="background-color: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
-
     <div class="dashboard-header">
         <h1 class="dashboard-title">Sensoria Dashboard</h1>
         <div class="dashboard-info">
@@ -27,7 +22,6 @@
     </div>
     
     <div class="dashboard-container">
-
         <!-- Sezione grafici -->
         <div id="charts-container" style="display: none; margin-bottom: 30px;">
             <h2 style="color: #97c93e; margin-bottom: 20px; font-size: 20px;">📈 Grafici Real-Time</h2>
@@ -50,27 +44,21 @@
             
             <!-- Grafici IMU -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 20px; margin-bottom: 20px;">
-                
-                <!-- ACCEL -->
                 <div style="background: #1a1a1a; padding: 15px; border-radius: 12px; border: 1px solid #333;">
                     <h3 style="color: #97c93e; font-size: 14px; margin: 0 0 10px 0;">📊 Accelerometro (X, Y, Z)</h3>
                     <div id="accel-chart" style="height: 200px;"></div>
                 </div>
-
-                <!-- GYRO -->
                 <div style="background: #1a1a1a; padding: 15px; border-radius: 12px; border: 1px solid #333;">
                     <h3 style="color: #97c93e; font-size: 14px; margin: 0 0 10px 0;">🌀 Giroscopio (X, Y, Z)</h3>
                     <div id="gyro-chart" style="height: 200px;"></div>
                 </div>
-
-                <!-- MAG -->
                 <div style="background: #1a1a1a; padding: 15px; border-radius: 12px; border: 1px solid #333;">
                     <h3 style="color: #97c93e; font-size: 14px; margin: 0 0 10px 0;">🧲 Magnetometro (X, Y, Z)</h3>
                     <div id="mag-chart" style="height: 200px;"></div>
                 </div>
             </div>
             
-            <!-- Grafico Pressioni (solo calzini) -->
+            <!-- Grafico Pressioni -->
             <div id="pressure-chart-container" style="display: none; background: #1a1a1a; padding: 15px; border-radius: 12px; border: 1px solid #333;">
                 <h3 style="color: #97c93e; font-size: 14px; margin: 0 0 10px 0;">⬇️ Pressioni (S0-S7)</h3>
                 <div id="pressure-chart" style="height: 250px;"></div>
@@ -98,7 +86,6 @@
                 cursor: pointer;
                 transition: all 0.2s ease;
             ">📍 Calibra Ginocchio</button>
-
             <button id="clearButton" onclick="clearAllData()" style="
                 background-color: #ff4444;
                 color: white;
