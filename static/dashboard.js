@@ -26,8 +26,14 @@ document.addEventListener('DOMContentLoaded', function() {
 function startRenderLoop() {
     function render() {
         const now = performance.now();
-        // Aggiorna DOM max ogni 33ms (~30fps) per evitare sovraccarico
-        if (Object.keys(pendingUpdates).length > 0 && (now - lastUpdateTime > 33)) {
+        var sensorCount = Object.keys(sensors).length;
+        
+        // Adatta frequenza rendering in base a quanti sensori
+        var renderInterval = 33; // base 30fps
+        if (sensorCount >= 4) renderInterval = 50; // 20fps con 4+ sensori
+        if (sensorCount >= 6) renderInterval = 66; // 15fps con 6 sensori
+        
+        if (Object.keys(pendingUpdates).length > 0 && (now - lastUpdateTime > renderInterval)) {
             batchUpdateDOM();
             lastUpdateTime = now;
         }
@@ -40,7 +46,6 @@ function batchUpdateDOM() {
     Object.keys(pendingUpdates).forEach(function(sensorName) {
         updateSensorCardDynamic(sensorName, pendingUpdates[sensorName]);
     });
-    // IMPORTANTE: svuota la coda per evitare accumulo
     pendingUpdates = {};
 }
 
@@ -75,11 +80,7 @@ function initializeSocketListeners() {
         frameCount++;
         var sensorName = data.sensor_name;
         var sensorData = data.data;
-        
-        // Aggiorna sempre i dati interni (100Hz)
         sensors[sensorName] = sensorData;
-        
-        // Accoda per aggiornamento DOM batch (30fps)
         pendingUpdates[sensorName] = sensorData;
     });
     socket.on('sensor_disconnected', function(data) {
@@ -106,68 +107,57 @@ function updateSensorCardDynamic(sensorName, data) {
             createSensorCardDynamic(sensorName, data);
             return;
         }
+        
+        var valueElements = {};
+        card.querySelectorAll('.sensor-data-row').forEach(function(row) {
+            var label = row.querySelector('.sensor-data-label');
+            var value = row.querySelector('.sensor-value');
+            if (label && value) {
+                valueElements[label.textContent.replace(':', '').trim()] = value;
+            }
+        });
+        
         domCache[cacheKey] = {
             card: card,
             content: card.querySelector('.sensor-fields'),
             timestamp: card.querySelector('.sensor-timestamp'),
-            status: card.querySelector('.status-indicator')
+            status: card.querySelector('.status-indicator'),
+            valueElements: valueElements,
+            lastData: {}
         };
     }
+    
     var cached = domCache[cacheKey];
-
-    // Costruisci HTML solo con dati cambiati per ridurre overhead
-    let html = '';
     
-    // Separa IMU e pressione
-    let imuData = {};
-    let pressureData = {};
-    
+    // Aggiornamento differenziale
     Object.keys(data).forEach(function(key) {
         if (key === 'timestamp' || key === 'sensor_name') return;
         
-        if (key.startsWith('accel_') || key.startsWith('gyro_') || key.startsWith('mag_')) {
-            imuData[key] = data[key];
-        } else if (key.startsWith('pressure_')) {
-            pressureData[key] = data[key];
+        var newValue = Math.round(data[key]);
+        var oldValue = cached.lastData[key];
+        
+        if (newValue !== oldValue) {
+            var element = cached.valueElements[key];
+            if (element) {
+                element.textContent = newValue;
+                
+                if (key.startsWith('pressure_')) {
+                    element.className = 'sensor-value ' + 
+                        (newValue > 5000 ? 'high' : newValue > 1000 ? 'medium' : 'low');
+                }
+            }
+            cached.lastData[key] = newValue;
         }
     });
-    
-    // Sezione IMU
-    if (Object.keys(imuData).length > 0) {
-        html += '<div class="sensor-data-section">' +
-                '<div class="sensor-data-section-title">📊 IMU Data</div>';
-        Object.keys(imuData).forEach(function(key) {
-            html += '<div class="sensor-data-row">' +
-                    '<span class="sensor-data-label">' + key + ':</span>' +
-                    '<span class="sensor-value">' + Math.round(imuData[key]) + '</span>' +
-                    '</div>';
-        });
-        html += '</div>';
-    }
-    
-    // Sezione Pressione
-    if (Object.keys(pressureData).length > 0) {
-        html += '<div class="sensor-data-section">' +
-                '<div class="sensor-data-section-title">⬇️ Pressione (S0-S7)</div>';
-        Object.keys(pressureData).sort().forEach(function(key) {
-            var val = Math.round(pressureData[key]);
-            var colorClass = val > 5000 ? 'high' : val > 1000 ? 'medium' : 'low';
-            html += '<div class="sensor-data-row">' +
-                    '<span class="sensor-data-label">' + key + ':</span>' +
-                    '<span class="sensor-value ' + colorClass + '">' + val + '</span>' +
-                    '</div>';
-        });
-        html += '</div>';
-    }
-    
-    if (cached.content) cached.content.innerHTML = html;
 
     if (cached.timestamp && data.timestamp) {
         var date = new Date(data.timestamp);
-        cached.timestamp.textContent =
-            String(date.getHours()).padStart(2, '0') + ':' +
-            String(date.getMinutes()).padStart(2, '0') + ':' +
-            String(date.getSeconds()).padStart(2, '0');
+        var timeStr = String(date.getHours()).padStart(2, '0') + ':' +
+                      String(date.getMinutes()).padStart(2, '0') + ':' +
+                      String(date.getSeconds()).padStart(2, '0');
+        if (cached.timestamp.textContent !== timeStr) {
+            cached.timestamp.textContent = timeStr;
+        }
     }
 
     if (cached.status) {
@@ -185,14 +175,53 @@ function createSensorCardDynamic(sensorName, data) {
     var template = document.createElement('div');
     template.className = 'sensor-col connected';
     template.setAttribute('data-sensor', sensorName);
-    template.innerHTML =
-        '<div class="sensor-header">' +
-            '<div>' + emoji + ' ' + sensorName + '</div>' +
-            '<div class="status-indicator active"></div>' +
-        '</div>' +
-        '<div class="sensor-fields"></div>' +
-        '<span class="sensor-timestamp">--:--:--</span>';
+    
+    var imuKeys = [];
+    var pressureKeys = [];
+    
+    Object.keys(data).forEach(function(key) {
+        if (key === 'timestamp' || key === 'sensor_name') return;
+        if (key.startsWith('accel_') || key.startsWith('gyro_') || key.startsWith('mag_')) {
+            imuKeys.push(key);
+        } else if (key.startsWith('pressure_')) {
+            pressureKeys.push(key);
+        }
+    });
+    
+    var html = '<div class="sensor-header">' +
+                '<div>' + emoji + ' ' + sensorName + '</div>' +
+                '<div class="status-indicator active"></div>' +
+               '</div>' +
+               '<div class="sensor-fields">';
+    
+    if (imuKeys.length > 0) {
+        html += '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">📊 IMU Data</div>';
+        imuKeys.forEach(function(key) {
+            html += '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">' + key + ':</span>' +
+                    '<span class="sensor-value">0</span>' +
+                    '</div>';
+        });
+        html += '</div>';
+    }
+    
+    if (pressureKeys.length > 0) {
+        html += '<div class="sensor-data-section">' +
+                '<div class="sensor-data-section-title">⬇️ Pressione (S0-S7)</div>';
+        pressureKeys.sort().forEach(function(key) {
+            html += '<div class="sensor-data-row">' +
+                    '<span class="sensor-data-label">' + key + ':</span>' +
+                    '<span class="sensor-value low">0</span>' +
+                    '</div>';
+        });
+        html += '</div>';
+    }
+    
+    html += '</div><span class="sensor-timestamp">--:--:--</span>';
+    template.innerHTML = html;
     grid.appendChild(template);
+    
     var emptyState = document.getElementById('empty-state');
     if (emptyState) {
         emptyState.classList.remove('visible');
