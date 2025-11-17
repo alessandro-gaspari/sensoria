@@ -537,32 +537,35 @@ function initCharts() {
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
 
     console.log('✅ Grafici uPlot inizializzati con zoom/pan');
-    formatLegendTime(); 
+    fixLegendMarkerColors();
 }
 
-// Formatta legenda Time per mostrare solo HH:MM:SS
-function formatLegendTime() {
-    if (!chartsInitialized) return;
-    
-    [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
-        if (!chart) return;
-        
-        var legend = chart.root.querySelector('.u-legend');
-        if (!legend) return;
-        
-        var observer = new MutationObserver(function() {
-            var timeSeries = legend.querySelector('.u-series:first-child .u-value');
-            if (timeSeries && timeSeries.textContent.includes('-')) {
-                // Rimuovi la data, lascia solo l'ora
-                var parts = timeSeries.textContent.split(' ');
-                if (parts.length > 1) {
-                    timeSeries.textContent = parts[1]; // Solo la parte HH:MM:SS
+
+// Fix colori quadrati legenda - usa colore linee
+function fixLegendMarkerColors() {
+    setTimeout(function() {
+        [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
+            if (!chart) return;
+            
+            var legend = chart.root.querySelector('.u-legend');
+            if (!legend) return;
+            
+            var series = legend.querySelectorAll('.u-series');
+            
+            series.forEach(function(seriesEl, idx) {
+                if (idx === 0) return; // Skip Time
+                
+                var marker = seriesEl.querySelector('.u-marker');
+                if (!marker) return;
+                
+                // Prendi il colore dallo stroke della serie
+                var seriesData = chart.series[idx];
+                if (seriesData && seriesData.stroke) {
+                    marker.style.backgroundColor = seriesData.stroke;
                 }
-            }
+            });
         });
-        
-        observer.observe(legend, { childList: true, subtree: true, characterData: true });
-    });
+    }, 100);
 }
 
 

@@ -84,23 +84,29 @@
 }
 
 /* ========================================
-   LEGENDA uPlot - Quadrati colorati
+   LEGENDA uPlot - Quadrati con colori linee
    ======================================== */
+
+.u-legend {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 0;
+}
 
 .u-legend .u-series {
     display: inline-flex !important;
     align-items: center;
-    padding: 4px 12px;
-    margin-right: 16px;
+    padding: 4px 8px;
     cursor: pointer;
 }
 
-/* Nascondi prima serie (Time) */
+/* Nascondi Time (prima serie) */
 .u-legend .u-series:first-child {
     display: none !important;
 }
 
-/* Quadrati colorati */
+/* Quadrati - Usa colore della linea */
 .u-legend .u-marker {
     width: 14px !important;
     height: 14px !important;
@@ -108,19 +114,15 @@
     margin-right: 8px !important;
     display: inline-block !important;
     border: none !important;
+    /* Il colore viene preso automaticamente da stroke della serie */
 }
 
-/* Colori specifici per ogni serie */
-.u-legend .u-series:nth-child(2) .u-marker { background: #ff6384 !important; }  /* X rosso */
-.u-legend .u-series:nth-child(3) .u-marker { background: #36a2eb !important; }  /* Y blu */
-.u-legend .u-series:nth-child(4) .u-marker { background: #4bc0c0 !important; }  /* Z turchese */
+/* Forza il colore del marker a essere quello dello stroke */
+.u-legend .u-series:not(.u-off) .u-marker {
+    background-color: var(--series-stroke) !important;
+}
 
-/* Per giroscopio */
-.u-legend .u-series:nth-child(2) .u-marker { background: #ff9f40 !important; }  /* X arancione */
-.u-legend .u-series:nth-child(3) .u-marker { background: #9966ff !important; }  /* Y viola */
-.u-legend .u-series:nth-child(4) .u-marker { background: #ffcd56 !important; }  /* Z giallo */
-
-/* Serie disattivata */
+/* Serie disattivata - quadrato grigio trasparente */
 .u-legend .u-series.u-off .u-marker {
     opacity: 0.3;
     background: #666 !important;
@@ -143,6 +145,7 @@
     font-family: 'Courier New', monospace;
     font-weight: 600;
 }
+
 
 /* Card sensore - INGRANDITA */
 .sensor-col {
