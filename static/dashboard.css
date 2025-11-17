@@ -49,41 +49,6 @@
     background-color: #ff4444;
 }
 
-/* Legenda uPlot - quadrati serie */
-.u-legend .u-series {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    cursor: pointer;
-}
-
-/* Quadrato indicatore serie */
-.u-legend .u-marker {
-    width: 14px !important;
-    height: 14px !important;
-    border-radius: 2px;
-    border: 2px solid currentColor;
-    background: transparent;
-    transition: background 0.2s ease;
-}
-
-/* Quadrato PIENO quando serie è attiva/visibile */
-.u-legend .u-series:not(.u-off) .u-marker {
-    background: currentColor !important;
-}
-
-/* Quadrato VUOTO quando serie è disattivata */
-.u-legend .u-series.u-off .u-marker {
-    background: transparent !important;
-    opacity: 0.5;
-}
-
-/* Testo serie disattivata */
-.u-legend .u-series.u-off .u-label {
-    opacity: 0.5;
-}
-
 
 #sensor-count {
     font-size: 14px;
@@ -116,6 +81,55 @@
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
     gap: 24px;
     margin-top: 20px;
+}
+
+/* ========================================
+   LEGENDA GRAFICI uPlot - Quadrati serie
+   ======================================== */
+
+/* Personalizza marker (quadrati) nella legenda */
+.u-legend .u-marker {
+    width: 12px !important;
+    height: 12px !important;
+    border-radius: 2px !important;
+    border: 2px solid currentColor !important;
+    background: currentColor !important;
+    margin-right: 6px !important;
+}
+
+/* Serie disattivata - quadrato vuoto */
+.u-legend .u-series.u-off .u-marker {
+    background: transparent !important;
+    opacity: 0.4;
+}
+
+/* Testo serie disattivata */
+.u-legend .u-series.u-off .u-label {
+    opacity: 0.4;
+}
+
+/* Migliora layout legenda */
+.u-legend {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 13px;
+}
+
+.u-legend .u-series {
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.u-legend .u-label {
+    color: #97c93e;
+}
+
+.u-legend .u-value {
+    color: #97c93e;
+    margin-left: auto;
+    padding-left: 12px;
+    font-family: 'Courier New', monospace;
 }
 
 /* Card sensore - INGRANDITA */

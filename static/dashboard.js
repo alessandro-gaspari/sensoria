@@ -418,7 +418,12 @@ function initCharts() {
                     values: function(u, ticks) {
                         return ticks.map(function(v) {
                             var d = new Date(v * 1000);
-                            return d.toLocaleTimeString('it-IT', { hour12: false });
+                            return d.toLocaleTimeString('it-IT', { 
+                                hour: '2-digit', 
+                                minute: '2-digit', 
+                                second: '2-digit',
+                                hour12: false 
+                            });
                         });
                     }
                 },
@@ -428,25 +433,7 @@ function initCharts() {
                     size: 50
                 }
             ],
-            plugins: [
-                wheelZoomPlugin({ factor: 0.75 })
-            ],
-            // ✅ AGGIUNGI QUESTA SEZIONE - Formatta legenda Time solo HH:MM:SS
-            hooks: {
-                setCursor: [
-                    function(u) {
-                        var idx = u.cursor.idx;
-                        if (idx != null) {
-                            var timestamp = u.data[0][idx];
-                            if (timestamp != null) {
-                                var d = new Date(timestamp * 1000);
-                                // Sovrascrive il formato Time nella legenda
-                                u.series[0].value = d.toLocaleTimeString('it-IT', { hour12: false });
-                            }
-                        }
-                    }
-                ]
-            }
+            plugins: [wheelZoomPlugin({ factor: 0.75 })]
         };
     }
 
