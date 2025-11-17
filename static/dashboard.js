@@ -421,7 +421,13 @@ function initCharts() {
             axes: [
                 { 
                     stroke: '#97c93e', 
-                    grid: { stroke: '#333', width: 1 }
+                    grid: { stroke: '#333', width: 1 },
+                    values: function(u, ticks) {
+                        return ticks.map(function(v) {
+                            var d = new Date(v * 1000);
+                            return d.toLocaleTimeString('it-IT', { hour12: false });
+                        });
+                    }
                 },
                 { 
                     stroke: '#97c93e', 
@@ -429,6 +435,7 @@ function initCharts() {
                     size: 50
                 }
             ],
+
             plugins: [
                 wheelZoomPlugin({ factor: 0.75 })
             ]
