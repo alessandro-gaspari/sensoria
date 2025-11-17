@@ -431,51 +431,111 @@ function initCharts() {
             plugins: [wheelZoomPlugin({ factor: 0.75 })]
         };
     }
+
     
+
     // Accelerometro
     var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
     accelOpts.series = [
-        {},
-        { label: 'X', stroke: '#ff6384', width: 2 },
-        { label: 'Y', stroke: '#36a2eb', width: 2 },
-        { label: 'Z', stroke: '#4bc0c0', width: 2 }
+        { show: false },  // ← Nasconde Time
+        { 
+            label: 'X', 
+            stroke: '#ff6384', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#ff6384',
+            fill: 'rgba(255, 99, 132, 0.1)'
+        },
+        { 
+            label: 'Y', 
+            stroke: '#36a2eb', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#36a2eb',
+            fill: 'rgba(54, 162, 235, 0.1)'
+        },
+        { 
+            label: 'Z', 
+            stroke: '#4bc0c0', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#4bc0c0',
+            fill: 'rgba(75, 192, 192, 0.1)'
+        }
     ];
     charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
-    
+
     // Giroscopio
     var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
     gyroOpts.series = [
-        {},
-        { label: 'X', stroke: '#ff9f40', width: 2 },
-        { label: 'Y', stroke: '#9966ff', width: 2 },
-        { label: 'Z', stroke: '#ffcd56', width: 2 }
+        { show: false },  // ← Nasconde Time
+        { 
+            label: 'X', 
+            stroke: '#ff9f40', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#ff9f40'
+        },
+        { 
+            label: 'Y', 
+            stroke: '#9966ff', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#9966ff'
+        },
+        { 
+            label: 'Z', 
+            stroke: '#ffcd56', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#ffcd56'
+        }
     ];
     charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
-    
+
     // Magnetometro
     var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
     magOpts.series = [
-        {},
-        { label: 'X', stroke: '#c9cbcf', width: 2 },
-        { label: 'Y', stroke: '#4bc0c0', width: 2 },
-        { label: 'Z', stroke: '#ff6384', width: 2 }
+        { show: false },  // ← Nasconde Time
+        { 
+            label: 'X', 
+            stroke: '#c9cbcf', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#c9cbcf'
+        },
+        { 
+            label: 'Y', 
+            stroke: '#4bc0c0', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#4bc0c0'
+        },
+        { 
+            label: 'Z', 
+            stroke: '#ff6384', 
+            width: 2,
+            points: { show: false },
+            _stroke: '#ff6384'
+        }
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
-    
+
     // Pressioni
     var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
     pressureOpts.series = [
-        {},
-        { label: 'S0', stroke: '#ff6384', width: 1.5 },
-        { label: 'S1', stroke: '#36a2eb', width: 1.5 },
-        { label: 'S2', stroke: '#ffce56', width: 1.5 },
-        { label: 'S3', stroke: '#4bc0c0', width: 1.5 },
-        { label: 'S4', stroke: '#9966ff', width: 1.5 },
-        { label: 'S5', stroke: '#ff9f40', width: 1.5 },
-        { label: 'S6', stroke: '#c9cbcf', width: 1.5 },
-        { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
+        { show: false },  // ← Nasconde Time
+        { label: 'S0', stroke: '#ff6384', width: 1.5, points: { show: false }, _stroke: '#ff6384' },
+        { label: 'S1', stroke: '#36a2eb', width: 1.5, points: { show: false }, _stroke: '#36a2eb' },
+        { label: 'S2', stroke: '#ffce56', width: 1.5, points: { show: false }, _stroke: '#ffce56' },
+        { label: 'S3', stroke: '#4bc0c0', width: 1.5, points: { show: false }, _stroke: '#4bc0c0' },
+        { label: 'S4', stroke: '#9966ff', width: 1.5, points: { show: false }, _stroke: '#9966ff' },
+        { label: 'S5', stroke: '#ff9f40', width: 1.5, points: { show: false }, _stroke: '#ff9f40' },
+        { label: 'S6', stroke: '#c9cbcf', width: 1.5, points: { show: false }, _stroke: '#c9cbcf' },
+        { label: 'S7', stroke: '#e7e9ed', width: 1.5, points: { show: false }, _stroke: '#e7e9ed' }
     ];
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+
     console.log('✅ Grafici uPlot inizializzati con zoom/pan');
     formatLegendTime(); 
 }
