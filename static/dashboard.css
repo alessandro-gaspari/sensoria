@@ -49,6 +49,42 @@
     background-color: #ff4444;
 }
 
+/* Legenda uPlot - quadrati serie */
+.u-legend .u-series {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    cursor: pointer;
+}
+
+/* Quadrato indicatore serie */
+.u-legend .u-marker {
+    width: 14px !important;
+    height: 14px !important;
+    border-radius: 2px;
+    border: 2px solid currentColor;
+    background: transparent;
+    transition: background 0.2s ease;
+}
+
+/* Quadrato PIENO quando serie è attiva/visibile */
+.u-legend .u-series:not(.u-off) .u-marker {
+    background: currentColor !important;
+}
+
+/* Quadrato VUOTO quando serie è disattivata */
+.u-legend .u-series.u-off .u-marker {
+    background: transparent !important;
+    opacity: 0.5;
+}
+
+/* Testo serie disattivata */
+.u-legend .u-series.u-off .u-label {
+    opacity: 0.5;
+}
+
+
 #sensor-count {
     font-size: 14px;
     color: #999;
