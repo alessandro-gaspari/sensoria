@@ -343,24 +343,56 @@ var maxDataPoints = 500;
 
 // Plugin per wheel zoom
 // Plugin combinato: Wheel Zoom + Drag Pan
-// Plugin per wheel zoom SOLO (senza drag zoom automatico)
 function wheelZoomPlugin(opts) {
     var factor = opts.factor || 0.75;
 
     function init(u, opts, data) {
         var over = u.over;
         var rect, xVal, yVal;
+        var isDragging = false;
+        var dragStartX = null;
+        var dragStartScale = null;
         
         function mouseMove(e) {
             rect = over.getBoundingClientRect();
             xVal = u.posToVal(e.clientX - rect.left, 'x');
             yVal = u.posToVal(e.clientY - rect.top, 'y');
+            
+            // Pan durante drag
+            if (isDragging && dragStartX !== null) {
+                var currentX = e.clientX;
+                var deltaX = dragStartX - currentX;
+                var range = dragStartScale.max - dragStartScale.min;
+                var pixelWidth = rect.width;
+                var timePerPixel = range / pixelWidth;
+                var timeShift = deltaX * timePerPixel;
+                
+                u.setScale('x', {
+                    min: dragStartScale.min + timeShift,
+                    max: dragStartScale.max + timeShift
+                });
+            }
         }
         
         over.addEventListener("mousemove", mouseMove);
-        over.addEventListener("mousedown", mouseMove);
+        
+        over.addEventListener("mousedown", function(e) {
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartScale = {
+                min: u.scales.x.min,
+                max: u.scales.x.max
+            };
+            mouseMove(e);
+        });
+        
+        document.addEventListener("mouseup", function() {
+            isDragging = false;
+            dragStartX = null;
+            dragStartScale = null;
+        });
 
-        // SOLO wheel zoom (rotella mouse)
+        // Wheel zoom
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
 
@@ -438,92 +470,36 @@ function initCharts() {
 
     
 
-    // Accelerometro
-    var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
-    accelOpts.series = [
-        { show: false },  // ← Nasconde Time
-        { 
-            label: 'X', 
-            stroke: '#ff6384', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#ff6384',
-            fill: 'rgba(255, 99, 132, 0.1)'
-        },
-        { 
-            label: 'Y', 
-            stroke: '#36a2eb', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#36a2eb',
-            fill: 'rgba(54, 162, 235, 0.1)'
-        },
-        { 
-            label: 'Z', 
-            stroke: '#4bc0c0', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#4bc0c0',
-            fill: 'rgba(75, 192, 192, 0.1)'
-        }
-    ];
-    charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
+// Accelerometro - SENZA fill
+var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
+accelOpts.series = [
+    { show: false },
+    { label: 'X', stroke: '#ff6384', width: 2 },
+    { label: 'Y', stroke: '#36a2eb', width: 2 },
+    { label: 'Z', stroke: '#4bc0c0', width: 2 }
+];
+charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
 
-    // Giroscopio
-    var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
-    gyroOpts.series = [
-        { show: false },  // ← Nasconde Time
-        { 
-            label: 'X', 
-            stroke: '#ff9f40', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#ff9f40'
-        },
-        { 
-            label: 'Y', 
-            stroke: '#9966ff', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#9966ff'
-        },
-        { 
-            label: 'Z', 
-            stroke: '#ffcd56', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#ffcd56'
-        }
-    ];
-    charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
+// Giroscopio
+var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
+gyroOpts.series = [
+    { show: false },
+    { label: 'X', stroke: '#ff9f40', width: 2 },
+    { label: 'Y', stroke: '#9966ff', width: 2 },
+    { label: 'Z', stroke: '#ffcd56', width: 2 }
+];
+charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
 
-    // Magnetometro
-    var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
-    magOpts.series = [
-        { show: false },  // ← Nasconde Time
-        { 
-            label: 'X', 
-            stroke: '#c9cbcf', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#c9cbcf'
-        },
-        { 
-            label: 'Y', 
-            stroke: '#4bc0c0', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#4bc0c0'
-        },
-        { 
-            label: 'Z', 
-            stroke: '#ff6384', 
-            width: 2,
-            points: { show: false },
-            _stroke: '#ff6384'
-        }
-    ];
-    charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
+// Magnetometro
+var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
+magOpts.series = [
+    { show: false },
+    { label: 'X', stroke: '#c9cbcf', width: 2 },
+    { label: 'Y', stroke: '#4bc0c0', width: 2 },
+    { label: 'Z', stroke: '#ff6384', width: 2 }
+];
+charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
+
 
     // Pressioni
     var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
@@ -548,6 +524,7 @@ function initCharts() {
 // Fix colori quadrati legenda - usa colore linee
 // Fix colori quadrati legenda - VERSIONE CORRETTA
 // Fix colori quadrati legenda - VERSIONE DEFINITIVA
+// Fix colori checkbox + tick ✅
 function fixLegendMarkerColors() {
     setTimeout(function() {
         [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
@@ -570,13 +547,15 @@ function fixLegendMarkerColors() {
                         var isOff = seriesEl.classList.contains('u-off');
                         
                         if (isOff) {
-                            // Serie disattivata - grigio trasparente
-                            marker.style.backgroundColor = '#666';
-                            marker.style.opacity = '0.3';
+                            // Serie disattivata - trasparente
+                            marker.style.backgroundColor = 'transparent';
+                            marker.style.borderColor = '#666';
+                            marker.style.color = '#666';
                         } else {
-                            // Serie attiva - colore pieno
+                            // Serie attiva - colore pieno con tick
                             marker.style.backgroundColor = seriesConfig.stroke;
-                            marker.style.opacity = '1';
+                            marker.style.borderColor = seriesConfig.stroke;
+                            marker.style.color = seriesConfig.stroke;
                         }
                     }
                 });
@@ -585,7 +564,7 @@ function fixLegendMarkerColors() {
             // Imposta colori iniziali
             updateColors();
             
-            // Observer per aggiornare quando cambiano classi
+            // Observer per cambiamenti
             var observer = new MutationObserver(updateColors);
             observer.observe(legend, { 
                 attributes: true, 
@@ -595,6 +574,7 @@ function fixLegendMarkerColors() {
         });
     }, 300);
 }
+
 
 
 
