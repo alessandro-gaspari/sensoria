@@ -7,7 +7,7 @@ class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
   static const int TARGET_HZ = 100;
 
-  String activeProtocol = "H20";
+  String activeProtocol = "F20";
 
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
@@ -120,7 +120,7 @@ class StreamingManager extends ChangeNotifier {
             if (uuid == '1cac0003-656e-696c-4b5f-6e6572726157' &&
                 characteristic.properties.notify) {
               rxChar = characteristic;
-              debugPrint('   ✅ TROVATO: 1cac0003 (Channel 0)');
+              debugPrint('   ✅ TROVATO: 1cac0003 (Channel 0 - F20)');
               break;
             }
           }
@@ -161,7 +161,6 @@ class StreamingManager extends ChangeNotifier {
     required BluetoothCharacteristic rxChar,
     required BluetoothDevice device,
   }) async {
-    // Assicurati di resettare notify per evitare blocchi
     await rxChar.setNotifyValue(false);
     await Future.delayed(const Duration(milliseconds: 200));
     await rxChar.setNotifyValue(true);
@@ -211,8 +210,11 @@ class StreamingManager extends ChangeNotifier {
         _latestData[deviceId] = dataToSend;
         _lastSendTime[deviceId] = DateTime.now();
 
-        if (_packetCounts[deviceId]! % 32 == 0) {
-          debugPrint('   #${_packetCounts[deviceId]} | P0=${parsed['pressure_0']} AX=${parsed['accel_x']} MX=${parsed['mag_x']}');
+        if (_packetCounts[deviceId]! % 100 == 0) {
+          debugPrint('   #${_packetCounts[deviceId]} | P0=${parsed['pressure_0']?.toStringAsFixed(0)} '
+              'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
+              'GX=${parsed['gyro_x']?.toStringAsFixed(0)} '
+              'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
         }
 
         _sendDataViaWebSocket(deviceId, deviceName);
@@ -230,7 +232,7 @@ class StreamingManager extends ChangeNotifier {
       },
     );
     _activeStreams[deviceId] = subscription;
-    debugPrint('🟢 [$deviceName] STREAMING RAW ATTIVO!\n');
+    debugPrint('🟢 [$deviceName] STREAMING F20 ATTIVO!\n');
     notifyListeners();
   }
 
@@ -273,14 +275,8 @@ class StreamingManager extends ChangeNotifier {
   Future<void> stopAll() async {
     debugPrint('\n🛑 STOP ALL STREAMS');
 
-    // NOTE: non disconnettere socket qui per permettere riuso
     for (var deviceId in _activeStreams.keys.toList()) {
       try {
-        // Se hai accesso al BluetoothDevice in mappa _deviceMap,
-        // disattiva notify così (se possibile)
-        // final device = _deviceMap[deviceId];
-        // await device.characteristic.setNotifyValue(false);
-        // Per ora cancella subscription
         await _activeStreams[deviceId]?.cancel();
       } catch (e) {
         debugPrint('❌ Errore disabling notify per $deviceId: $e');
@@ -297,11 +293,47 @@ class StreamingManager extends ChangeNotifier {
   }
 }
 
-// Parsing sensori come già fornito...
-Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"}) {
+/// ✅ PARSING F20 - Protocollo usato dal prof (20 byte)
+Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
+  if (data.length != 20) {
+    debugPrint('⚠️ Lunghezza pacchetto invalida: ${data.length} (atteso: 20)');
+    return {};
+  }
+
   int b(int i) => data[i] & 0xFF;
 
-  if (protocol == "H20" || protocol == "I20") {
+  if (protocol == "F20") {
+    // F20: 20 byte con IMU completo (accel + gyro + mag) + 4 sensori pressione
+    return {
+      // Pressioni (4 sensori per core, primi 4 per sock)
+      'pressure_0': (0x3FF & ((b(0) << 2) | (b(1) >> 6))).toDouble(),
+      'pressure_1': (0x3FF & ((b(1) << 4) | (b(2) >> 4))).toDouble(),
+      'pressure_2': (0x3FF & ((b(2) << 6) | (b(3) >> 2))).toDouble(),
+      'pressure_3': (0x3FF & ((b(3) << 8) | b(4))).toDouble(),
+      'pressure_4': 0.0,
+      'pressure_5': 0.0,
+      'pressure_6': 0.0,
+      'pressure_7': 0.0,
+      
+      // Accelerometro (10 bit per asse)
+      'accel_x': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
+      'accel_y': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
+      'accel_z': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
+      
+      // Giroscopio (10 bit per asse)
+      'gyro_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
+      'gyro_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
+      'gyro_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
+      
+      // Magnetometro (10 bit per asse)
+      'mag_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
+      'mag_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
+      'mag_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+    };
+  } 
+  
+  // Fallback per H20/I20 (se necessario)
+  else if (protocol == "H20" || protocol == "I20") {
     return {
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
@@ -321,8 +353,11 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"
       'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
       'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
     };
-  } else {
-    var pressures = {
+  }
+  
+  // Fallback G20 (7 sensori pressione, no mag)
+  else if (protocol == "G20") {
+    return {
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
       'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
@@ -341,6 +376,8 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "G20"
       'mag_y': 0.0,
       'mag_z': 0.0,
     };
-    return pressures;
   }
+
+  // Protocollo non riconosciuto
+  return {};
 }
