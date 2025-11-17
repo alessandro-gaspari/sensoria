@@ -342,22 +342,57 @@ function clearAllData() {
 var maxDataPoints = 500;
 
 // Plugin per wheel zoom
+// Plugin combinato: Wheel Zoom + Drag Pan
 function wheelZoomPlugin(opts) {
     var factor = opts.factor || 0.75;
 
     function init(u, opts, data) {
         var over = u.over;
-        var rect, oxRange, oyRange, xVal, yVal;
+        var rect, xVal, yVal;
+        var isDragging = false;
+        var dragStartX = null;
+        var dragStartScale = null;
         
         function mouseMove(e) {
             rect = over.getBoundingClientRect();
             xVal = u.posToVal(e.clientX - rect.left, 'x');
             yVal = u.posToVal(e.clientY - rect.top, 'y');
+            
+            // Pan durante drag
+            if (isDragging && dragStartX !== null) {
+                var currentX = e.clientX;
+                var deltaX = dragStartX - currentX;
+                var range = dragStartScale.max - dragStartScale.min;
+                var pixelWidth = rect.width;
+                var timePerPixel = range / pixelWidth;
+                var timeShift = deltaX * timePerPixel;
+                
+                u.setScale('x', {
+                    min: dragStartScale.min + timeShift,
+                    max: dragStartScale.max + timeShift
+                });
+            }
         }
         
         over.addEventListener("mousemove", mouseMove);
-        over.addEventListener("mousedown", mouseMove);
+        
+        over.addEventListener("mousedown", function(e) {
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartScale = {
+                min: u.scales.x.min,
+                max: u.scales.x.max
+            };
+            mouseMove(e);
+        });
+        
+        document.addEventListener("mouseup", function() {
+            isDragging = false;
+            dragStartX = null;
+            dragStartScale = null;
+        });
 
+        // Wheel zoom
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
 
@@ -382,6 +417,7 @@ function wheelZoomPlugin(opts) {
         }
     };
 }
+
 
 function initCharts() {
     var accelDiv = document.getElementById('accel-chart');
@@ -542,6 +578,7 @@ function initCharts() {
 
 
 // Fix colori quadrati legenda - usa colore linee
+// Fix colori quadrati legenda - VERSIONE CORRETTA
 function fixLegendMarkerColors() {
     setTimeout(function() {
         [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
@@ -550,23 +587,52 @@ function fixLegendMarkerColors() {
             var legend = chart.root.querySelector('.u-legend');
             if (!legend) return;
             
-            var series = legend.querySelectorAll('.u-series');
+            var seriesElements = legend.querySelectorAll('.u-series');
             
-            series.forEach(function(seriesEl, idx) {
-                if (idx === 0) return; // Skip Time
+            seriesElements.forEach(function(seriesEl, idx) {
+                // Skip Time (index 0)
+                if (idx === 0) return;
                 
                 var marker = seriesEl.querySelector('.u-marker');
                 if (!marker) return;
                 
-                // Prendi il colore dallo stroke della serie
-                var seriesData = chart.series[idx];
-                if (seriesData && seriesData.stroke) {
-                    marker.style.backgroundColor = seriesData.stroke;
+                // Prendi il colore dalla serie corrispondente
+                var seriesConfig = chart.series[idx];
+                if (seriesConfig && seriesConfig.stroke) {
+                    // Imposta background E border con il colore
+                    marker.style.backgroundColor = seriesConfig.stroke;
+                    marker.style.borderColor = seriesConfig.stroke;
                 }
             });
+            
+            // Observer per aggiornare colori quando cambiano valori
+            var observer = new MutationObserver(function() {
+                seriesElements.forEach(function(seriesEl, idx) {
+                    if (idx === 0) return;
+                    var marker = seriesEl.querySelector('.u-marker');
+                    if (!marker) return;
+                    var seriesConfig = chart.series[idx];
+                    if (seriesConfig && seriesConfig.stroke) {
+                        if (!seriesEl.classList.contains('u-off')) {
+                            marker.style.backgroundColor = seriesConfig.stroke;
+                            marker.style.borderColor = seriesConfig.stroke;
+                        } else {
+                            marker.style.backgroundColor = 'transparent';
+                            marker.style.borderColor = '#666';
+                        }
+                    }
+                });
+            });
+            
+            observer.observe(legend, { 
+                attributes: true, 
+                subtree: true, 
+                attributeFilter: ['class'] 
+            });
         });
-    }, 100);
+    }, 200); // Aumentato timeout per dare tempo a uPlot di renderizzare
 }
+
 
 
 function updateCharts(sensorName, data) {

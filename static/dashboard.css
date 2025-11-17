@@ -84,21 +84,16 @@
 }
 
 /* ========================================
-   LEGENDA uPlot - Quadrati con colori linee
+   LEGENDA uPlot - Quadrati colorati
    ======================================== */
 
 .u-legend {
     display: flex !important;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 16px;
     padding: 8px 0;
-}
-
-.u-legend .u-series {
-    display: inline-flex !important;
-    align-items: center;
-    padding: 4px 8px;
-    cursor: pointer;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 13px;
 }
 
 /* Nascondi Time (prima serie) */
@@ -106,26 +101,41 @@
     display: none !important;
 }
 
-/* Quadrati - Usa colore della linea */
+.u-legend .u-series {
+    display: inline-flex !important;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    gap: 8px;
+}
+
+/* Quadrato marker */
 .u-legend .u-marker {
-    width: 14px !important;
-    height: 14px !important;
+    width: 16px !important;
+    height: 16px !important;
     border-radius: 3px !important;
-    margin-right: 8px !important;
     display: inline-block !important;
-    border: none !important;
-    /* Il colore viene preso automaticamente da stroke della serie */
+    border: 2px solid currentColor !important;
+    flex-shrink: 0;
 }
 
-/* Forza il colore del marker a essere quello dello stroke */
-.u-legend .u-series:not(.u-off) .u-marker {
-    background-color: var(--series-stroke) !important;
+/* Label */
+.u-legend .u-label {
+    color: #97c93e;
+    font-weight: 600;
 }
 
-/* Serie disattivata - quadrato grigio trasparente */
+/* Valore */
+.u-legend .u-value {
+    color: #97c93e;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+    margin-left: 4px;
+}
+
+/* Serie disattivata */
 .u-legend .u-series.u-off .u-marker {
     opacity: 0.3;
-    background: #666 !important;
 }
 
 .u-legend .u-series.u-off .u-label,
@@ -133,18 +143,6 @@
     opacity: 0.4;
 }
 
-/* Label e valori */
-.u-legend .u-label {
-    color: #97c93e;
-    font-weight: 600;
-    margin-right: 8px;
-}
-
-.u-legend .u-value {
-    color: #97c93e;
-    font-family: 'Courier New', monospace;
-    font-weight: 600;
-}
 
 
 /* Card sensore - INGRANDITA */
