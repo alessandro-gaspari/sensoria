@@ -418,12 +418,7 @@ function initCharts() {
                     values: function(u, ticks) {
                         return ticks.map(function(v) {
                             var d = new Date(v * 1000);
-                            return d.toLocaleTimeString('it-IT', { 
-                                hour: '2-digit', 
-                                minute: '2-digit', 
-                                second: '2-digit',
-                                hour12: false 
-                            });
+                            return d.toLocaleTimeString('it-IT', { hour12: false });
                         });
                     }
                 },
@@ -436,7 +431,6 @@ function initCharts() {
             plugins: [wheelZoomPlugin({ factor: 0.75 })]
         };
     }
-
     
     // Accelerometro
     var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
@@ -482,9 +476,35 @@ function initCharts() {
         { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
     ];
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
-    
     console.log('✅ Grafici uPlot inizializzati con zoom/pan');
+    formatLegendTime(); 
 }
+
+// Formatta legenda Time per mostrare solo HH:MM:SS
+function formatLegendTime() {
+    if (!chartsInitialized) return;
+    
+    [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
+        if (!chart) return;
+        
+        var legend = chart.root.querySelector('.u-legend');
+        if (!legend) return;
+        
+        var observer = new MutationObserver(function() {
+            var timeSeries = legend.querySelector('.u-series:first-child .u-value');
+            if (timeSeries && timeSeries.textContent.includes('-')) {
+                // Rimuovi la data, lascia solo l'ora
+                var parts = timeSeries.textContent.split(' ');
+                if (parts.length > 1) {
+                    timeSeries.textContent = parts[1]; // Solo la parte HH:MM:SS
+                }
+            }
+        });
+        
+        observer.observe(legend, { childList: true, subtree: true, characterData: true });
+    });
+}
+
 
 function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
