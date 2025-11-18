@@ -494,28 +494,69 @@ function initCharts() {
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
-    // 🔥 Pressioni (8 sensori)
-    var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
-    pressureOpts.series = [
-        { show: false },
-        { label: 'S0', stroke: '#ff6384', width: 1.5 },
-        { label: 'S1', stroke: '#36a2eb', width: 1.5 },
-        { label: 'S2', stroke: '#ffce56', width: 1.5 },
-        { label: 'S3', stroke: '#4bc0c0', width: 1.5 },
-        { label: 'S4', stroke: '#9966ff', width: 1.5 },
-        { label: 'S5', stroke: '#ff9f40', width: 1.5 },
-        { label: 'S6', stroke: '#c9cbcf', width: 1.5 },
-        { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
-    ];
-
-    pressureOpts.scales = {
-        x: { time: true },
-        y: { 
-            auto: true,
-            range: [0, 1024]  // ← Forza range 0-1024 (valori 10-bit)
-        }
+    // 🔥 PRESSIONI - Configurazione corretta con auto-range
+    var pressureOpts = {
+        width: pressureDiv.offsetWidth,
+        height: 250,
+        cursor: {
+            show: true,
+            drag: { x: true, y: false }
+        },
+        legend: { 
+            show: true, 
+            live: true 
+        },
+        scales: {
+            x: { time: true },
+            y: { 
+                auto: true,
+                range: function(u, dataMin, dataMax) {
+                    var pad = (dataMax - dataMin) * 0.1;
+                    return [
+                        Math.max(0, dataMin - pad),
+                        dataMax + pad
+                    ];
+                }
+            }
+        },
+        axes: [
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                values: function(u, ticks) {
+                    return ticks.map(function(v) {
+                        var d = new Date(v * 1000);
+                        return d.toLocaleTimeString('it-IT', { hour12: false });
+                    });
+                }
+            },
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                size: 50
+            }
+        ],
+        series: [
+            { show: false },
+            { label: 'S0', stroke: '#ff6384', width: 2, points: { show: false } },
+            { label: 'S1', stroke: '#36a2eb', width: 2, points: { show: false } },
+            { label: 'S2', stroke: '#ffce56', width: 2, points: { show: false } },
+            { label: 'S3', stroke: '#4bc0c0', width: 2, points: { show: false } },
+            { label: 'S4', stroke: '#9966ff', width: 2, points: { show: false } },
+            { label: 'S5', stroke: '#ff9f40', width: 2, points: { show: false } },
+            { label: 'S6', stroke: '#c9cbcf', width: 2, points: { show: false } },
+            { label: 'S7', stroke: '#e7e9ed', width: 2, points: { show: false } }
+        ],
+        plugins: [wheelZoomPlugin({ factor: 0.75 })]
     };
-    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+    
+    // Inizializza con dati vuoti
+    var emptyData = [
+        [Date.now() / 1000],
+        [0], [0], [0], [0], [0], [0], [0], [0]
+    ];
+    
+    charts.pressure = new uPlot(pressureOpts, emptyData, pressureDiv);
 
     console.log('✅ Grafici uPlot inizializzati con zoom/pan');
     fixLegendMarkerColors();
@@ -571,7 +612,6 @@ function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
-    var hasPressure = false;
 
     // Accelerometro
     if (data.accel_x !== undefined) {
@@ -581,12 +621,8 @@ function updateCharts(sensorName, data) {
         chartData.accel[3].push(data.accel_z);
         
         if (chartData.accel[0].length > maxDataPoints) {
-            chartData.accel[0].shift();
-            chartData.accel[1].shift();
-            chartData.accel[2].shift();
-            chartData.accel[3].shift();
+            for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
         }
-        
         charts.accel.setData(chartData.accel);
     }
 
@@ -598,12 +634,8 @@ function updateCharts(sensorName, data) {
         chartData.gyro[3].push(data.gyro_z);
         
         if (chartData.gyro[0].length > maxDataPoints) {
-            chartData.gyro[0].shift();
-            chartData.gyro[1].shift();
-            chartData.gyro[2].shift();
-            chartData.gyro[3].shift();
+            for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
         }
-        
         charts.gyro.setData(chartData.gyro);
     }
 
@@ -615,26 +647,15 @@ function updateCharts(sensorName, data) {
         chartData.mag[3].push(data.mag_z);
         
         if (chartData.mag[0].length > maxDataPoints) {
-            chartData.mag[0].shift();
-            chartData.mag[1].shift();
-            chartData.mag[2].shift();
-            chartData.mag[3].shift();
+            for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
         }
-        
         charts.mag.setData(chartData.mag);
     }
 
-    // 🔥 Pressioni (mostra solo se presenti e non zero)
-    for (var i = 0; i <= 7; i++) {
-        var key = 'pressure_' + i;
-        if (data[key] !== undefined && data[key] !== 0) {
-            hasPressure = true;
-            break;
-        }
-    }
-
-    if (hasPressure) {
+    // 🔥 PRESSIONI - Fix finale
+    if (data.pressure_0 !== undefined) {
         chartData.pressure[0].push(timestamp);
+        
         for (var i = 0; i <= 7; i++) {
             var key = 'pressure_' + i;
             chartData.pressure[i + 1].push(data[key] || 0);
