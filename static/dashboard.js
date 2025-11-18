@@ -27,7 +27,7 @@ var chartData = {
     accel: [[], [], [], []],
     gyro: [[], [], [], []],
     mag: [[], [], [], []],
-    pressure: [[], [], [], [], [], [], [], [], []]
+    pressure: [[], [], [], []]
 };
 
 var maxDataPoints = 500;
@@ -247,7 +247,7 @@ function createSensorCardDynamic(sensorName, data) {
     
     if (pressureKeys.length > 0) {
         html += '<div class="sensor-data-section">' +
-                '<div class="sensor-data-section-title">👣 Pressione (' + pressureKeys.length + ' sensori)</div>';
+                '<div class="sensor-data-section-title">⬇️ Pressione (' + pressureKeys.length + ' sensori)</div>';
         pressureKeys.sort().forEach(function(key) {
             html += '<div class="sensor-data-row">' +
                     '<span class="sensor-data-label">' + key + ':</span>' +
@@ -453,114 +453,7 @@ function getBaseOpts(width, height) {
     };
 }
 
-function initCharts() {
-    var accelDiv = document.getElementById('accel-chart');
-    var gyroDiv = document.getElementById('gyro-chart');
-    var magDiv = document.getElementById('mag-chart');
-    var pressureDiv = document.getElementById('pressure-chart');
-    
-    if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) {
-        console.error('Canvas non trovati');
-        return;
-    }
-    
-    // Accelerometro
-    var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
-    accelOpts.series = [
-        { show: false },
-        { label: 'X', stroke: '#ff6384', width: 2 },
-        { label: 'Y', stroke: '#36a2eb', width: 2 },
-        { label: 'Z', stroke: '#4bc0c0', width: 2 }
-    ];
-    charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
 
-    // Giroscopio
-    var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
-    gyroOpts.series = [
-        { show: false },
-        { label: 'X', stroke: '#ff9f40', width: 2 },
-        { label: 'Y', stroke: '#9966ff', width: 2 },
-        { label: 'Z', stroke: '#ffcd56', width: 2 }
-    ];
-    charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
-
-    // Magnetometro
-    var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
-    magOpts.series = [
-        { show: false },
-        { label: 'X', stroke: '#c9cbcf', width: 2 },
-        { label: 'Y', stroke: '#4bc0c0', width: 2 },
-        { label: 'Z', stroke: '#ff6384', width: 2 }
-    ];
-    charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
-
-    // 🔥 PRESSIONI - Configurazione corretta con auto-range
-    var pressureOpts = {
-        width: pressureDiv.offsetWidth,
-        height: 250,
-        cursor: {
-            show: true,
-            drag: { x: true, y: false }
-        },
-        legend: { 
-            show: true, 
-            live: true 
-        },
-        scales: {
-            x: { time: true },
-            y: { 
-                auto: true,
-                range: function(u, dataMin, dataMax) {
-                    var pad = (dataMax - dataMin) * 0.1;
-                    return [
-                        Math.max(0, dataMin - pad),
-                        dataMax + pad
-                    ];
-                }
-            }
-        },
-        axes: [
-            { 
-                stroke: '#97c93e', 
-                grid: { stroke: '#333', width: 1 },
-                values: function(u, ticks) {
-                    return ticks.map(function(v) {
-                        var d = new Date(v * 1000);
-                        return d.toLocaleTimeString('it-IT', { hour12: false });
-                    });
-                }
-            },
-            { 
-                stroke: '#97c93e', 
-                grid: { stroke: '#333', width: 1 },
-                size: 50
-            }
-        ],
-        series: [
-            { show: false },
-            { label: 'S0', stroke: '#ff6384', width: 2, points: { show: false } },
-            { label: 'S1', stroke: '#36a2eb', width: 2, points: { show: false } },
-            { label: 'S2', stroke: '#ffce56', width: 2, points: { show: false } },
-            { label: 'S3', stroke: '#4bc0c0', width: 2, points: { show: false } },
-            { label: 'S4', stroke: '#9966ff', width: 2, points: { show: false } },
-            { label: 'S5', stroke: '#ff9f40', width: 2, points: { show: false } },
-            { label: 'S6', stroke: '#c9cbcf', width: 2, points: { show: false } },
-            { label: 'S7', stroke: '#e7e9ed', width: 2, points: { show: false } }
-        ],
-        plugins: [wheelZoomPlugin({ factor: 0.75 })]
-    };
-    
-    // Inizializza con dati vuoti
-    var emptyData = [
-        [Date.now() / 1000],
-        [0], [0], [0], [0], [0], [0], [0], [0]
-    ];
-    
-    charts.pressure = new uPlot(pressureOpts, emptyData, pressureDiv);
-
-    console.log('✅ Grafici uPlot inizializzati con zoom/pan');
-    fixLegendMarkerColors();
-}
 
 function fixLegendMarkerColors() {
     setTimeout(function() {
@@ -608,71 +501,139 @@ function fixLegendMarkerColors() {
     }, 300);
 }
 
+function initCharts() {
+    var accelDiv = document.getElementById('accel-chart');
+    var gyroDiv = document.getElementById('gyro-chart');
+    var magDiv = document.getElementById('mag-chart');
+    var pressureDiv = document.getElementById('pressure-chart');
+    
+    if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) {
+        console.error('Canvas non trovati');
+        return;
+    }
+    
+    var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
+    accelOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#ff6384', width: 2 },
+        { label: 'Y', stroke: '#36a2eb', width: 2 },
+        { label: 'Z', stroke: '#4bc0c0', width: 2 }
+    ];
+    charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
+
+    var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
+    gyroOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#ff9f40', width: 2 },
+        { label: 'Y', stroke: '#9966ff', width: 2 },
+        { label: 'Z', stroke: '#ffcd56', width: 2 }
+    ];
+    charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
+
+    var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
+    magOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#c9cbcf', width: 2 },
+        { label: 'Y', stroke: '#4bc0c0', width: 2 },
+        { label: 'Z', stroke: '#ff6384', width: 2 }
+    ];
+    charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
+
+    // Solo S0, S1, S2 per pressioni
+    var pressureOpts = {
+        width: pressureDiv.offsetWidth,
+        height: 250,
+        cursor: { show: true, drag: { x: true, y: false } },
+        legend: { show: true, live: true },
+        scales: {
+            x: { time: true },
+            y: { auto: true, range: (u, min, max) => {
+                if (max <= min) return [0, 1024];
+                var pad = (max - min) * 0.1;
+                return [Math.max(0, min - pad), Math.min(1050, max + pad)];
+            }}
+        },
+        axes: [
+            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 },
+                values: function(u, ticks) {
+                    return ticks.map(function(v) {
+                        var d = new Date(v * 1000);
+                        return d.toLocaleTimeString('it-IT', { hour12: false });
+                    });
+                }
+            },
+            { stroke: '#97c93e', grid: { stroke: '#333', width: 1 }, size: 50 }
+        ],
+        series: [
+            { show: false },
+            { label: 'S0', stroke: '#ff6384', width: 2, points: { show: false } },
+            { label: 'S1', stroke: '#36a2eb', width: 2, points: { show: false } },
+            { label: 'S2', stroke: '#ffce56', width: 2, points: { show: false } }
+        ],
+        plugins: [wheelZoomPlugin({ factor: 0.75 })]
+    };
+    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+    fixLegendMarkerColors();
+}
+
 function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
-
-    // Accelerometro
     if (data.accel_x !== undefined) {
         chartData.accel[0].push(timestamp);
         chartData.accel[1].push(data.accel_x);
         chartData.accel[2].push(data.accel_y);
         chartData.accel[3].push(data.accel_z);
-        
-        if (chartData.accel[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
-        }
+        if (chartData.accel[0].length > maxDataPoints) { for (var i = 0; i <= 3; i++) chartData.accel[i].shift(); }
         charts.accel.setData(chartData.accel);
     }
-
-    // Giroscopio
     if (data.gyro_x !== undefined) {
         chartData.gyro[0].push(timestamp);
         chartData.gyro[1].push(data.gyro_x);
         chartData.gyro[2].push(data.gyro_y);
         chartData.gyro[3].push(data.gyro_z);
-        
-        if (chartData.gyro[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
-        }
+        if (chartData.gyro[0].length > maxDataPoints) { for (var i = 0; i <= 3; i++) chartData.gyro[i].shift(); }
         charts.gyro.setData(chartData.gyro);
     }
-
-    // Magnetometro
     if (data.mag_x !== undefined) {
         chartData.mag[0].push(timestamp);
         chartData.mag[1].push(data.mag_x);
         chartData.mag[2].push(data.mag_y);
         chartData.mag[3].push(data.mag_z);
-        
-        if (chartData.mag[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
-        }
+        if (chartData.mag[0].length > maxDataPoints) { for (var i = 0; i <= 3; i++) chartData.mag[i].shift(); }
         charts.mag.setData(chartData.mag);
     }
-
-    // 🔥 PRESSIONI - Fix finale
+    // - - - PRESSURE SOLO S0 S1 S2 - - - 
     if (data.pressure_0 !== undefined) {
         chartData.pressure[0].push(timestamp);
-        
-        for (var i = 0; i <= 7; i++) {
-            var key = 'pressure_' + i;
-            chartData.pressure[i + 1].push(data[key] || 0);
-        }
-        
+        chartData.pressure[1].push(data.pressure_0 || 0);
+        chartData.pressure[2].push(data.pressure_1 || 0);
+        chartData.pressure[3].push(data.pressure_2 || 0);
         if (chartData.pressure[0].length > maxDataPoints) {
-            for (var i = 0; i <= 8; i++) {
-                chartData.pressure[i].shift();
-            }
+            for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
         }
-        
         charts.pressure.setData(chartData.pressure);
         document.getElementById('pressure-chart-container').style.display = 'block';
     } else {
         document.getElementById('pressure-chart-container').style.display = 'none';
     }
 }
+
+function resetChartData() {
+    if (!chartsInitialized) return;
+    chartData = {
+        accel: [[], [], [], []],
+        gyro: [[], [], [], []],
+        mag: [[], [], [], []],
+        pressure: [[], [], [], []] // SOLO S0 S1 S2
+    };
+    if (charts.accel) charts.accel.setData(chartData.accel);
+    if (charts.gyro) charts.gyro.setData(chartData.gyro);
+    if (charts.mag) charts.mag.setData(chartData.mag);
+    if (charts.pressure) charts.pressure.setData(chartData.pressure);
+}
+
 
 function updateSensorSelector() {
     var select = document.getElementById('chart-sensor-select');
@@ -693,21 +654,6 @@ function updateSensorSelector() {
     }
 }
 
-function resetChartData() {
-    if (!chartsInitialized) return;
-    
-    chartData = {
-        accel: [[], [], [], []],
-        gyro: [[], [], [], []],
-        mag: [[], [], [], []],
-        pressure: [[], [], [], [], [], [], [], [], []]
-    };
-    
-    if (charts.accel) charts.accel.setData(chartData.accel);
-    if (charts.gyro) charts.gyro.setData(chartData.gyro);
-    if (charts.mag) charts.mag.setData(chartData.mag);
-    if (charts.pressure) charts.pressure.setData(chartData.pressure);
-}
 
 function calibrateKnee() {
     alert('Funzione calibrazione ginocchio non ancora implementata');
