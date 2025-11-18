@@ -507,6 +507,14 @@ function initCharts() {
         { label: 'S6', stroke: '#c9cbcf', width: 1.5 },
         { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
     ];
+
+    pressureOpts.scales = {
+        x: { time: true },
+        y: { 
+            auto: true,
+            range: [0, 1024]  // ← Forza range 0-1024 (valori 10-bit)
+        }
+    };
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
 
     console.log('✅ Grafici uPlot inizializzati con zoom/pan');
