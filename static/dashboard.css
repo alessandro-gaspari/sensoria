@@ -83,6 +83,12 @@
     margin-top: 20px;
 }
 
+#pressure-chart {
+    width: 100% !important;
+    height: 250px !important;
+}
+
+
 /* ========================================
    LEGENDA uPlot - Quadrati con tick ✅
    ======================================== */
