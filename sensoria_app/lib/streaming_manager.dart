@@ -7,12 +7,11 @@ class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
   static const int TARGET_HZ = 100;
 
-  String activeProtocol = "F20";
-
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
   final Map<String, Map<String, dynamic>> _latestData = {};
   final Map<String, DateTime> _lastSendTime = {};
+  final Map<String, String> _deviceProtocols = {};
 
   IO.Socket? _socket;
   bool _isSocketConnected = false;
@@ -71,6 +70,33 @@ class StreamingManager extends ChangeNotifier {
     });
   }
 
+  /// Auto-detect protocollo: F20 per Core, G20/L32 per Calzini
+  String _getProtocolForDevice(String deviceName, int packetLength) {
+    final name = deviceName.toLowerCase();
+    
+    debugPrint('🔍 AUTO-DETECT PROTOCOLLO:');
+    debugPrint('   Nome: "$deviceName"');
+    debugPrint('   Lunghezza pacchetto: $packetLength byte');
+    
+    // Core/Ginocchio → F20 (20 byte, NO pressioni, IMU completo)
+    if (name.contains('ginocchio') || name.contains('core') || name.contains('knee')) {
+      if (packetLength != 20) {
+        debugPrint('   ⚠️ CORE dovrebbe avere 20 byte!');
+      }
+      debugPrint('   ✅ CORE → F20 (NO pressioni, IMU completo con mag)');
+      return 'F20';
+    }
+    
+    // Calzini → L32 (32 byte) o G20 (20 byte)
+    if (packetLength == 32) {
+      debugPrint('   ✅ CALZINO → L32 (8 pressioni + IMU completo)');
+      return 'L32';
+    } else {
+      debugPrint('   ✅ CALZINO → G20 (7 pressioni, NO magnetometro)');
+      return 'H20';
+    }
+  }
+
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
     await startAllStreaming(
       {device.remoteId.toString(): device},
@@ -83,8 +109,9 @@ class StreamingManager extends ChangeNotifier {
       Map<String, String> deviceNames) async {
     if (connectedDevices.isEmpty) return;
 
-    debugPrint('\n🚀 INIZIO STREAMING @${TARGET_HZ}Hz (protocollo $activeProtocol)');
+    debugPrint('\n🚀 INIZIO STREAMING @${TARGET_HZ}Hz');
     debugPrint('📊 Dispositivi: ${connectedDevices.length}');
+    debugPrint('🎯 Protocolli: F20 (Core) | G20/L32 (Calzini)');
 
     if (!_isSocketConnected) {
       _connectWebSocket();
@@ -103,7 +130,6 @@ class StreamingManager extends ChangeNotifier {
 
       try {
         final connectionState = await device.connectionState.first;
-        debugPrint('[$deviceName] connection state: $connectionState');
         if (connectionState != BluetoothConnectionState.connected) {
           debugPrint('❌ [$deviceName] Non connesso, skip\n');
           continue;
@@ -120,7 +146,7 @@ class StreamingManager extends ChangeNotifier {
             if (uuid == '1cac0003-656e-696c-4b5f-6e6572726157' &&
                 characteristic.properties.notify) {
               rxChar = characteristic;
-              debugPrint('   ✅ TROVATO: 1cac0003 (Channel 0 - F20)');
+              debugPrint('   ✅ TROVATO: 1cac0003 (Channel 0)');
               break;
             }
           }
@@ -150,7 +176,7 @@ class StreamingManager extends ChangeNotifier {
       }
     }
 
-    debugPrint('🎉 Streaming attivo: ${_activeStreams.length}/${connectedDevices.length} @ $TARGET_HZ Hz');
+    debugPrint('🎉 Streaming attivo: ${_activeStreams.length}/${connectedDevices.length}');
     debugPrint('📊 Sensori tracciati: ${_latestData.keys.toList()}\n');
     notifyListeners();
   }
@@ -173,19 +199,44 @@ class StreamingManager extends ChangeNotifier {
     };
     _lastSendTime[deviceId] = DateTime.now();
 
-    debugPrint('🎬 [$deviceName] Streaming attivo ($activeProtocol)');
+    bool protocolDetected = false;
     
     final subscription = rxChar.lastValueStream.listen(
       (value) {
-        if (value.isEmpty || value.length != 20) return;
+        if (value.isEmpty) return;
 
-        final parsed = parseSensoriaPacket(value, protocol: activeProtocol);
+        // Auto-detect protocollo dal primo pacchetto
+        if (!protocolDetected) {
+          final protocol = _getProtocolForDevice(deviceName, value.length);
+          _deviceProtocols[deviceId] = protocol;
+          protocolDetected = true;
+          
+          debugPrint('\n📡 [$deviceName] PROTOCOLLO FINALE: $protocol');
+          debugPrint('   Lunghezza: ${value.length} byte');
+          debugPrint('   Tipo: ${protocol == "F20" ? "CORE" : (protocol == "L32" ? "CALZINO (L32)" : "CALZINO (G20)")}');
+          debugPrint('   Streaming attivo!\n');
+        }
+
+        final protocol = _deviceProtocols[deviceId]!;
+
+        // Validazione lunghezza
+        final expectedLength = protocol == 'L32' ? 32 : 20;
+        if (value.length != expectedLength) {
+          if (_packetCounts[deviceId]! % 50 == 0) {
+            debugPrint('⚠️ [$deviceName] Pacchetto invalido: ${value.length} byte '
+                '(atteso: $expectedLength per $protocol)');
+          }
+          return;
+        }
+
+        final parsed = parseSensoriaPacket(value, protocol: protocol);
+        if (parsed.isEmpty) return;
+        
         _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
 
-        final isCoreDevice = deviceName.toLowerCase().contains('ginocchio') ||
-            deviceName.toLowerCase().contains('core') ||
-            deviceName.toLowerCase().contains('knee');
+        final isCoreDevice = protocol == 'F20';
 
+        // Dati IMU (sempre presenti)
         Map<String, dynamic> dataToSend = {
           'timestamp': DateTime.now().toUtc().toIso8601String(),
           'sensor_name': deviceName,
@@ -200,21 +251,37 @@ class StreamingManager extends ChangeNotifier {
           'mag_z': parsed['mag_z'],
         };
 
+        // Pressioni SOLO per calzini (non per core)
         if (!isCoreDevice) {
           for (int i = 0; i <= 7; i++) {
             final key = 'pressure_$i';
-            if (parsed.containsKey(key)) dataToSend[key] = parsed[key];
+            if (parsed.containsKey(key)) {
+              final value = parsed[key];
+              if (value != null && value != 0.0) {
+                dataToSend[key] = value;
+              }
+            }
           }
         }
 
         _latestData[deviceId] = dataToSend;
         _lastSendTime[deviceId] = DateTime.now();
 
+        // Log debug ogni 100 pacchetti
         if (_packetCounts[deviceId]! % 100 == 0) {
-          debugPrint('   #${_packetCounts[deviceId]} | P0=${parsed['pressure_0']?.toStringAsFixed(0)} '
-              'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
-              'GX=${parsed['gyro_x']?.toStringAsFixed(0)} '
-              'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
+          final pressureCount = dataToSend.keys.where((k) => k.startsWith('pressure_')).length;
+          if (isCoreDevice) {
+            debugPrint('   #${_packetCounts[deviceId]} [CORE-$protocol] | '
+                'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
+                'GX=${parsed['gyro_x']?.toStringAsFixed(0)} '
+                'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
+          } else {
+            debugPrint('   #${_packetCounts[deviceId]} [SOCK-$protocol] | '
+                'Pressioni: $pressureCount | '
+                'P0=${parsed['pressure_0']?.toStringAsFixed(0)} '
+                'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
+                'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
+          }
         }
 
         _sendDataViaWebSocket(deviceId, deviceName);
@@ -232,8 +299,6 @@ class StreamingManager extends ChangeNotifier {
       },
     );
     _activeStreams[deviceId] = subscription;
-    debugPrint('🟢 [$deviceName] STREAMING F20 ATTIVO!\n');
-    notifyListeners();
   }
 
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
@@ -241,8 +306,6 @@ class StreamingManager extends ChangeNotifier {
     if (latestData == null || latestData.isEmpty) return;
 
     if (_socket == null || !_isSocketConnected) {
-      debugPrint('❌ WebSocket non connesso, provo a connettere...');
-      _connectWebSocket();
       return;
     }
 
@@ -258,6 +321,7 @@ class StreamingManager extends ChangeNotifier {
     _packetCounts.remove(deviceId);
     _latestData.remove(deviceId);
     _lastSendTime.remove(deviceId);
+    _deviceProtocols.remove(deviceId);
   }
 
   Future<void> stopStreaming(String deviceId) async {
@@ -287,77 +351,64 @@ class StreamingManager extends ChangeNotifier {
     _packetCounts.clear();
     _latestData.clear();
     _lastSendTime.clear();
+    _deviceProtocols.clear();
 
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
   }
 }
 
-/// ✅ PARSING F20 - Protocollo usato dal prof (20 byte)
+/// ========================================
+/// PARSING UFFICIALE (da codice Android Sensoria SDK)
+/// ========================================
 Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
-  if (data.length != 20) {
-    debugPrint('⚠️ Lunghezza pacchetto invalida: ${data.length} (atteso: 20)');
-    return {};
-  }
-
   int b(int i) => data[i] & 0xFF;
 
+  // ========================================
+  // F20: CORE (20 byte, 3 pressioni + IMU completo)
+  // Basato su F20ProtocolCommand.java
+  // ========================================
   if (protocol == "F20") {
-    // F20: 20 byte con IMU completo (accel + gyro + mag) + 4 sensori pressione
+    if (data.length != 20) {
+      debugPrint('⚠️ F20 richiede 20 byte, ricevuto: ${data.length}');
+      return {};
+    }
+    
     return {
-      // Pressioni (4 sensori per core, primi 4 per sock)
-      'pressure_0': (0x3FF & ((b(0) << 2) | (b(1) >> 6))).toDouble(),
-      'pressure_1': (0x3FF & ((b(1) << 4) | (b(2) >> 4))).toDouble(),
-      'pressure_2': (0x3FF & ((b(2) << 6) | (b(3) >> 2))).toDouble(),
-      'pressure_3': (0x3FF & ((b(3) << 8) | b(4))).toDouble(),
-      'pressure_4': 0.0,
-      'pressure_5': 0.0,
-      'pressure_6': 0.0,
-      'pressure_7': 0.0,
-      
-      // Accelerometro (10 bit per asse)
-      'accel_x': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-      'accel_y': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-      'accel_z': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      
-      // Giroscopio (10 bit per asse)
-      'gyro_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-      'gyro_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-      'gyro_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
-      
-      // Magnetometro (10 bit per asse)
-      'mag_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-      'mag_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-      'mag_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-    };
-  } 
-  
-  // Fallback per H20/I20 (se necessario)
-  else if (protocol == "H20" || protocol == "I20") {
-    return {
+      // 3 pressioni (channels 0-2)
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
       'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      'pressure_3': (0x3FF & ((b(0) << 6) | (b(4) & 63))).toDouble(),
-      'pressure_4': 0.0,
-      'pressure_5': 0.0,
-      'pressure_6': 0.0,
-      'pressure_7': 0.0,
+      
+      // Accelerometro (10-bit)
       'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
       'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
       'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+      
+      // Giroscopio (10-bit)
       'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
       'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
       'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
+      
+      // Magnetometro (10-bit) - F20 CE L'HA
       'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
       'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
       'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
     };
   }
   
-  // Fallback G20 (7 sensori pressione, no mag)
+  // ========================================
+  // G20: CALZINI (20 byte, 7 pressioni, NO magnetometro)
+  // Basato su G20ProtocolCommand.java
+  // ========================================
   else if (protocol == "G20") {
+    if (data.length != 20) {
+      debugPrint('⚠️ G20 richiede 20 byte, ricevuto: ${data.length}');
+      return {};
+    }
+    
     return {
+      // 7 pressioni (channels 0-6)
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
       'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
@@ -365,19 +416,91 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"
       'pressure_4': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
       'pressure_5': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
       'pressure_6': (0x3FF & ((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F))).toDouble(),
-      'pressure_7': 0.0,
+      
+      // Accelerometro (10-bit)
       'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
       'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
       'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+      
+      // Giroscopio (10-bit)
       'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
       'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
       'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
+      
+      // NO magnetometro in G20 (dal codice ufficiale)
       'mag_x': 0.0,
       'mag_y': 0.0,
       'mag_z': 0.0,
     };
   }
+  
+  // ========================================
+  // L32: CALZINI NUOVI (32 byte, 8 pressioni + IMU completo)
+  // Basato su L32ProtocolCommand.java
+  // ========================================
+  else if (protocol == "L32") {
+    if (data.length != 32) {
+      debugPrint('⚠️ L32 richiede 32 byte, ricevuto: ${data.length}');
+      return {};
+    }
+    
+    return {
+      // 8 pressioni (channels 0-7) - 10-bit
+      'pressure_0': (0x3FF & ((b(21) << 2) | (b(22) >> 6))).toDouble(),
+      'pressure_1': (0x3FF & ((b(22) << 4) | (b(23) >> 4))).toDouble(),
+      'pressure_2': (0x3FF & ((b(23) << 6) | (b(24) >> 2))).toDouble(),
+      'pressure_3': (0x3FF & (((b(24) & 0x03) << 8) | b(25))).toDouble(),
+      'pressure_4': (0x3FF & ((b(26) << 2) | (b(27) >> 6))).toDouble(),
+      'pressure_5': (0x3FF & ((b(27) << 4) | (b(28) >> 4))).toDouble(),
+      'pressure_6': (0x3FF & ((b(28) << 6) | (b(29) >> 2))).toDouble(),
+      'pressure_7': (0x3FF & (((b(29) & 0x03) << 8) | b(30))).toDouble(),
+      
+      // Accelerometro (16-bit in L32)
+      'accel_x': (b(3) | (b(4) << 8)).toDouble(),
+      'accel_y': (b(5) | (b(6) << 8)).toDouble(),
+      'accel_z': (b(7) | (b(8) << 8)).toDouble(),
+      
+      // Giroscopio (16-bit in L32)
+      'gyro_x': (b(9) | (b(10) << 8)).toDouble(),
+      'gyro_y': (b(11) | (b(12) << 8)).toDouble(),
+      'gyro_z': (b(13) | (b(14) << 8)).toDouble(),
+      
+      // Magnetometro (16-bit in L32)
+      'mag_x': (b(15) | (b(16) << 8)).toDouble(),
+      'mag_y': (b(17) | (b(18) << 8)).toDouble(),
+      'mag_z': (b(19) | (b(20) << 8)).toDouble(),
+    };
+  }
 
-  // Protocollo non riconosciuto
+    // H20: CALZINI (20 byte, 4 pressioni + IMU completo con mag)
+  else if (protocol == "H20" || protocol == "I20") {
+    if (data.length != 20) return {};
+    
+    return {
+      // 4 pressioni (channels 0-3)
+      'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
+      'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
+      'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
+      'pressure_3': (0x3FF & ((b(0) << 6) | (b(4) & 0x3F))).toDouble(),
+      
+      // Accelerometro
+      'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
+      'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
+      'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+      
+      // Giroscopio
+      'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
+      'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
+      'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
+      
+      // Magnetometro (H20/I20 CE L'HANNO!)
+      'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
+      'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
+      'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
+    };
+  }
+
+
+  debugPrint('❌ Protocollo non supportato: $protocol');
   return {};
 }

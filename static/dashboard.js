@@ -24,13 +24,13 @@ var charts = {
 };
 
 var chartData = {
-    accel: [[], [], [], []],  // [timestamps, x, y, z]
+    accel: [[], [], [], []],
     gyro: [[], [], [], []],
     mag: [[], [], [], []],
-    pressure: [[], [], [], [], [], [], [], [], []]  // [timestamps, s0-s7]
+    pressure: [[], [], [], [], [], [], [], [], []]
 };
 
-var maxDataPoints = 100;
+var maxDataPoints = 500;
 var selectedSensor = null;
 var chartsInitialized = false;
 
@@ -218,10 +218,14 @@ function createSensorCardDynamic(sensorName, data) {
     
     Object.keys(data).forEach(function(key) {
         if (key === 'timestamp' || key === 'sensor_name') return;
+        
         if (key.startsWith('accel_') || key.startsWith('gyro_') || key.startsWith('mag_')) {
             imuKeys.push(key);
         } else if (key.startsWith('pressure_')) {
-            pressureKeys.push(key);
+            var value = data[key];
+            if (value !== 0 && value !== 0.0) {
+                pressureKeys.push(key);
+            }
         }
     });
     
@@ -243,7 +247,7 @@ function createSensorCardDynamic(sensorName, data) {
     
     if (pressureKeys.length > 0) {
         html += '<div class="sensor-data-section">' +
-                '<div class="sensor-data-section-title">⬇️ Pressione (S0-S7)</div>';
+                '<div class="sensor-data-section-title">👣 Pressione (' + pressureKeys.length + ' sensori)</div>';
         pressureKeys.sort().forEach(function(key) {
             html += '<div class="sensor-data-row">' +
                     '<span class="sensor-data-label">' + key + ':</span>' +
@@ -336,13 +340,9 @@ function clearAllData() {
 }
 
 // ============================================
-// GRAFICI uPlot CON ZOOM/PAN FUNZIONANTE
+// GRAFICI uPlot CON ZOOM/PAN
 // ============================================
 
-var maxDataPoints = 500;
-
-// Plugin per wheel zoom
-// Plugin combinato: Wheel Zoom + Drag Pan
 function wheelZoomPlugin(opts) {
     var factor = opts.factor || 0.75;
 
@@ -358,7 +358,6 @@ function wheelZoomPlugin(opts) {
             xVal = u.posToVal(e.clientX - rect.left, 'x');
             yVal = u.posToVal(e.clientY - rect.top, 'y');
             
-            // Pan durante drag
             if (isDragging && dragStartX !== null) {
                 var currentX = e.clientX;
                 var deltaX = dragStartX - currentX;
@@ -392,7 +391,6 @@ function wheelZoomPlugin(opts) {
             dragStartScale = null;
         });
 
-        // Wheel zoom
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
 
@@ -418,6 +416,42 @@ function wheelZoomPlugin(opts) {
     };
 }
 
+function getBaseOpts(width, height) {
+    return {
+        width: width,
+        height: height,
+        cursor: {
+            show: true,
+            drag: { x: true, y: false }
+        },
+        legend: { 
+            show: true, 
+            live: true 
+        },
+        scales: {
+            x: { time: true },
+            y: { auto: true }
+        },
+        axes: [
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                values: function(u, ticks) {
+                    return ticks.map(function(v) {
+                        var d = new Date(v * 1000);
+                        return d.toLocaleTimeString('it-IT', { hour12: false });
+                    });
+                }
+            },
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                size: 50
+            }
+        ],
+        plugins: [wheelZoomPlugin({ factor: 0.75 })]
+    };
+}
 
 function initCharts() {
     var accelDiv = document.getElementById('accel-chart');
@@ -430,89 +464,48 @@ function initCharts() {
         return;
     }
     
-    // Opzioni base comuni
-    function getBaseOpts(width, height) {
-        return {
-            width: width,
-            height: height,
-            cursor: {
-                show: true,
-                drag: { x: true, y: false }
-            },
-            legend: { 
-                show: true, 
-                live: true 
-            },
-            scales: {
-                x: { time: true },
-                y: { auto: true }
-            },
-            axes: [
-                { 
-                    stroke: '#97c93e', 
-                    grid: { stroke: '#333', width: 1 },
-                    values: function(u, ticks) {
-                        return ticks.map(function(v) {
-                            var d = new Date(v * 1000);
-                            return d.toLocaleTimeString('it-IT', { hour12: false });
-                        });
-                    }
-                },
-                { 
-                    stroke: '#97c93e', 
-                    grid: { stroke: '#333', width: 1 },
-                    size: 50
-                }
-            ],
-            plugins: [wheelZoomPlugin({ factor: 0.75 })]
-        };
-    }
+    // Accelerometro
+    var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
+    accelOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#ff6384', width: 2 },
+        { label: 'Y', stroke: '#36a2eb', width: 2 },
+        { label: 'Z', stroke: '#4bc0c0', width: 2 }
+    ];
+    charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
 
-    
+    // Giroscopio
+    var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
+    gyroOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#ff9f40', width: 2 },
+        { label: 'Y', stroke: '#9966ff', width: 2 },
+        { label: 'Z', stroke: '#ffcd56', width: 2 }
+    ];
+    charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
 
-// Accelerometro - SENZA fill
-var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
-accelOpts.series = [
-    { show: false },
-    { label: 'X', stroke: '#ff6384', width: 2 },
-    { label: 'Y', stroke: '#36a2eb', width: 2 },
-    { label: 'Z', stroke: '#4bc0c0', width: 2 }
-];
-charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
+    // Magnetometro
+    var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
+    magOpts.series = [
+        { show: false },
+        { label: 'X', stroke: '#c9cbcf', width: 2 },
+        { label: 'Y', stroke: '#4bc0c0', width: 2 },
+        { label: 'Z', stroke: '#ff6384', width: 2 }
+    ];
+    charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
-// Giroscopio
-var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
-gyroOpts.series = [
-    { show: false },
-    { label: 'X', stroke: '#ff9f40', width: 2 },
-    { label: 'Y', stroke: '#9966ff', width: 2 },
-    { label: 'Z', stroke: '#ffcd56', width: 2 }
-];
-charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
-
-// Magnetometro
-var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
-magOpts.series = [
-    { show: false },
-    { label: 'X', stroke: '#c9cbcf', width: 2 },
-    { label: 'Y', stroke: '#4bc0c0', width: 2 },
-    { label: 'Z', stroke: '#ff6384', width: 2 }
-];
-charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
-
-
-    // Pressioni
+    // 🔥 Pressioni (8 sensori)
     var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
     pressureOpts.series = [
-        { show: false },  // ← Nasconde Time
-        { label: 'S0', stroke: '#ff6384', width: 1.5, points: { show: false }, _stroke: '#ff6384' },
-        { label: 'S1', stroke: '#36a2eb', width: 1.5, points: { show: false }, _stroke: '#36a2eb' },
-        { label: 'S2', stroke: '#ffce56', width: 1.5, points: { show: false }, _stroke: '#ffce56' },
-        { label: 'S3', stroke: '#4bc0c0', width: 1.5, points: { show: false }, _stroke: '#4bc0c0' },
-        { label: 'S4', stroke: '#9966ff', width: 1.5, points: { show: false }, _stroke: '#9966ff' },
-        { label: 'S5', stroke: '#ff9f40', width: 1.5, points: { show: false }, _stroke: '#ff9f40' },
-        { label: 'S6', stroke: '#c9cbcf', width: 1.5, points: { show: false }, _stroke: '#c9cbcf' },
-        { label: 'S7', stroke: '#e7e9ed', width: 1.5, points: { show: false }, _stroke: '#e7e9ed' }
+        { show: false },
+        { label: 'S0', stroke: '#ff6384', width: 1.5 },
+        { label: 'S1', stroke: '#36a2eb', width: 1.5 },
+        { label: 'S2', stroke: '#ffce56', width: 1.5 },
+        { label: 'S3', stroke: '#4bc0c0', width: 1.5 },
+        { label: 'S4', stroke: '#9966ff', width: 1.5 },
+        { label: 'S5', stroke: '#ff9f40', width: 1.5 },
+        { label: 'S6', stroke: '#c9cbcf', width: 1.5 },
+        { label: 'S7', stroke: '#e7e9ed', width: 1.5 }
     ];
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
 
@@ -520,11 +513,6 @@ charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
     fixLegendMarkerColors();
 }
 
-
-// Fix colori quadrati legenda - usa colore linee
-// Fix colori quadrati legenda - VERSIONE CORRETTA
-// Fix colori quadrati legenda - VERSIONE DEFINITIVA
-// Fix colori checkbox + tick ✅
 function fixLegendMarkerColors() {
     setTimeout(function() {
         [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
@@ -537,7 +525,7 @@ function fixLegendMarkerColors() {
             
             function updateColors() {
                 seriesElements.forEach(function(seriesEl, idx) {
-                    if (idx === 0) return; // Skip Time
+                    if (idx === 0) return;
                     
                     var marker = seriesEl.querySelector('.u-marker');
                     if (!marker) return;
@@ -547,12 +535,10 @@ function fixLegendMarkerColors() {
                         var isOff = seriesEl.classList.contains('u-off');
                         
                         if (isOff) {
-                            // Serie disattivata - trasparente
                             marker.style.backgroundColor = 'transparent';
                             marker.style.borderColor = '#666';
                             marker.style.color = '#666';
                         } else {
-                            // Serie attiva - colore pieno con tick
                             marker.style.backgroundColor = seriesConfig.stroke;
                             marker.style.borderColor = seriesConfig.stroke;
                             marker.style.color = seriesConfig.stroke;
@@ -561,10 +547,8 @@ function fixLegendMarkerColors() {
                 });
             }
             
-            // Imposta colori iniziali
             updateColors();
             
-            // Observer per cambiamenti
             var observer = new MutationObserver(updateColors);
             observer.observe(legend, { 
                 attributes: true, 
@@ -575,16 +559,14 @@ function fixLegendMarkerColors() {
     }, 300);
 }
 
-
-
-
 function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
+    var hasPressure = false;
 
     // Accelerometro
-    if (data.accel_x !== undefined && data.accel_y !== undefined && data.accel_z !== undefined) {
+    if (data.accel_x !== undefined) {
         chartData.accel[0].push(timestamp);
         chartData.accel[1].push(data.accel_x);
         chartData.accel[2].push(data.accel_y);
@@ -601,7 +583,7 @@ function updateCharts(sensorName, data) {
     }
 
     // Giroscopio
-    if (data.gyro_x !== undefined && data.gyro_y !== undefined && data.gyro_z !== undefined) {
+    if (data.gyro_x !== undefined) {
         chartData.gyro[0].push(timestamp);
         chartData.gyro[1].push(data.gyro_x);
         chartData.gyro[2].push(data.gyro_y);
@@ -618,7 +600,7 @@ function updateCharts(sensorName, data) {
     }
 
     // Magnetometro
-    if (data.mag_x !== undefined && data.mag_y !== undefined && data.mag_z !== undefined) {
+    if (data.mag_x !== undefined) {
         chartData.mag[0].push(timestamp);
         chartData.mag[1].push(data.mag_x);
         chartData.mag[2].push(data.mag_y);
@@ -634,8 +616,16 @@ function updateCharts(sensorName, data) {
         charts.mag.setData(chartData.mag);
     }
 
-    // Pressioni
-    if (data.pressure_0 !== undefined) {
+    // 🔥 Pressioni (mostra solo se presenti e non zero)
+    for (var i = 0; i <= 7; i++) {
+        var key = 'pressure_' + i;
+        if (data[key] !== undefined && data[key] !== 0) {
+            hasPressure = true;
+            break;
+        }
+    }
+
+    if (hasPressure) {
         chartData.pressure[0].push(timestamp);
         for (var i = 0; i <= 7; i++) {
             var key = 'pressure_' + i;
