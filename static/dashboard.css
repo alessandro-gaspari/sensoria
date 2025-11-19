@@ -49,7 +49,6 @@
     background-color: #ff4444;
 }
 
-
 #sensor-count {
     font-size: 14px;
     color: #999;
@@ -84,24 +83,23 @@
 }
 
 #pressure-chart {
-  min-width: 320px;
-  width: 100% ;
-  min-height: 200px;
-  height: 250px ;
-  box-sizing: border-box;
+    min-width: 320px;
+    width: 100%;
+    min-height: 200px;
+    height: 250px;
+    box-sizing: border-box;
 }
 
 #pressure-chart-container {
-  min-width: 320px;
-  width: 100% ;
-  min-height: 230px;
-  height: auto;
-  box-sizing: border-box;
+    min-width: 320px;
+    width: 100%;
+    min-height: 230px;
+    height: auto;
+    box-sizing: border-box;
 }
 
-
 /* ========================================
-   LEGENDA uPlot - Quadrati con tick ✅
+   LEGENDA uPlot - Quadrati con tick perfetti
    ======================================== */
 
 .u-legend {
@@ -114,7 +112,6 @@
     overflow-x: auto;
 }
 
-/* Nascondi Time */
 .u-legend .u-series:first-child {
     display: none !important;
 }
@@ -129,36 +126,37 @@
     flex-shrink: 0 !important;
 }
 
-/* Checkbox con tick ✅ */
-.u-legend .u-marker {
+.u-legend .u-marker,
+.u-legend .u-series.u-off .u-marker {
     width: 16px !important;
     height: 16px !important;
     border-radius: 3px !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border: 2px solid #fff !important;
-    background: #fff !important;      /* Sempre bianco */
-    color: #fff !important;           /* Tick bianco */
+    border: 3px solid #fff !important;    /* bordo spesso e bianco */
+    background: transparent !important;    /* sempre trasparente */
+    color: #fff !important;
     position: relative !important;
-    font-size: 12px !important;
+    font-size: 16px !important;
+    box-sizing: border-box !important;
 }
 
-/* Tick ✅ quando attivo */
+/* Tick bianco solo se attivo */
 .u-legend .u-series:not(.u-off) .u-marker::after {
     content: '✓' !important;
     color: #fff !important;
+    font-size: 16px !important;
     font-weight: bold !important;
-    font-size: 12px !important;
+    display: block;
+    position: absolute !important;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -55%);
+    line-height: 1;
+    pointer-events: none;
 }
-/* Serie disattivata - checkbox vuoto */
-.u-legend .u-series.u-off .u-marker {
-    background: #fff !important;
-    border: 2px solid #fff !important;
-    color: #fff !important;
-    /* niente opacity, niente colore spento! */
-}
-
+/* Nessun tick se off */
 .u-legend .u-series.u-off .u-marker::after {
     content: none !important;
 }
@@ -169,20 +167,6 @@
     color: #97c93e !important;
     font-weight: 600 !important;
 }
-
-/* Label */
-.u-legend .u-label {
-    color: #97c93e !important;
-    font-weight: 600 !important;
-}
-
-/* Valore */
-.u-legend .u-value {
-    color: #97c93e !important;
-    font-family: 'Courier New', monospace !important;
-    font-weight: 600 !important;
-}
-
 
 /* Card sensore - INGRANDITA */
 .sensor-col {
