@@ -411,6 +411,13 @@ function initCharts() {
         return;
     }
 
+    // Mostra il container PRIMA di inizializzare
+    document.getElementById('pressure-chart-container').style.display = 'block';
+
+    // Forza dimensioni minime
+    pressureDiv.style.minWidth = '400px';
+    pressureDiv.style.minHeight = '250px';
+
     // Accelerometro
     var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
     accelOpts.series = [
@@ -441,21 +448,61 @@ function initCharts() {
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
-    // PRESSIONI - range fisso 0-1024
-    var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
-    pressureOpts.series = [
-        { show: false },
-        { label: 'S0', stroke: '#ff6384', width: 3 },
-        { label: 'S1', stroke: '#36a2eb', width: 3 },
-        { label: 'S2', stroke: '#ffce56', width: 3 }
-    ];
-    pressureOpts.scales.y = { auto: true };
+    // PRESSIONI - forza width esplicito
+    console.log('Pressure div width:', pressureDiv.offsetWidth);
     
-    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+    var pressureOpts = {
+        width: Math.max(pressureDiv.offsetWidth, 400),  // Minimo 400px
+        height: 250,
+        cursor: { show: true, drag: { x: true, y: false } },
+        legend: { show: true, live: true },
+        scales: {
+            x: { time: true },
+            y: { auto: false, range: [0, 1024] }
+        },
+        axes: [
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                values: function(u, ticks) {
+                    return ticks.map(function(v) {
+                        var d = new Date(v * 1000);
+                        return d.toLocaleTimeString('it-IT', { hour12: false });
+                    });
+                }
+            },
+            { 
+                stroke: '#97c93e', 
+                grid: { stroke: '#333', width: 1 },
+                size: 50
+            }
+        ],
+        series: [
+            {},  // Asse X (time) - IMPORTANTE: oggetto vuoto, non { show: false }
+            { label: 'S0', stroke: '#ff6384', width: 3 },
+            { label: 'S1', stroke: '#36a2eb', width: 3 },
+            { label: 'S2', stroke: '#ffce56', width: 3 }
+        ],
+        plugins: [wheelZoomPlugin({ factor: 0.75 })]
+    };
+
+    // Inizializza con 2 punti minimi
+    var now = Date.now() / 1000;
+    var initData = [
+        [now - 1, now],
+        [512, 512],
+        [512, 512],
+        [512, 512]
+    ];
+
+    charts.pressure = new uPlot(pressureOpts, initData, pressureDiv);
 
     console.log('✅ Grafici inizializzati');
+    console.log('📊 Pressure SVG:', document.querySelector('#pressure-chart svg'));
+    
     fixLegendMarkerColors();
 }
+
 
 function fixLegendMarkerColors() {
     setTimeout(function() {
