@@ -134,19 +134,20 @@
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    border: 3px solid #fff !important;    /* bordo spesso e bianco */
+    border: 2px solid #fff !important;    /* bordo spesso e bianco */
     background: transparent !important;    /* sempre trasparente */
     color: #fff !important;
     position: relative !important;
     font-size: 16px !important;
     box-sizing: border-box !important;
+    opacity: 1 !important;
 }
 
 /* Tick bianco solo se attivo */
 .u-legend .u-series:not(.u-off) .u-marker::after {
     content: '✓' !important;
     color: #fff !important;
-    font-size: 16px !important;
+    font-size: 13px !important;
     font-weight: bold !important;
     display: block;
     position: absolute !important;
@@ -162,7 +163,9 @@
 }
 
 .u-legend .u-series .u-label,
-.u-legend .u-series .u-value {
+.u-legend .u-series .u-value,
+.u-legend .u-series.u-off .u-label,
+.u-legend .u-series.u-off .u-value {
     opacity: 1 !important;
     color: #97c93e !important;
     font-weight: 600 !important;
