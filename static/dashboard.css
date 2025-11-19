@@ -171,6 +171,16 @@
     font-weight: 600 !important;
 }
 
+/* Disabilita il dimming automatico delle serie non nascoste */
+.uplot .u-series:not(.u-off) {
+    opacity: 1 !important;
+}
+
+/* E anche quando una serie è nascosta, le altre NON si dimmerano */
+.uplot .u-series.u-off ~ .u-series {
+    opacity: 1 !important;
+}
+
 /* Card sensore - INGRANDITA */
 .sensor-col {
     background-color: #1a1a1a;
