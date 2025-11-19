@@ -137,8 +137,9 @@
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-    flex-shrink: 0 !important;
-    border: 2px solid currentColor !important;
+    border: 2px solid #fff !important;
+    background: #fff !important;      /* Sempre bianco */
+    color: #fff !important;           /* Tick bianco */
     position: relative !important;
     font-size: 12px !important;
 }
@@ -146,25 +147,24 @@
 /* Tick ✅ quando attivo */
 .u-legend .u-series:not(.u-off) .u-marker::after {
     content: '✓' !important;
-    color: white !important;
+    color: #fff !important;
     font-weight: bold !important;
     font-size: 12px !important;
 }
-
 /* Serie disattivata - checkbox vuoto */
 .u-legend .u-series.u-off .u-marker {
-    background-color: transparent !important;
-    border-color: #97c93e !important;   /* uguale al colore attivo, non grigio! */
-    color: #97c93e !important;           /* forza colore quadratino acceso */
-    /* niente opacity */
+    background: #fff !important;
+    border: 2px solid #fff !important;
+    color: #fff !important;
+    /* niente opacity, niente colore spento! */
 }
 
 .u-legend .u-series.u-off .u-marker::after {
     content: none !important;
 }
 
-.u-legend .u-series.u-off .u-label,
-.u-legend .u-series.u-off .u-value {
+.u-legend .u-series .u-label,
+.u-legend .u-series .u-value {
     opacity: 1 !important;
     color: #97c93e !important;
     font-weight: 600 !important;
