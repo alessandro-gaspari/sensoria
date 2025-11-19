@@ -154,7 +154,9 @@
 /* Serie disattivata - checkbox vuoto */
 .u-legend .u-series.u-off .u-marker {
     background-color: transparent !important;
-    border-color: #666 !important;
+    border-color: #97c93e !important;   /* uguale al colore attivo, non grigio! */
+    color: #97c93e !important;           /* forza colore quadratino acceso */
+    /* niente opacity */
 }
 
 .u-legend .u-series.u-off .u-marker::after {
@@ -165,6 +167,7 @@
 .u-legend .u-series.u-off .u-value {
     opacity: 1 !important;
     color: #97c93e !important;
+    font-weight: 600 !important;
 }
 
 /* Label */
