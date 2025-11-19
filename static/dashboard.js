@@ -442,6 +442,7 @@ function initCharts() {
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
+    // PRESSIONI - inizializza con array vuoti
     var pressureOpts = {
         width: pressureDiv.offsetWidth,
         height: 250,
@@ -452,11 +453,12 @@ function initCharts() {
             y: { 
                 auto: true,
                 range: function(u, dataMin, dataMax) {
-                    if (dataMax <= dataMin) return [0, 1024];
+                    // Se non ci sono dati validi, usa range fisso
+                    if (dataMax <= dataMin || dataMax === 0) return [0, 1024];
                     var pad = (dataMax - dataMin) * 0.1;
                     return [
                         Math.max(0, dataMin - pad),
-                        dataMax + pad
+                        Math.min(1100, dataMax + pad)
                     ];
                 }
             }
@@ -480,114 +482,102 @@ function initCharts() {
         ],
         series: [
             { show: false },
-            { label: 'S0', stroke: '#ff6384', width: 2, points: { show: false } },
-            { label: 'S1', stroke: '#36a2eb', width: 2, points: { show: false } },
-            { label: 'S2', stroke: '#ffce56', width: 2, points: { show: false } }
+            { label: 'S0', stroke: '#ff6384', width: 3, points: { show: false } },
+            { label: 'S1', stroke: '#36a2eb', width: 3, points: { show: false } },
+            { label: 'S2', stroke: '#ffce56', width: 3, points: { show: false } }
         ],
         plugins: [wheelZoomPlugin({ factor: 0.75 })]
     };
 
-    var initialData = [
-        [Date.now() / 1000],
-        [500], [500], [500]
-    ];
+    // Inizializza con array VUOTI invece di dati dummy
+    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
+    
+    // NON mostrare subito il container, aspetta i dati reali
+    // document.getElementById('pressure-chart-container').style.display = 'block';
 
-    charts.pressure = new uPlot(pressureOpts, initialData, pressureDiv);
-    document.getElementById('pressure-chart-container').style.display = 'block';
-
+    console.log('✅ Grafici inizializzati, pressure chart pronto per i dati');
     fixLegendMarkerColors();
 }
 
-function fixLegendMarkerColors() {
-    setTimeout(function() {
-        [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
-            if (!chart) return;
-            var legend = chart.root.querySelector('.u-legend');
-            if (!legend) return;
-            var seriesElements = legend.querySelectorAll('.u-series');
-            function updateColors() {
-                seriesElements.forEach(function(seriesEl, idx) {
-                    if (idx === 0) return;
-                    var marker = seriesEl.querySelector('.u-marker');
-                    if (!marker) return;
-                    var seriesConfig = chart.series[idx];
-                    if (seriesConfig && seriesConfig.stroke) {
-                        var isOff = seriesEl.classList.contains('u-off');
-                        if (isOff) {
-                            marker.style.backgroundColor = 'transparent';
-                            marker.style.borderColor = '#666';
-                            marker.style.color = '#666';
-                        } else {
-                            marker.style.backgroundColor = seriesConfig.stroke;
-                            marker.style.borderColor = seriesConfig.stroke;
-                            marker.style.color = seriesConfig.stroke;
+
+    function fixLegendMarkerColors() {
+        setTimeout(function() {
+            [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
+                if (!chart) return;
+                var legend = chart.root.querySelector('.u-legend');
+                if (!legend) return;
+                var seriesElements = legend.querySelectorAll('.u-series');
+                function updateColors() {
+                    seriesElements.forEach(function(seriesEl, idx) {
+                        if (idx === 0) return;
+                        var marker = seriesEl.querySelector('.u-marker');
+                        if (!marker) return;
+                        var seriesConfig = chart.series[idx];
+                        if (seriesConfig && seriesConfig.stroke) {
+                            var isOff = seriesEl.classList.contains('u-off');
+                            if (isOff) {
+                                marker.style.backgroundColor = 'transparent';
+                                marker.style.borderColor = '#666';
+                                marker.style.color = '#666';
+                            } else {
+                                marker.style.backgroundColor = seriesConfig.stroke;
+                                marker.style.borderColor = seriesConfig.stroke;
+                                marker.style.color = seriesConfig.stroke;
+                            }
                         }
-                    }
+                    });
+                }
+                updateColors();
+                var observer = new MutationObserver(updateColors);
+                observer.observe(legend, { 
+                    attributes: true, 
+                    subtree: true, 
+                    attributeFilter: ['class'] 
+                });
+            });
+        }, 300);
+    }
+    
+    function updateCharts(sensorName, data) {
+        if (selectedSensor !== sensorName || !chartsInitialized) return;
+
+        var timestamp = Date.now() / 1000;
+
+        // ... codice IMU invariato ...
+
+        // PRESSIONI con debug
+        if (data.pressure_0 !== undefined) {
+            chartData.pressure[0].push(timestamp);
+            chartData.pressure[1].push(data.pressure_0 || 0);
+            chartData.pressure[2].push(data.pressure_1 || 0);
+            chartData.pressure[3].push(data.pressure_2 || 0);
+            
+            // DEBUG: stampa ogni 50 aggiornamenti
+            if (chartData.pressure[0].length % 50 === 0) {
+                console.log('📊 Pressure update #' + chartData.pressure[0].length, {
+                    S0: data.pressure_0,
+                    S1: data.pressure_1,
+                    S2: data.pressure_2,
+                    arrayLengths: [
+                        chartData.pressure[0].length,
+                        chartData.pressure[1].length,
+                        chartData.pressure[2].length,
+                        chartData.pressure[3].length
+                    ]
                 });
             }
-            updateColors();
-            var observer = new MutationObserver(updateColors);
-            observer.observe(legend, { 
-                attributes: true, 
-                subtree: true, 
-                attributeFilter: ['class'] 
-            });
-        });
-    }, 300);
-}
-
-function updateCharts(sensorName, data) {
-    if (selectedSensor !== sensorName || !chartsInitialized) return;
-
-    var timestamp = Date.now() / 1000;
-
-    if (data.accel_x !== undefined) {
-        chartData.accel[0].push(timestamp);
-        chartData.accel[1].push(data.accel_x);
-        chartData.accel[2].push(data.accel_y);
-        chartData.accel[3].push(data.accel_z);
-        if (chartData.accel[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
+            
+            if (chartData.pressure[0].length > maxDataPoints) {
+                for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
+            }
+            
+            charts.pressure.setData(chartData.pressure);
+            document.getElementById('pressure-chart-container').style.display = 'block';
+        } else {
+            document.getElementById('pressure-chart-container').style.display = 'none';
         }
-        charts.accel.setData(chartData.accel);
     }
 
-    if (data.gyro_x !== undefined) {
-        chartData.gyro[0].push(timestamp);
-        chartData.gyro[1].push(data.gyro_x);
-        chartData.gyro[2].push(data.gyro_y);
-        chartData.gyro[3].push(data.gyro_z);
-        if (chartData.gyro[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
-        }
-        charts.gyro.setData(chartData.gyro);
-    }
-
-    if (data.mag_x !== undefined) {
-        chartData.mag[0].push(timestamp);
-        chartData.mag[1].push(data.mag_x);
-        chartData.mag[2].push(data.mag_y);
-        chartData.mag[3].push(data.mag_z);
-        if (chartData.mag[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
-        }
-        charts.mag.setData(chartData.mag);
-    }
-
-    if (data.pressure_0 !== undefined) {
-        chartData.pressure[0].push(timestamp);
-        chartData.pressure[1].push(data.pressure_0 || 0);
-        chartData.pressure[2].push(data.pressure_1 || 0);
-        chartData.pressure[3].push(data.pressure_2 || 0);
-        if (chartData.pressure[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
-        }
-        charts.pressure.setData(chartData.pressure);
-        document.getElementById('pressure-chart-container').style.display = 'block';
-    } else {
-        document.getElementById('pressure-chart-container').style.display = 'none';
-    }
-}
 
 function updateSensorSelector() {
     var select = document.getElementById('chart-sensor-select');
