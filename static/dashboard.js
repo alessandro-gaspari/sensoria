@@ -442,7 +442,8 @@ function initCharts() {
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
-    // PRESSIONI - inizializza con array vuoti
+    // PRESSIONI - con range Y FISSO e dati iniziali
+    var now = Date.now() / 1000;
     var pressureOpts = {
         width: pressureDiv.offsetWidth,
         height: 250,
@@ -451,16 +452,8 @@ function initCharts() {
         scales: {
             x: { time: true },
             y: { 
-                auto: true,
-                range: function(u, dataMin, dataMax) {
-                    // Se non ci sono dati validi, usa range fisso
-                    if (dataMax <= dataMin || dataMax === 0) return [0, 1024];
-                    var pad = (dataMax - dataMin) * 0.1;
-                    return [
-                        Math.max(0, dataMin - pad),
-                        Math.min(1100, dataMax + pad)
-                    ];
-                }
+                auto: false,  // FISSO invece di auto
+                range: [0, 1024]  // Range fisso 0-1024
             }
         },
         axes: [
@@ -482,20 +475,26 @@ function initCharts() {
         ],
         series: [
             { show: false },
-            { label: 'S0', stroke: '#ff6384', width: 3, points: { show: false } },
-            { label: 'S1', stroke: '#36a2eb', width: 3, points: { show: false } },
-            { label: 'S2', stroke: '#ffce56', width: 3, points: { show: false } }
+            { label: 'S0', stroke: '#ff6384', width: 3 },
+            { label: 'S1', stroke: '#36a2eb', width: 3 },
+            { label: 'S2', stroke: '#ffce56', width: 3 }
         ],
         plugins: [wheelZoomPlugin({ factor: 0.75 })]
     };
 
-    // Inizializza con array VUOTI invece di dati dummy
-    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
-    
-    // NON mostrare subito il container, aspetta i dati reali
-    // document.getElementById('pressure-chart-container').style.display = 'block';
+    // Inizializza con 2 punti per forzare il rendering
+    var initialData = [
+        [now - 1, now],
+        [500, 500],
+        [500, 500],
+        [500, 500]
+    ];
 
-    console.log('✅ Grafici inizializzati, pressure chart pronto per i dati');
+    charts.pressure = new uPlot(pressureOpts, initialData, pressureDiv);
+    document.getElementById('pressure-chart-container').style.display = 'block';
+
+    console.log('✅ Grafici inizializzati, pressure chart pronto');
+    console.log('📊 Pressure div dimensions:', pressureDiv.offsetWidth, 'x', pressureDiv.offsetHeight);
     fixLegendMarkerColors();
 }
 
@@ -538,45 +537,48 @@ function initCharts() {
         }, 300);
     }
     
-    function updateCharts(sensorName, data) {
-        if (selectedSensor !== sensorName || !chartsInitialized) return;
+var firstPressureUpdate = true;  // Aggiungi questa variabile globale in cima
 
-        var timestamp = Date.now() / 1000;
+function updateCharts(sensorName, data) {
+    if (selectedSensor !== sensorName || !chartsInitialized) return;
 
-        // ... codice IMU invariato ...
+    var timestamp = Date.now() / 1000;
 
-        // PRESSIONI con debug
-        if (data.pressure_0 !== undefined) {
-            chartData.pressure[0].push(timestamp);
-            chartData.pressure[1].push(data.pressure_0 || 0);
-            chartData.pressure[2].push(data.pressure_1 || 0);
-            chartData.pressure[3].push(data.pressure_2 || 0);
-            
-            // DEBUG: stampa ogni 50 aggiornamenti
-            if (chartData.pressure[0].length % 50 === 0) {
-                console.log('📊 Pressure update #' + chartData.pressure[0].length, {
-                    S0: data.pressure_0,
-                    S1: data.pressure_1,
-                    S2: data.pressure_2,
-                    arrayLengths: [
-                        chartData.pressure[0].length,
-                        chartData.pressure[1].length,
-                        chartData.pressure[2].length,
-                        chartData.pressure[3].length
-                    ]
-                });
-            }
-            
-            if (chartData.pressure[0].length > maxDataPoints) {
-                for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
-            }
-            
-            charts.pressure.setData(chartData.pressure);
-            document.getElementById('pressure-chart-container').style.display = 'block';
-        } else {
-            document.getElementById('pressure-chart-container').style.display = 'none';
+    // ... codice accel, gyro, mag invariato ...
+
+    // PRESSIONI
+    if (data.pressure_0 !== undefined) {
+        // Reset dati iniziali dummy al primo update reale
+        if (firstPressureUpdate) {
+            chartData.pressure = [[], [], [], []];
+            firstPressureUpdate = false;
+            console.log('🔄 Reset dati dummy, inizio streaming reale');
         }
+        
+        chartData.pressure[0].push(timestamp);
+        chartData.pressure[1].push(data.pressure_0 || 0);
+        chartData.pressure[2].push(data.pressure_1 || 0);
+        chartData.pressure[3].push(data.pressure_2 || 0);
+        
+        if (chartData.pressure[0].length % 50 === 0) {
+            console.log('📊 Pressure update #' + chartData.pressure[0].length, {
+                S0: data.pressure_0,
+                S1: data.pressure_1,
+                S2: data.pressure_2
+            });
+        }
+        
+        if (chartData.pressure[0].length > maxDataPoints) {
+            for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
+        }
+        
+        charts.pressure.setData(chartData.pressure);
+        document.getElementById('pressure-chart-container').style.display = 'block';
+    } else {
+        document.getElementById('pressure-chart-container').style.display = 'none';
     }
+}
+
 
 
 function updateSensorSelector() {
