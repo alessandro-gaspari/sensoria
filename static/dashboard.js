@@ -231,7 +231,7 @@ function createSensorCardDynamic(sensorName, data) {
     }
     if (pressureKeys.length > 0) {
         html += '<div class="sensor-data-section">' +
-                '<div class="sensor-data-section-title">👣 Pressioni (S0-S2)</div>';
+                '<div class="sensor-data-section-title">⬇️ Pressioni (S0-S2)</div>';
         pressureKeys.sort().forEach(function(key) {
             html += '<div class="sensor-data-row">' +
                     '<span class="sensor-data-label">' + key + ':</span>' +
@@ -449,7 +449,7 @@ function initCharts() {
         { label: 'S1', stroke: '#36a2eb', width: 3 },
         { label: 'S2', stroke: '#ffce56', width: 3 }
     ];
-    pressureOpts.scales.y = { auto: false, range: [0, 1024] };
+    pressureOpts.scales.y = { auto: true };
     
     charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
 
