@@ -84,8 +84,19 @@
 }
 
 #pressure-chart {
-    width: 100% !important;
-    height: 250px !important;
+  min-width: 320px;
+  width: 100% ;
+  min-height: 200px;
+  height: 250px ;
+  box-sizing: border-box;
+}
+
+#pressure-chart-container {
+  min-width: 320px;
+  width: 100% ;
+  min-height: 230px;
+  height: auto;
+  box-sizing: border-box;
 }
 
 
