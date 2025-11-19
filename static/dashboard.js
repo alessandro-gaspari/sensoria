@@ -454,7 +454,7 @@ function initCharts() {
     var pressureOpts = {
         width: Math.max(pressureDiv.offsetWidth, 400),  // Minimo 400px
         height: 250,
-        cursor: { show: true, drag: { x: true, y: false } },
+        cursor: { show: true, drag: { x: false, y: false } },
         legend: { show: true, live: true },
         scales: {
             x: { time: true },

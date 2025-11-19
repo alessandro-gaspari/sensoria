@@ -154,7 +154,7 @@
 /* Serie disattivata - checkbox vuoto */
 .u-legend .u-series.u-off .u-marker {
     background-color: transparent !important;
-    opacity: 0.4 !important;
+    border-color: #666 !important;
 }
 
 .u-legend .u-series.u-off .u-marker::after {
@@ -163,7 +163,8 @@
 
 .u-legend .u-series.u-off .u-label,
 .u-legend .u-series.u-off .u-value {
-    opacity: 0.4 !important;
+    opacity: 1 !important;
+    color: #97c93e !important;
 }
 
 /* Label */
