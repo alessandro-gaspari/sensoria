@@ -27,7 +27,7 @@ var chartData = {
     accel: [[], [], [], []],
     gyro: [[], [], [], []],
     mag: [[], [], [], []],
-    pressure: [[], [], [], []]  // [timestamps, S0, S1, S2]
+    pressure: [[], [], [], []]
 };
 
 var maxDataPoints = 500;
@@ -57,11 +57,9 @@ function startRenderLoop() {
     function render() {
         var now = performance.now();
         var sensorCount = Object.keys(sensors).length;
-
         var renderInterval = 33;
         if (sensorCount >= 4) renderInterval = 50;
         if (sensorCount >= 6) renderInterval = 66;
-
         if (Object.keys(pendingUpdates).length > 0 && (now - lastUpdateTime > renderInterval)) {
             batchUpdateDOM();
             lastUpdateTime = now;
@@ -161,10 +159,8 @@ function updateSensorCardDynamic(sensorName, data) {
     var cached = domCache[cacheKey];
     Object.keys(data).forEach(function(key) {
         if (key === 'timestamp' || key === 'sensor_name') return;
-
         var newValue = Math.round(data[key]);
         var oldValue = cached.lastData[key];
-
         if (newValue !== oldValue) {
             var element = cached.valueElements[key];
             if (element) {
@@ -415,6 +411,7 @@ function initCharts() {
         return;
     }
 
+    // Accelerometro
     var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
     accelOpts.series = [
         { show: false },
@@ -424,6 +421,7 @@ function initCharts() {
     ];
     charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
 
+    // Giroscopio
     var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
     gyroOpts.series = [
         { show: false },
@@ -433,6 +431,7 @@ function initCharts() {
     ];
     charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
 
+    // Magnetometro
     var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
     magOpts.series = [
         { show: false },
@@ -442,144 +441,116 @@ function initCharts() {
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
 
-    // PRESSIONI - con range Y FISSO e dati iniziali
-    var now = Date.now() / 1000;
-    var pressureOpts = {
-        width: pressureDiv.offsetWidth,
-        height: 250,
-        cursor: { show: true, drag: { x: true, y: false } },
-        legend: { show: true, live: true },
-        scales: {
-            x: { time: true },
-            y: { 
-                auto: false,  // FISSO invece di auto
-                range: [0, 1024]  // Range fisso 0-1024
-            }
-        },
-        axes: [
-            { 
-                stroke: '#97c93e', 
-                grid: { stroke: '#333', width: 1 },
-                values: function(u, ticks) {
-                    return ticks.map(function(v) {
-                        var d = new Date(v * 1000);
-                        return d.toLocaleTimeString('it-IT', { hour12: false });
-                    });
-                }
-            },
-            { 
-                stroke: '#97c93e', 
-                grid: { stroke: '#333', width: 1 },
-                size: 50
-            }
-        ],
-        series: [
-            { show: false },
-            { label: 'S0', stroke: '#ff6384', width: 3 },
-            { label: 'S1', stroke: '#36a2eb', width: 3 },
-            { label: 'S2', stroke: '#ffce56', width: 3 }
-        ],
-        plugins: [wheelZoomPlugin({ factor: 0.75 })]
-    };
-
-    // Inizializza con 2 punti per forzare il rendering
-    var initialData = [
-        [now - 1, now],
-        [500, 500],
-        [500, 500],
-        [500, 500]
+    // PRESSIONI - range fisso 0-1024
+    var pressureOpts = getBaseOpts(pressureDiv.offsetWidth, 250);
+    pressureOpts.series = [
+        { show: false },
+        { label: 'S0', stroke: '#ff6384', width: 3 },
+        { label: 'S1', stroke: '#36a2eb', width: 3 },
+        { label: 'S2', stroke: '#ffce56', width: 3 }
     ];
+    pressureOpts.scales.y = { auto: false, range: [0, 1024] };
+    
+    charts.pressure = new uPlot(pressureOpts, chartData.pressure, pressureDiv);
 
-    charts.pressure = new uPlot(pressureOpts, initialData, pressureDiv);
-    document.getElementById('pressure-chart-container').style.display = 'block';
-
-    console.log('✅ Grafici inizializzati, pressure chart pronto');
-    console.log('📊 Pressure div dimensions:', pressureDiv.offsetWidth, 'x', pressureDiv.offsetHeight);
+    console.log('✅ Grafici inizializzati');
     fixLegendMarkerColors();
 }
 
-
-    function fixLegendMarkerColors() {
-        setTimeout(function() {
-            [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
-                if (!chart) return;
-                var legend = chart.root.querySelector('.u-legend');
-                if (!legend) return;
-                var seriesElements = legend.querySelectorAll('.u-series');
-                function updateColors() {
-                    seriesElements.forEach(function(seriesEl, idx) {
-                        if (idx === 0) return;
-                        var marker = seriesEl.querySelector('.u-marker');
-                        if (!marker) return;
-                        var seriesConfig = chart.series[idx];
-                        if (seriesConfig && seriesConfig.stroke) {
-                            var isOff = seriesEl.classList.contains('u-off');
-                            if (isOff) {
-                                marker.style.backgroundColor = 'transparent';
-                                marker.style.borderColor = '#666';
-                                marker.style.color = '#666';
-                            } else {
-                                marker.style.backgroundColor = seriesConfig.stroke;
-                                marker.style.borderColor = seriesConfig.stroke;
-                                marker.style.color = seriesConfig.stroke;
-                            }
+function fixLegendMarkerColors() {
+    setTimeout(function() {
+        [charts.accel, charts.gyro, charts.mag, charts.pressure].forEach(function(chart) {
+            if (!chart) return;
+            var legend = chart.root.querySelector('.u-legend');
+            if (!legend) return;
+            var seriesElements = legend.querySelectorAll('.u-series');
+            function updateColors() {
+                seriesElements.forEach(function(seriesEl, idx) {
+                    if (idx === 0) return;
+                    var marker = seriesEl.querySelector('.u-marker');
+                    if (!marker) return;
+                    var seriesConfig = chart.series[idx];
+                    if (seriesConfig && seriesConfig.stroke) {
+                        var isOff = seriesEl.classList.contains('u-off');
+                        if (isOff) {
+                            marker.style.backgroundColor = 'transparent';
+                            marker.style.borderColor = '#666';
+                            marker.style.color = '#666';
+                        } else {
+                            marker.style.backgroundColor = seriesConfig.stroke;
+                            marker.style.borderColor = seriesConfig.stroke;
+                            marker.style.color = seriesConfig.stroke;
                         }
-                    });
-                }
-                updateColors();
-                var observer = new MutationObserver(updateColors);
-                observer.observe(legend, { 
-                    attributes: true, 
-                    subtree: true, 
-                    attributeFilter: ['class'] 
+                    }
                 });
+            }
+            updateColors();
+            var observer = new MutationObserver(updateColors);
+            observer.observe(legend, { 
+                attributes: true, 
+                subtree: true, 
+                attributeFilter: ['class'] 
             });
-        }, 300);
-    }
-    
-var firstPressureUpdate = true;  // Aggiungi questa variabile globale in cima
+        });
+    }, 300);
+}
 
 function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
 
-    // ... codice accel, gyro, mag invariato ...
+    // Accelerometro
+    if (data.accel_x !== undefined) {
+        chartData.accel[0].push(timestamp);
+        chartData.accel[1].push(data.accel_x);
+        chartData.accel[2].push(data.accel_y);
+        chartData.accel[3].push(data.accel_z);
+        if (chartData.accel[0].length > maxDataPoints) {
+            for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
+        }
+        charts.accel.setData(chartData.accel);
+    }
+
+    // Giroscopio
+    if (data.gyro_x !== undefined) {
+        chartData.gyro[0].push(timestamp);
+        chartData.gyro[1].push(data.gyro_x);
+        chartData.gyro[2].push(data.gyro_y);
+        chartData.gyro[3].push(data.gyro_z);
+        if (chartData.gyro[0].length > maxDataPoints) {
+            for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
+        }
+        charts.gyro.setData(chartData.gyro);
+    }
+
+    // Magnetometro
+    if (data.mag_x !== undefined) {
+        chartData.mag[0].push(timestamp);
+        chartData.mag[1].push(data.mag_x);
+        chartData.mag[2].push(data.mag_y);
+        chartData.mag[3].push(data.mag_z);
+        if (chartData.mag[0].length > maxDataPoints) {
+            for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
+        }
+        charts.mag.setData(chartData.mag);
+    }
 
     // PRESSIONI
     if (data.pressure_0 !== undefined) {
-        // Reset dati iniziali dummy al primo update reale
-        if (firstPressureUpdate) {
-            chartData.pressure = [[], [], [], []];
-            firstPressureUpdate = false;
-            console.log('🔄 Reset dati dummy, inizio streaming reale');
-        }
-        
         chartData.pressure[0].push(timestamp);
         chartData.pressure[1].push(data.pressure_0 || 0);
         chartData.pressure[2].push(data.pressure_1 || 0);
         chartData.pressure[3].push(data.pressure_2 || 0);
-        
-        if (chartData.pressure[0].length % 50 === 0) {
-            console.log('📊 Pressure update #' + chartData.pressure[0].length, {
-                S0: data.pressure_0,
-                S1: data.pressure_1,
-                S2: data.pressure_2
-            });
-        }
-        
         if (chartData.pressure[0].length > maxDataPoints) {
             for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
         }
-        
         charts.pressure.setData(chartData.pressure);
         document.getElementById('pressure-chart-container').style.display = 'block';
     } else {
         document.getElementById('pressure-chart-container').style.display = 'none';
     }
 }
-
-
 
 function updateSensorSelector() {
     var select = document.getElementById('chart-sensor-select');
