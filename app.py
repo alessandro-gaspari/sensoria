@@ -12,8 +12,8 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # ✅ Inizializza TCP forwarder per il server del prof
 tcp_forwarder = TCPDataForwarder(
-    host='lambda-iot.uniud.it',  # Cambia con IP remoto se il server del prof è su altra macchina
-    port=9001
+    host='lambda-iot.uniud.it',
+    port=22729  # ✅ PORTA CORRETTA
 )
 tcp_forwarder.start()
 
@@ -87,6 +87,9 @@ def handle_sensor_update(data):
         if sensor_data.get('accel_x') is not None:
             print(f"📊 {sensor_name}: accel({sensor_data.get('accel_x')}, {sensor_data.get('accel_y')}, {sensor_data.get('accel_z')})")
         
+        # ✅ Log conferma invio TCP
+        print(f"📤 Inoltrato a TCP server: {sensor_name}")
+        
     except Exception as e:
         print(f"❌ Errore handle_sensor_update: {e}")
         import traceback
@@ -102,13 +105,13 @@ def handle_sensor_disconnected(data):
         print(f"🔌 Sensore disconnesso: {sensor_name}")
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     
     print('=' * 60)
     print('🚀 Sensoria Server')
     print('=' * 60)
     print(f'📡 Server Flask su porta {port}')
-    print(f'🔗 TCP Forwarder -> localhost:9001')
+    print(f'🔗 TCP Forwarder -> lambda-iot.uniud.it:22729')  
     print('=' * 60)
     
     try:
