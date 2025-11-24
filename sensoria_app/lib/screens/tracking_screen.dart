@@ -25,8 +25,26 @@ class _TrackingScreenState extends State<TrackingScreen> {
   void _stopStreamingAndExit() async {
     debugPrint('🛑 STOP STREAMING');
     final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+    
+    // Ferma tracking se attivo
+    if (streamingManager.isTrackingActive) {
+      streamingManager.stopTracking();
+    }
+    
+    // Ferma streaming
     await streamingManager.stopAll();
+    
     if (mounted) Navigator.of(context).pop();
+  }
+
+  void _toggleTracking() {
+    final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+    
+    if (streamingManager.isTrackingActive) {
+      streamingManager.stopTracking();
+    } else {
+      streamingManager.startTracking();
+    }
   }
 
   Color _getColorByIndex(int index) {
@@ -63,6 +81,28 @@ class _TrackingScreenState extends State<TrackingScreen> {
         title: const Text('📊 Sensori In Tempo Reale'),
         centerTitle: true,
         elevation: 0,
+        actions: [
+          // ✅ BOTTONE TRACKING NELL'APPBAR
+          Consumer<StreamingManager>(
+            builder: (context, streamingManager, _) {
+              return IconButton(
+                icon: Icon(
+                  streamingManager.isTrackingActive 
+                    ? Icons.stop_circle 
+                    : Icons.fiber_manual_record,
+                  color: streamingManager.isTrackingActive 
+                    ? Colors.red 
+                    : Colors.white,
+                  size: 28,
+                ),
+                onPressed: _toggleTracking,
+                tooltip: streamingManager.isTrackingActive 
+                  ? 'Stop Tracking' 
+                  : 'Avvia Tracking',
+              );
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Consumer<StreamingManager>(
@@ -72,22 +112,80 @@ class _TrackingScreenState extends State<TrackingScreen> {
 
             return Column(
               children: [
+                // ✅ HEADER CON STATO STREAMING + TRACKING
                 Container(
                   padding: const EdgeInsets.all(12),
                   color: Colors.grey[900],
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Column(
                     children: [
-                      Text(
-                        '📡 Sensori: ${allSensorData.length}',
-                        style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '📡 Sensori: ${allSensorData.length}',
+                            style: const TextStyle(
+                              color: Colors.white, 
+                              fontSize: 14, 
+                              fontWeight: FontWeight.w600
+                            ),
+                          ),
+                          Text(
+                            streamingManager.isStreaming ? '🟢 ATTIVO' : '🔴 FERMO',
+                            style: TextStyle(
+                              color: streamingManager.isStreaming 
+                                ? Colors.green 
+                                : Colors.red,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
                       ),
-                      Text(
-                        streamingManager.isStreaming ? '🟢 ATTIVO' : '🔴 FERMO',
-                        style: TextStyle(
-                          color: streamingManager.isStreaming ? Colors.green : Colors.red,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                      // ✅ STATO TRACKING
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12, 
+                          vertical: 6
+                        ),
+                        decoration: BoxDecoration(
+                          color: streamingManager.isTrackingActive 
+                            ? Colors.red.withOpacity(0.2)
+                            : Colors.grey.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: streamingManager.isTrackingActive 
+                              ? Colors.red 
+                              : Colors.grey,
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              streamingManager.isTrackingActive 
+                                ? Icons.cloud_upload 
+                                : Icons.cloud_off,
+                              size: 16,
+                              color: streamingManager.isTrackingActive 
+                                ? Colors.red 
+                                : Colors.grey,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              streamingManager.isTrackingActive 
+                                ? 'Salvataggio attivo' 
+                                : 'Salvataggio non attivo',
+                              style: TextStyle(
+                                color: streamingManager.isTrackingActive 
+                                  ? Colors.red 
+                                  : Colors.grey,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -246,28 +344,80 @@ class _TrackingScreenState extends State<TrackingScreen> {
                     },
                   ),
                 ),
+                // ✅ BOTTONI IN BASSO
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: OutlinedButton.icon(
-                      onPressed: _stopStreamingAndExit,
-                      icon: const Icon(Icons.stop_circle, size: 22),
-                      label: const Text(
-                        'FERMA STREAM',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.5,
+                  child: Row(
+                    children: [
+                      // Bottone Tracking (sinistra)
+                      Expanded(
+                        child: SizedBox(
+                          height: 56,
+                          child: OutlinedButton.icon(
+                            onPressed: _toggleTracking,
+                            icon: Icon(
+                              streamingManager.isTrackingActive 
+                                ? Icons.stop_circle 
+                                : Icons.fiber_manual_record,
+                              size: 22,
+                            ),
+                            label: Text(
+                              streamingManager.isTrackingActive 
+                                ? 'STOP LOG-SAVE' 
+                                : 'AVVIA LOG-SAVE',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: streamingManager.isTrackingActive 
+                                ? Colors.orange 
+                                : const Color(0xFF97c93e),
+                              side: BorderSide(
+                                color: streamingManager.isTrackingActive 
+                                  ? Colors.orange 
+                                  : const Color(0xFF97c93e),
+                                width: 2,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFFF4444),
-                        side: const BorderSide(color: Color(0xFFFF4444), width: 2),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      const SizedBox(width: 12),
+                      // Bottone Ferma Stream (destra)
+                      Expanded(
+                        child: SizedBox(
+                          height: 56,
+                          child: OutlinedButton.icon(
+                            onPressed: _stopStreamingAndExit,
+                            icon: const Icon(Icons.stop_circle, size: 22),
+                            label: const Text(
+                              'FERMA STREAM',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.5,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFFF4444),
+                              side: const BorderSide(
+                                color: Color(0xFFFF4444), 
+                                width: 2
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ],
@@ -285,7 +435,14 @@ class _TrackingScreenState extends State<TrackingScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 9, fontWeight: FontWeight.w600)),
+          Text(
+            label, 
+            style: const TextStyle(
+              color: Colors.white70, 
+              fontSize: 9, 
+              fontWeight: FontWeight.w600
+            )
+          ),
           Text(
             val.toInt().toString(),
             style: const TextStyle(
