@@ -234,70 +234,74 @@ class _ScannerScreenState extends State<ScannerScreen> with SingleTickerProvider
   }
 
   Widget _buildStreamingControls(ConnectedDevicesProvider devicesProvider) {
-    final streamingManager = Provider.of<StreamingManager>(context);
-    final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
+  final streamingManager = Provider.of<StreamingManager>(context);
+  final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 70),
-          child: SizedBox(
-            height: 56,
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: hasActiveStreams
-                ? null
-                : () async {
-                    try {
-                      final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+  return Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 70),
+        child: SizedBox(
+          height: 56,
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: hasActiveStreams
+              ? null
+              : () async {
+                  try {
+                    final streamingManager = Provider.of<StreamingManager>(context, listen: false);
 
-                      await streamingManager.startAllStreaming(
-                        devicesProvider.connectedDevices,
-                        devicesProvider.deviceNames,
+                    // ✅ AVVIA TRACKING (salvataggio SSH)
+                    streamingManager.startTracking();
+                    
+                    // ✅ AVVIA STREAMING (dati a Render + sensori live)
+                    await streamingManager.startAllStreaming(
+                      devicesProvider.connectedDevices,
+                      devicesProvider.deviceNames,
+                    );
+
+                    if (mounted) {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const TrackingScreen(),
+                        ),
                       );
-
-                      if (mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const TrackingScreen(),
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      _showMessage('❌ Errore: $e');
                     }
-                  },
-              icon: const Icon(Icons.play_arrow, size: 22),
-              label: const Text(
-                'AVVIA TRACKING',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                  color: Color.fromRGBO(151, 201, 62, 1),
-                ),
+                  } catch (e) {
+                    _showMessage('❌ Errore: $e');
+                  }
+                },
+            icon: const Icon(Icons.play_arrow, size: 22),
+            label: const Text(
+              'AVVIA TRACKING',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                color: Color.fromRGBO(151, 201, 62, 1),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
-                side: const BorderSide(
-                  color: Color.fromRGBO(151, 201, 62, 1),
-                  width: 2,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-                shadowColor: Colors.transparent,
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.transparent,
+              foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
+              side: const BorderSide(
+                color: Color.fromRGBO(151, 201, 62, 1),
+                width: 2,
               ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              elevation: 0,
+              shadowColor: Colors.transparent,
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   @override
   void dispose() {

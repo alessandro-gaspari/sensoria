@@ -14,6 +14,8 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, String> _deviceProtocols = {};
 
+  bool get isSshConnected => _tcpSender?.isConnected ?? false;
+
   IO.Socket? _socket;
   bool _isSocketConnected = false;
 

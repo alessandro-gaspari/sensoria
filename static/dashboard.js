@@ -327,58 +327,10 @@ function wheelZoomPlugin(opts) {
     function init(u, opts, data) {
         var over = u.over;
         var rect, xVal;
-        var isDragging = false;
-        var dragStartX = null;
-        var dragStartScale = null;
-        
-        function mouseMove(e) {
-            rect = over.getBoundingClientRect();
-            xVal = u.posToVal(e.clientX - rect.left, 'x');
-            
-            if (isDragging && dragStartX !== null) {
-                e.preventDefault();  // ← AGGIUNTO
-                e.stopPropagation();  // ← AGGIUNTO
-                
-                var currentX = e.clientX;
-                var deltaX = dragStartX - currentX;
-                var range = dragStartScale.max - dragStartScale.min;
-                var pixelWidth = rect.width;
-                var timePerPixel = range / pixelWidth;
-                var timeShift = deltaX * timePerPixel;
-                u.setScale('x', {
-                    min: dragStartScale.min + timeShift,
-                    max: dragStartScale.max + timeShift
-                });
-            }
-        }
-        
-        over.addEventListener("mousemove", mouseMove);
-        
-        over.addEventListener("mousedown", function(e) {
-            e.preventDefault();  // ← AGGIUNTO
-            isDragging = true;
-            dragStartX = e.clientX;
-            dragStartScale = {
-                min: u.scales.x.min,
-                max: u.scales.x.max
-            };
-            over.style.cursor = 'grabbing';  // ← AGGIUNTO
-        });
-        
-        document.addEventListener("mouseup", function(e) {
-            if (isDragging) {
-                e.preventDefault();  // ← AGGIUNTO
-                e.stopPropagation();  // ← AGGIUNTO
-                isDragging = false;
-                dragStartX = null;
-                dragStartScale = null;
-                over.style.cursor = 'grab';  // ← AGGIUNTO
-            }
-        });
-        
-        // Zoom con rotella del mouse
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
+            rect = over.getBoundingClientRect();
+            xVal = u.posToVal(e.clientX - rect.left, 'x');
             var left = u.scales.x.min;
             var right = u.scales.x.max;
             var range = right - left;
@@ -390,9 +342,7 @@ function wheelZoomPlugin(opts) {
                 u.setScale('x', { min: nLeft, max: nRight });
             });
         });
-        
-        // Imposta cursore iniziale
-        over.style.cursor = 'grab';
+        // Nessun drag custom, solo pan gestito da uPlot.
     }
     return { hooks: { init: init } };
 }
