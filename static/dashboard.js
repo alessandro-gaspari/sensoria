@@ -330,10 +330,15 @@ function wheelZoomPlugin(opts) {
         var isDragging = false;
         var dragStartX = null;
         var dragStartScale = null;
+        
         function mouseMove(e) {
             rect = over.getBoundingClientRect();
             xVal = u.posToVal(e.clientX - rect.left, 'x');
+            
             if (isDragging && dragStartX !== null) {
+                e.preventDefault();  // ← AGGIUNTO
+                e.stopPropagation();  // ← AGGIUNTO
+                
                 var currentX = e.clientX;
                 var deltaX = dragStartX - currentX;
                 var range = dragStartScale.max - dragStartScale.min;
@@ -346,21 +351,32 @@ function wheelZoomPlugin(opts) {
                 });
             }
         }
+        
         over.addEventListener("mousemove", mouseMove);
+        
         over.addEventListener("mousedown", function(e) {
+            e.preventDefault();  // ← AGGIUNTO
             isDragging = true;
             dragStartX = e.clientX;
             dragStartScale = {
                 min: u.scales.x.min,
                 max: u.scales.x.max
             };
-            mouseMove(e);
+            over.style.cursor = 'grabbing';  // ← AGGIUNTO
         });
-        document.addEventListener("mouseup", function() {
-            isDragging = false;
-            dragStartX = null;
-            dragStartScale = null;
+        
+        document.addEventListener("mouseup", function(e) {
+            if (isDragging) {
+                e.preventDefault();  // ← AGGIUNTO
+                e.stopPropagation();  // ← AGGIUNTO
+                isDragging = false;
+                dragStartX = null;
+                dragStartScale = null;
+                over.style.cursor = 'grab';  // ← AGGIUNTO
+            }
         });
+        
+        // Zoom con rotella del mouse
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
             var left = u.scales.x.min;
@@ -374,9 +390,13 @@ function wheelZoomPlugin(opts) {
                 u.setScale('x', { min: nLeft, max: nRight });
             });
         });
+        
+        // Imposta cursore iniziale
+        over.style.cursor = 'grab';
     }
     return { hooks: { init: init } };
 }
+
 
 function getBaseOpts(width, height) {
     return {
