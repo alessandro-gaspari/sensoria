@@ -454,6 +454,7 @@ function initCharts() {
         { label: 'Z', stroke: '#4bc0c0', width: 2 }
     ];
     charts.accel = new uPlot(accelOpts, chartData.accel, accelDiv);
+    addInteractionListeners(charts.accel);
 
     // Giroscopio
     var gyroOpts = getBaseOpts(gyroDiv.offsetWidth, 200);
@@ -464,6 +465,7 @@ function initCharts() {
         { label: 'Z', stroke: '#ffcd56', width: 2 }
     ];
     charts.gyro = new uPlot(gyroOpts, chartData.gyro, gyroDiv);
+    addInteractionListeners(charts.gyro);
 
     // Magnetometro
     var magOpts = getBaseOpts(magDiv.offsetWidth, 200);
@@ -474,6 +476,7 @@ function initCharts() {
         { label: 'Z', stroke: '#ff6384', width: 2 }
     ];
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
+    addInteractionListeners(charts.mag);
 
     // PRESSIONI - forza width esplicito
     console.log('Pressure div width:', pressureDiv.offsetWidth);
@@ -525,6 +528,7 @@ function initCharts() {
     ];
 
     charts.pressure = new uPlot(pressureOpts, initData, pressureDiv);
+    addInteractionListeners(charts.pressure);
 
     console.log('✅ Grafici inizializzati');
     console.log('📊 Pressure SVG:', document.querySelector('#pressure-chart svg'));
