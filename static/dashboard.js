@@ -30,7 +30,7 @@ var chartData = {
     pressure: [[], [], [], []]
 };
 
-var maxDataPoints = 500;
+var maxDataPoints = 0;
 var selectedSensor = null;
 var chartsInitialized = false;
 
@@ -582,9 +582,9 @@ function updateCharts(sensorName, data) {
         chartData.accel[1].push(data.accel_x);
         chartData.accel[2].push(data.accel_y);
         chartData.accel[3].push(data.accel_z);
-        if (chartData.accel[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
-        }
+        //if (chartData.accel[0].length > maxDataPoints) {
+        //    for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
+        //}
         charts.accel.setData(chartData.accel);
     }
 
@@ -594,9 +594,9 @@ function updateCharts(sensorName, data) {
         chartData.gyro[1].push(data.gyro_x);
         chartData.gyro[2].push(data.gyro_y);
         chartData.gyro[3].push(data.gyro_z);
-        if (chartData.gyro[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
-        }
+        //if (chartData.gyro[0].length > maxDataPoints) {
+        //    for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
+        //}
         charts.gyro.setData(chartData.gyro);
     }
 
@@ -606,9 +606,9 @@ function updateCharts(sensorName, data) {
         chartData.mag[1].push(data.mag_x);
         chartData.mag[2].push(data.mag_y);
         chartData.mag[3].push(data.mag_z);
-        if (chartData.mag[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
-        }
+        //if (chartData.mag[0].length > maxDataPoints) {
+        //    for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
+        //}
         charts.mag.setData(chartData.mag);
     }
 
@@ -618,9 +618,9 @@ function updateCharts(sensorName, data) {
         chartData.pressure[1].push(data.pressure_0 || 0);
         chartData.pressure[2].push(data.pressure_1 || 0);
         chartData.pressure[3].push(data.pressure_2 || 0);
-        if (chartData.pressure[0].length > maxDataPoints) {
-            for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
-        }
+        //if (chartData.pressure[0].length > maxDataPoints) {
+        //    for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
+        //}
         charts.pressure.setData(chartData.pressure);
         document.getElementById('pressure-chart-container').style.display = 'block';
     } else {
