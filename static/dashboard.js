@@ -571,6 +571,19 @@ function fixLegendMarkerColors() {
     }, 300);
 }
 
+// Variabile globale per tracciare se l'utente sta interagendo col grafico
+var isUserInteracting = false;
+
+// Aggiungi questi listener al canvas del grafico (o al container)
+function addInteractionListeners(u) {
+    var over = u.over;
+    over.addEventListener('mousedown', function() { isUserInteracting = true; });
+    over.addEventListener('wheel', function() { isUserInteracting = true; });
+    // Se vuoi riprendere l'auto-scroll con doppio click:
+    over.addEventListener('dblclick', function() { isUserInteracting = false; }); 
+}
+
+
 function updateCharts(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
@@ -586,6 +599,19 @@ function updateCharts(sensorName, data) {
         //    for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
         //}
         charts.accel.setData(chartData.accel);
+        if (!isUserInteracting) {
+            var windowSize = 10; // Mostra ultimi 10 secondi
+            var minX = timestamp - windowSize;
+            var maxX = timestamp;
+            
+            // Se abbiamo meno di 10s di dati, mostra dall'inizio
+            if (chartData.accel[0][0] > minX) {
+                minX = chartData.accel[0][0];
+            }
+            
+            charts.accel.setScale('x', { min: minX, max: maxX });
+        }    
+        
     }
 
     // Giroscopio
@@ -598,6 +624,18 @@ function updateCharts(sensorName, data) {
         //    for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
         //}
         charts.gyro.setData(chartData.gyro);
+        if (!isUserInteracting) {
+            var windowSize = 10; // Mostra ultimi 10 secondi
+            var minX = timestamp - windowSize;
+            var maxX = timestamp;
+            
+            // Se abbiamo meno di 10s di dati, mostra dall'inizio
+            if (chartData.accel[0][0] > minX) {
+                minX = chartData.accel[0][0];
+            }
+            
+            charts.accel.setScale('x', { min: minX, max: maxX });
+        }
     }
 
     // Magnetometro
@@ -610,6 +648,18 @@ function updateCharts(sensorName, data) {
         //    for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
         //}
         charts.mag.setData(chartData.mag);
+        if (!isUserInteracting) {
+            var windowSize = 10; // Mostra ultimi 10 secondi
+            var minX = timestamp - windowSize;
+            var maxX = timestamp;
+            
+            // Se abbiamo meno di 10s di dati, mostra dall'inizio
+            if (chartData.accel[0][0] > minX) {
+                minX = chartData.accel[0][0];
+            }
+            
+            charts.accel.setScale('x', { min: minX, max: maxX });
+        }
     }
 
     // PRESSIONI
@@ -622,11 +672,24 @@ function updateCharts(sensorName, data) {
         //    for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
         //}
         charts.pressure.setData(chartData.pressure);
+        if (!isUserInteracting) {
+            var windowSize = 10; // Mostra ultimi 10 secondi
+            var minX = timestamp - windowSize;
+            var maxX = timestamp;
+            
+            // Se abbiamo meno di 10s di dati, mostra dall'inizio
+            if (chartData.accel[0][0] > minX) {
+                minX = chartData.accel[0][0];
+            }
+            
+            charts.accel.setScale('x', { min: minX, max: maxX });
+        }
         document.getElementById('pressure-chart-container').style.display = 'block';
     } else {
         document.getElementById('pressure-chart-container').style.display = 'none';
     }
 }
+
 
 function updateSensorSelector() {
     var select = document.getElementById('chart-sensor-select');
