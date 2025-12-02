@@ -324,9 +324,15 @@ function clearAllData() {
 
 function wheelZoomPlugin(opts) {
     var factor = opts.factor || 0.75;
+
     function init(u, opts, data) {
         var over = u.over;
         var rect, xVal;
+        var isDragging = false;
+        var dragStartX = null;
+        var dragStartScale = null;
+
+        // Gestione ZOOM con rotella (già presente e corretta)
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
             rect = over.getBoundingClientRect();
@@ -342,10 +348,59 @@ function wheelZoomPlugin(opts) {
                 u.setScale('x', { min: nLeft, max: nRight });
             });
         });
-        // Nessun drag custom, solo pan gestito da uPlot.
+
+        // Gestione PAN con trascinamento
+        over.addEventListener("mousedown", function(e) {
+            // Se non è il tasto sinistro, ignora
+            if (e.button !== 0) return;
+            
+            e.preventDefault();
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartScale = {
+                min: u.scales.x.min,
+                max: u.scales.x.max
+            };
+            over.style.cursor = "grabbing";
+        });
+
+        over.addEventListener("mousemove", function(e) {
+            if (!isDragging) return;
+            
+            e.preventDefault();
+            var currentX = e.clientX;
+            var dx = dragStartX - currentX;
+            
+            var scaleX = u.scales.x;
+            var plotWidth = u.bbox.width;
+            var scaleRange = dragStartScale.max - dragStartScale.min;
+            
+            // Calcola quanto spostare in base ai pixel trascinati
+            var shift = (dx / plotWidth) * scaleRange;
+            
+            u.setScale("x", {
+                min: dragStartScale.min + shift,
+                max: dragStartScale.max + shift
+            });
+        });
+
+        document.addEventListener("mouseup", function(e) {
+            if (isDragging) {
+                isDragging = false;
+                dragStartX = null;
+                dragStartScale = null;
+                over.style.cursor = "default";
+            }
+        });
     }
-    return { hooks: { init: init } };
+
+    return {
+        hooks: {
+            init: init
+        }
+    };
 }
+
 
 
 function getBaseOpts(width, height) {
@@ -355,6 +410,8 @@ function getBaseOpts(width, height) {
         cursor: { show: true, drag: { x: true, y: false } },
         legend: { show: true, live: true },
         scales: { x: { time: true }, y: { auto: true } },
+        select: {show: false,  
+        },
         axes: [
             { stroke: '#97c93e', grid: { stroke: '#333', width: 1 },
                 values: function(u, ticks) {
@@ -424,7 +481,9 @@ function initCharts() {
     var pressureOpts = {
         width: Math.max(pressureDiv.offsetWidth, 400),  // Minimo 400px
         height: 250,
-        cursor: { show: true, drag: { x: false, y: false } },
+        cursor: { show: true, drag: { x: true, y: false } },
+        select: { show: false, 
+        },
         legend: { show: true, live: true },
         scales: {
             x: { time: true },
