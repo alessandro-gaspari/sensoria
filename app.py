@@ -19,7 +19,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # --- CONFIGURAZIONE SSH ---
 SSH_HOST = "lambda-iot.uniud.it"
 SSH_USER = "gaspari"
-SSH_PASS = os.environ.get("SSH_PASSWORD") # Prende la password da Render Env Vars
+SSH_PASS = os.environ.get("SSH_PASSWORD") 
 REMOTE_LOG_DIR = "/home/gaspari/data/"
 
 sensors_data = {}
@@ -43,104 +43,126 @@ def clear_data():
 # GESTIONE CONNESSIONE SSH
 # =========================================================
 def create_ssh_client():
+    print(f"🔄 Tentativo connessione SSH a {SSH_HOST}...")
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         client.connect(SSH_HOST, username=SSH_USER, password=SSH_PASS, timeout=10)
+        print("✅ SSH Connesso con successo!")
         return client
     except Exception as e:
-        print(f"❌ Errore connessione SSH: {e}")
+        print(f"❌ Errore critico connessione SSH: {e}")
         return None
 
 def get_latest_remote_file(sftp):
-    """Trova il file più recente nella cartella remota"""
     try:
         files = sftp.listdir_attr(REMOTE_LOG_DIR)
-        # Filtra solo i file che finiscono con _session_log.txt
+        # Filtra solo i file che finiscono con _session_log.txt e hanno dimensione > 0
         log_files = [f for f in files if f.filename.endswith('_session_log.txt')]
         
         if not log_files:
             return None
             
-        # Ordina per data di modifica (st_mtime) decrescente
+        # Ordina per data di modifica decrescente
         latest = max(log_files, key=lambda f: f.st_mtime)
-        return os.path.join(REMOTE_LOG_DIR, latest.filename)
+        full_path = os.path.join(REMOTE_LOG_DIR, latest.filename)
+        return full_path
     except Exception as e:
-        print(f"⚠️ Errore ricerca file remoto: {e}")
+        print(f"⚠️ Errore lista file remoti: {e}")
         return None
 
 # =========================================================
-# THREAD WATCHER REMOTO
+# THREAD WATCHER REMOTO (VERSIONE ROBUSTA)
 # =========================================================
 def watch_remote_log():
-    print(f"🚀 Avvio SSH Watcher verso {SSH_HOST}...")
-    
-    current_file = None
     ssh = None
     sftp = None
     remote_file = None
+    current_file_path = None
+    last_file_size = 0
     
     while True:
         try:
-            # 1. Connessione / Riconnessione
-            if not ssh or not ssh.get_transport().is_active():
-                print("🔄 Connessione SSH...")
+            # 1. RICONNESSIONE SE NECESSARIO
+            if not ssh or not ssh.get_transport() or not ssh.get_transport().is_active():
+                if ssh: ssh.close()
                 ssh = create_ssh_client()
                 if not ssh:
-                    time.sleep(5)
+                    socketio.sleep(5)
                     continue
                 sftp = ssh.open_sftp()
-                print("✅ SSH Connesso!")
-
-            # 2. Cerca file più recente
-            latest = get_latest_remote_file(sftp)
             
-            # Se cambia file, riapri
-            if latest and latest != current_file:
-                print(f"📂 Trovato nuovo log: {latest}")
+            # 2. CERCA NUOVO FILE
+            latest_path = get_latest_remote_file(sftp)
+            
+            # Se troviamo un file nuovo o diverso da quello aperto
+            if latest_path and latest_path != current_file_path:
+                print(f"📂 Trovato nuovo file log: {latest_path}")
                 if remote_file: remote_file.close()
-                current_file = latest
-                remote_file = sftp.open(current_file, 'r')
-                # Vai alla fine per il real-time
-                remote_file.seek(0, 2) 
+                
+                current_file_path = latest_path
+                remote_file = sftp.open(current_file_path, 'r')
+                
+                # Vai alla fine del file per iniziare il tail
+                stat = sftp.stat(current_file_path)
+                last_file_size = stat.st_size
+                remote_file.seek(last_file_size)
+                print(f"⏩ Seek alla posizione {last_file_size}")
 
-            # 3. Leggi dati
-            if remote_file:
-                # Legge riga
-                # Nota: Paramiko file object non ha readline bloccante, 
-                # quindi leggiamo a blocchi o controlliamo stat
-                line = remote_file.readline()
-                if line:
-                    try:
-                        line = line.strip()
-                        if not line: continue
+            # 3. LEGGI DATI (POLLING SULLA DIMENSIONE)
+            if remote_file and current_file_path:
+                try:
+                    # Controlla la dimensione attuale del file remoto
+                    stat = sftp.stat(current_file_path)
+                    current_size = stat.st_size
+                    
+                    if current_size > last_file_size:
+                        # Ci sono nuovi dati! Leggiamoli tutti
+                        new_data = remote_file.read(current_size - last_file_size)
+                        last_file_size = current_size
                         
-                        data = json.loads(line)
-                        sensor_name = data.get('sensor_name', 'Unknown')
-                        sensors_data[sensor_name] = data
+                        # Decodifica e splitta per righe
+                        chunk = new_data.decode('utf-8', errors='ignore')
+                        lines = chunk.split('\n')
                         
-                        socketio.emit('sensor_update', {
-                            'sensor_name': sensor_name,
-                            'data': data
-                        })
-                    except json.JSONDecodeError:
-                        continue
-                else:
-                    # Nessuna nuova riga, controlla se file è cresciuto
-                    # Per evitare polling aggressivo, sleep breve
-                    time.sleep(0.05) # 50ms (20Hz max refresh rate per non saturare SSH)
+                        count = 0
+                        for line in lines:
+                            line = line.strip()
+                            if not line: continue
+                            
+                            try:
+                                data = json.loads(line)
+                                sensor_name = data.get('sensor_name', 'Unknown')
+                                sensors_data[sensor_name] = data
+                                
+                                socketio.emit('sensor_update', {
+                                    'sensor_name': sensor_name,
+                                    'data': data
+                                })
+                                count += 1
+                            except json.JSONDecodeError:
+                                pass # Righe incomplete o corrotte
+                        
+                        if count > 0:
+                            print(f"📡 Inviati {count} pacchetti alla dashboard")
+                            
+                    else:
+                        # Nessun nuovo dato, aspetta un po'
+                        socketio.sleep(0.1) 
+                        
+                except IOError:
+                    # File forse cancellato o ruotato
+                    print("⚠️ Errore lettura file (forse chiuso/ruotato), reset...")
+                    current_file_path = None
+                    remote_file = None
             else:
-                print("⏳ In attesa di file log remoto...", end='\r')
-                time.sleep(2)
+                print("⏳ In attesa di file log...", end='\r')
+                socketio.sleep(2)
                 
         except Exception as e:
-            print(f"❌ Errore Watcher SSH: {e}")
-            # Reset connessione per forzare riconnessione
-            try:
-                if ssh: ssh.close()
-            except: pass
-            ssh = None
-            time.sleep(3)
+            print(f"❌ Errore generale Watcher: {e}")
+            ssh = None # Forza riconnessione
+            socketio.sleep(3)
 
 # Avvia thread
 t = threading.Thread(target=watch_remote_log)
