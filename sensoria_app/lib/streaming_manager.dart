@@ -327,12 +327,15 @@ class StreamingManager extends ChangeNotifier {
   }
 
   void _sendData(String deviceId, String deviceName, Map<String, dynamic> data) {
-    _sendDataViaWebSocket(deviceId, deviceName);
+    // 1. NON inviamo più via WebSocket per risparmiare banda
+    // _sendDataViaWebSocket(deviceId, deviceName); 
 
+    // 2. Inviamo SOLO via TCP (SSH) se il tracking è attivo
     if (_isTrackingActive && _tcpSender != null) {
       _tcpSender!.sendData(deviceName, data);
     }
   }
+
 
   void _sendDataViaWebSocket(String deviceId, String deviceName) {
     final latestData = _latestData[deviceId];
