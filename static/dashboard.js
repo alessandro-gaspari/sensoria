@@ -30,9 +30,13 @@ var chartData = {
     pressure: [[], [], [], []]
 };
 
-var maxDataPoints = 0;
+// Configurazione per limitare lo zoom eccessivo
+var MIN_ZOOM_RANGE = 0.5; // Minimo 0.5 secondi di zoom
+var maxDataPoints = 10000; // Limite punti per performance (opzionale)
+
 var selectedSensor = null;
 var chartsInitialized = false;
+var isUserInteracting = false; // Flag globale interazione
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeSocketListeners();
@@ -332,18 +336,49 @@ function wheelZoomPlugin(opts) {
         var dragStartX = null;
         var dragStartScale = null;
 
-        // Gestione ZOOM con rotella (già presente e corretta)
+        // Gestione ZOOM con rotella
         over.addEventListener("wheel", function(e) {
             e.preventDefault();
+            
+            // Dati attuali
+            var xData = u.data[0];
+            if (!xData || xData.length < 2) return;
+            var dataMin = xData[0];
+            var dataMax = xData[xData.length - 1];
+
             rect = over.getBoundingClientRect();
             xVal = u.posToVal(e.clientX - rect.left, 'x');
+            
             var left = u.scales.x.min;
             var right = u.scales.x.max;
             var range = right - left;
+            
             var pct = xVal == null ? 0.5 : (xVal - left) / range;
             var nRange = e.deltaY < 0 ? range * factor : range / factor;
+            
+            // Limita lo zoom minimo (per evitare crash o freeze)
+            if (nRange < MIN_ZOOM_RANGE) nRange = MIN_ZOOM_RANGE;
+            
             var nLeft = xVal - pct * nRange;
             var nRight = nLeft + nRange;
+
+            // --- CORREZIONE SPAZIO NERO (De-zoom Limit) ---
+            // Se stiamo de-zoomando (ingrandendo il range)
+            if (nRange > range) {
+                // Non andare prima dell'inizio dei dati
+                if (nLeft < dataMin) {
+                    nLeft = dataMin;
+                    nRight = nLeft + nRange;
+                }
+                // Non andare dopo la fine dei dati
+                if (nRight > dataMax) {
+                    nRight = dataMax;
+                    nLeft = nRight - nRange;
+                    // Ricontrollo nel caso nLeft sia finito prima di dataMin
+                    if (nLeft < dataMin) nLeft = dataMin;
+                }
+            }
+
             u.batch(function() {
                 u.setScale('x', { min: nLeft, max: nRight });
             });
@@ -351,9 +386,7 @@ function wheelZoomPlugin(opts) {
 
         // Gestione PAN con trascinamento
         over.addEventListener("mousedown", function(e) {
-            // Se non è il tasto sinistro, ignora
             if (e.button !== 0) return;
-            
             e.preventDefault();
             isDragging = true;
             dragStartX = e.clientX;
@@ -366,21 +399,40 @@ function wheelZoomPlugin(opts) {
 
         over.addEventListener("mousemove", function(e) {
             if (!isDragging) return;
-            
             e.preventDefault();
+            
             var currentX = e.clientX;
             var dx = dragStartX - currentX;
-            
             var scaleX = u.scales.x;
             var plotWidth = u.bbox.width;
             var scaleRange = dragStartScale.max - dragStartScale.min;
             
-            // Calcola quanto spostare in base ai pixel trascinati
             var shift = (dx / plotWidth) * scaleRange;
             
+            var nMin = dragStartScale.min + shift;
+            var nMax = dragStartScale.max + shift;
+
+            // --- LIMITI PAN (No spazio nero laterale) ---
+            var xData = u.data[0];
+            if (xData && xData.length > 0) {
+                var dataMin = xData[0];
+                var dataMax = xData[xData.length - 1];
+                
+                // Se sposto troppo a sinistra
+                if (nMin < dataMin) {
+                    nMin = dataMin;
+                    nMax = nMin + scaleRange;
+                }
+                // Se sposto troppo a destra
+                if (nMax > dataMax) {
+                    nMax = dataMax;
+                    nMin = nMax - scaleRange;
+                }
+            }
+
             u.setScale("x", {
-                min: dragStartScale.min + shift,
-                max: dragStartScale.max + shift
+                min: nMin,
+                max: nMax
             });
         });
 
@@ -392,6 +444,20 @@ function wheelZoomPlugin(opts) {
                 over.style.cursor = "default";
             }
         });
+        
+        // --- RESET ZOOM (Doppio Click) - AGGIUNTO PER OGNI GRAFICO ---
+        over.addEventListener("dblclick", function(e) {
+            var xData = u.data[0];
+            if (!xData || xData.length === 0) return;
+            
+            // Resetta per vedere TUTTI i dati
+            u.setScale('x', {
+                min: xData[0],
+                max: xData[xData.length - 1]
+            });
+            // Importante: riattiva l'auto-scroll
+            isUserInteracting = false; 
+        });
     }
 
     return {
@@ -402,16 +468,17 @@ function wheelZoomPlugin(opts) {
 }
 
 
-
 function getBaseOpts(width, height) {
     return {
         width: width,
         height: height,
         cursor: { show: true, drag: { x: true, y: false } },
         legend: { show: true, live: true },
-        scales: { x: { time: true }, y: { auto: true } },
-        select: {show: false,  
+        scales: { 
+            x: { time: true }, 
+            y: { auto: true } 
         },
+        select: {show: false},
         axes: [
             { stroke: '#97c93e', grid: { stroke: '#333', width: 1 },
                 values: function(u, ticks) {
@@ -438,7 +505,13 @@ function initCharts() {
         return;
     }
 
-    // Mostra il container PRIMA di inizializzare
+    // Pulisci eventuali vecchie istanze
+    if (charts.accel) { accelDiv.innerHTML = ''; charts.accel = null; }
+    if (charts.gyro) { gyroDiv.innerHTML = ''; charts.gyro = null; }
+    if (charts.mag) { magDiv.innerHTML = ''; charts.mag = null; }
+    if (charts.pressure) { pressureDiv.innerHTML = ''; charts.pressure = null; }
+
+    // Mostra il container
     document.getElementById('pressure-chart-container').style.display = 'block';
 
     // Forza dimensioni minime
@@ -448,7 +521,7 @@ function initCharts() {
     // Accelerometro
     var accelOpts = getBaseOpts(accelDiv.offsetWidth, 200);
     accelOpts.series = [
-        { show: false },
+        { show: false }, // Time
         { label: 'X', stroke: '#ff6384', width: 2 },
         { label: 'Y', stroke: '#36a2eb', width: 2 },
         { label: 'Z', stroke: '#4bc0c0', width: 2 }
@@ -478,15 +551,12 @@ function initCharts() {
     charts.mag = new uPlot(magOpts, chartData.mag, magDiv);
     addInteractionListeners(charts.mag);
 
-    // PRESSIONI - forza width esplicito
-    console.log('Pressure div width:', pressureDiv.offsetWidth);
-    
+    // PRESSIONI
     var pressureOpts = {
-        width: Math.max(pressureDiv.offsetWidth, 400),  // Minimo 400px
+        width: Math.max(pressureDiv.offsetWidth, 400),
         height: 250,
         cursor: { show: true, drag: { x: true, y: false } },
-        select: { show: false, 
-        },
+        select: { show: false },
         legend: { show: true, live: true },
         scales: {
             x: { time: true },
@@ -510,7 +580,7 @@ function initCharts() {
             }
         ],
         series: [
-            {},  // Asse X (time) - IMPORTANTE: oggetto vuoto, non { show: false }
+            {}, 
             { label: 'S0', stroke: '#ff6384', width: 3 },
             { label: 'S1', stroke: '#36a2eb', width: 3 },
             { label: 'S2', stroke: '#ffce56', width: 3 }
@@ -518,21 +588,21 @@ function initCharts() {
         plugins: [wheelZoomPlugin({ factor: 0.75 })]
     };
 
-    // Inizializza con 2 punti minimi
+    // Inizializza con dati fittizi se vuoti
     var now = Date.now() / 1000;
     var initData = [
         [now - 1, now],
-        [512, 512],
-        [512, 512],
-        [512, 512]
+        [0, 0],
+        [0, 0],
+        [0, 0]
     ];
+    // Se ci sono dati reali, usali
+    if(chartData.pressure[0].length > 0) initData = chartData.pressure;
 
     charts.pressure = new uPlot(pressureOpts, initData, pressureDiv);
     addInteractionListeners(charts.pressure);
 
     console.log('✅ Grafici inizializzati');
-    console.log('📊 Pressure SVG:', document.querySelector('#pressure-chart svg'));
-    
     fixLegendMarkerColors();
 }
 
@@ -575,16 +645,10 @@ function fixLegendMarkerColors() {
     }, 300);
 }
 
-// Variabile globale per tracciare se l'utente sta interagendo col grafico
-var isUserInteracting = false;
-
-// Aggiungi questi listener al canvas del grafico (o al container)
 function addInteractionListeners(u) {
     var over = u.over;
     over.addEventListener('mousedown', function() { isUserInteracting = true; });
     over.addEventListener('wheel', function() { isUserInteracting = true; });
-    // Se vuoi riprendere l'auto-scroll con doppio click:
-    over.addEventListener('dblclick', function() { isUserInteracting = false; }); 
 }
 
 
@@ -593,104 +657,56 @@ function updateCharts(sensorName, data) {
 
     var timestamp = Date.now() / 1000;
 
+    // Helper per pushare dati
+    function pushData(targetArr, keys) {
+        targetArr[0].push(timestamp);
+        keys.forEach((k, i) => {
+            targetArr[i + 1].push(data[k] !== undefined ? data[k] : 0);
+        });
+    }
+
     // Accelerometro
     if (data.accel_x !== undefined) {
-        chartData.accel[0].push(timestamp);
-        chartData.accel[1].push(data.accel_x);
-        chartData.accel[2].push(data.accel_y);
-        chartData.accel[3].push(data.accel_z);
-        //if (chartData.accel[0].length > maxDataPoints) {
-        //    for (var i = 0; i <= 3; i++) chartData.accel[i].shift();
-        //}
+        pushData(chartData.accel, ['accel_x', 'accel_y', 'accel_z']);
         charts.accel.setData(chartData.accel);
-        if (!isUserInteracting) {
-            var windowSize = 10; // Mostra ultimi 10 secondi
-            var minX = timestamp - windowSize;
-            var maxX = timestamp;
-            
-            // Se abbiamo meno di 10s di dati, mostra dall'inizio
-            if (chartData.accel[0][0] > minX) {
-                minX = chartData.accel[0][0];
-            }
-            
-            charts.accel.setScale('x', { min: minX, max: maxX });
-        }    
-        
+        autoScroll(charts.accel, chartData.accel);
     }
 
     // Giroscopio
     if (data.gyro_x !== undefined) {
-        chartData.gyro[0].push(timestamp);
-        chartData.gyro[1].push(data.gyro_x);
-        chartData.gyro[2].push(data.gyro_y);
-        chartData.gyro[3].push(data.gyro_z);
-        //if (chartData.gyro[0].length > maxDataPoints) {
-        //    for (var i = 0; i <= 3; i++) chartData.gyro[i].shift();
-        //}
+        pushData(chartData.gyro, ['gyro_x', 'gyro_y', 'gyro_z']);
         charts.gyro.setData(chartData.gyro);
-        if (!isUserInteracting) {
-            var windowSize = 10; // Mostra ultimi 10 secondi
-            var minX = timestamp - windowSize;
-            var maxX = timestamp;
-            
-            // Se abbiamo meno di 10s di dati, mostra dall'inizio
-            if (chartData.accel[0][0] > minX) {
-                minX = chartData.accel[0][0];
-            }
-            
-            charts.accel.setScale('x', { min: minX, max: maxX });
-        }
+        autoScroll(charts.gyro, chartData.gyro);
     }
 
     // Magnetometro
     if (data.mag_x !== undefined) {
-        chartData.mag[0].push(timestamp);
-        chartData.mag[1].push(data.mag_x);
-        chartData.mag[2].push(data.mag_y);
-        chartData.mag[3].push(data.mag_z);
-        //if (chartData.mag[0].length > maxDataPoints) {
-        //    for (var i = 0; i <= 3; i++) chartData.mag[i].shift();
-        //}
+        pushData(chartData.mag, ['mag_x', 'mag_y', 'mag_z']);
         charts.mag.setData(chartData.mag);
-        if (!isUserInteracting) {
-            var windowSize = 10; // Mostra ultimi 10 secondi
-            var minX = timestamp - windowSize;
-            var maxX = timestamp;
-            
-            // Se abbiamo meno di 10s di dati, mostra dall'inizio
-            if (chartData.accel[0][0] > minX) {
-                minX = chartData.accel[0][0];
-            }
-            
-            charts.accel.setScale('x', { min: minX, max: maxX });
-        }
+        autoScroll(charts.mag, chartData.mag);
     }
 
     // PRESSIONI
     if (data.pressure_0 !== undefined) {
-        chartData.pressure[0].push(timestamp);
-        chartData.pressure[1].push(data.pressure_0 || 0);
-        chartData.pressure[2].push(data.pressure_1 || 0);
-        chartData.pressure[3].push(data.pressure_2 || 0);
-        //if (chartData.pressure[0].length > maxDataPoints) {
-        //    for (var i = 0; i <= 3; i++) chartData.pressure[i].shift();
-        //}
+        pushData(chartData.pressure, ['pressure_0', 'pressure_1', 'pressure_2']);
         charts.pressure.setData(chartData.pressure);
-        if (!isUserInteracting) {
-            var windowSize = 10; // Mostra ultimi 10 secondi
-            var minX = timestamp - windowSize;
-            var maxX = timestamp;
-            
-            // Se abbiamo meno di 10s di dati, mostra dall'inizio
-            if (chartData.accel[0][0] > minX) {
-                minX = chartData.accel[0][0];
-            }
-            
-            charts.accel.setScale('x', { min: minX, max: maxX });
-        }
+        autoScroll(charts.pressure, chartData.pressure);
         document.getElementById('pressure-chart-container').style.display = 'block';
     } else {
         document.getElementById('pressure-chart-container').style.display = 'none';
+    }
+}
+
+function autoScroll(u, data) {
+    if (!isUserInteracting) {
+        var xData = data[0];
+        var lastTime = xData[xData.length - 1];
+        var windowSize = 10; // 10 secondi finestra
+        
+        var minX = lastTime - windowSize;
+        if (xData[0] > minX) minX = xData[0]; // Non mostrare vuoto a sinistra
+        
+        u.setScale('x', { min: minX, max: lastTime });
     }
 }
 
@@ -712,6 +728,7 @@ function updateSensorSelector() {
 }
 
 function resetChartData() {
+    isUserInteracting = false; // Reset interazione cambio sensore
     if (!chartsInitialized) return;
     chartData = {
         accel: [[], [], [], []],
