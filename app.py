@@ -127,7 +127,7 @@ def background_watcher():
                             # print(f"📡 [DATA] Inviati {count} update", flush=True)
                             pass
                     else:
-                        socketio.sleep(0.05) # 50ms polling
+                        socketio.sleep(0.01) # polling a 100Hz
                         
                 except Exception as e:
                     print(f"⚠️ [WATCHER] Errore lettura: {e}", flush=True)
