@@ -22,6 +22,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # --- CONFIGURAZIONE SSH ---
 SSH_HOST = "lambda-iot.uniud.it"
 SSH_USER = "gaspari"
+SSH_PORT = 22729
 SSH_PASS = os.environ.get("SSH_PASSWORD") 
 REMOTE_LOG_DIR = "/home/gaspari/data/"
 
@@ -39,11 +40,11 @@ def get_sensors():
 # LOGICA WATCHER (Stessa logica, gestione thread diversa)
 # =========================================================
 def create_ssh_client():
-    print(f"🔄 [SSH] Connessione a {SSH_HOST}...", flush=True)
+    print(f"🔄 [SSH] Connessione a {SSH_HOST}:{SSH_PORT}...", flush=True)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        client.connect(SSH_HOST, username=SSH_USER, password=SSH_PASS, timeout=10)
+        client.connect(SSH_HOST, port=SSH_PORT, username=SSH_USER, password=SSH_PASS, timeout=10)
         print("✅ [SSH] Connesso!", flush=True)
         return client
     except Exception as e:
