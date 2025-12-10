@@ -2,26 +2,27 @@ import eventlet
 eventlet.monkey_patch()
 
 from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO
 from flask_cors import CORS
 import json
 import time
 import os
 import threading
-import glob
+import paramiko
+import stat
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'sensoria_secret!'
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# ⚠️ CARTELLA DOVE IL TUO SCRIPT TCP SALVA I LOG
-LOG_DIR = "/home/gaspari/data/"
-# Se stai testando in locale sul tuo PC e non sul server, cambia questo percorso!
-# Esempio locale: LOG_DIR = "./data/" (e crea la cartella data)
+# --- CONFIGURAZIONE SSH ---
+SSH_HOST = "lambda-iot.uniud.it"
+SSH_USER = "gaspari"
+SSH_PASS = os.environ.get("SSH_PASSWORD") # Prende la password da Render Env Vars
+REMOTE_LOG_DIR = "/home/gaspari/data/"
 
 sensors_data = {}
-current_log_file = None # Tiene traccia del file che stiamo leggendo
 
 @app.route('/')
 def index():
@@ -29,7 +30,7 @@ def index():
 
 @app.route('/api/sensors', methods=['GET'])
 def get_sensors():
-    return jsonify({'sensors': sensors_data, 'active_file': current_log_file})
+    return jsonify({'sensors': sensors_data})
 
 @app.route('/api/clear', methods=['POST'])
 def clear_data():
@@ -39,99 +40,113 @@ def clear_data():
     return jsonify({'status': 'cleared'}), 200
 
 # =========================================================
-# FUNZIONE PER TROVARE L'ULTIMO LOG CREATO
+# GESTIONE CONNESSIONE SSH
 # =========================================================
-def get_latest_log_file():
-    """Trova il file .txt modificato più di recente nella cartella LOG_DIR"""
+def create_ssh_client():
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        # Cerca tutti i file che finiscono con _session_log.txt
-        pattern = os.path.join(LOG_DIR, "*_session_log.txt")
-        list_of_files = glob.glob(pattern)
+        client.connect(SSH_HOST, username=SSH_USER, password=SSH_PASS, timeout=10)
+        return client
+    except Exception as e:
+        print(f"❌ Errore connessione SSH: {e}")
+        return None
+
+def get_latest_remote_file(sftp):
+    """Trova il file più recente nella cartella remota"""
+    try:
+        files = sftp.listdir_attr(REMOTE_LOG_DIR)
+        # Filtra solo i file che finiscono con _session_log.txt
+        log_files = [f for f in files if f.filename.endswith('_session_log.txt')]
         
-        if not list_of_files:
+        if not log_files:
             return None
             
-        # Trova il più recente in base al tempo di creazione/modifica
-        latest_file = max(list_of_files, key=os.path.getmtime)
-        return latest_file
+        # Ordina per data di modifica (st_mtime) decrescente
+        latest = max(log_files, key=lambda f: f.st_mtime)
+        return os.path.join(REMOTE_LOG_DIR, latest.filename)
     except Exception as e:
-        print(f"Errore ricerca file: {e}")
+        print(f"⚠️ Errore ricerca file remoto: {e}")
         return None
 
 # =========================================================
-# THREAD WATCHER INTELLIGENTE
+# THREAD WATCHER REMOTO
 # =========================================================
-def watch_log_file():
-    global current_log_file
-    print(f"👀 WATCHER AVVIATO: Monitoraggio cartella {LOG_DIR}...")
+def watch_remote_log():
+    print(f"🚀 Avvio SSH Watcher verso {SSH_HOST}...")
     
-    f = None
-    last_pos = 0
+    current_file = None
+    ssh = None
+    sftp = None
+    remote_file = None
     
     while True:
-        # 1. Se non abbiamo un file o il file attuale non cambia da molto...
-        # Cerchiamo se c'è un file NUOVO (appena creato dall'app)
-        latest = get_latest_log_file()
-        
-        if latest and latest != current_log_file:
-            print(f"🔄 Rilevato NUOVO file di sessione: {latest}")
-            if f: f.close()
-            
-            current_log_file = latest
-            try:
-                f = open(current_log_file, 'r')
-                # Andiamo alla fine per vedere solo il real-time
-                f.seek(0, 2) 
-            except Exception as e:
-                print(f"Errore apertura file {latest}: {e}")
-                f = None
-                time.sleep(1)
-                continue
-        
-        # 2. Se abbiamo un file aperto, leggiamo le nuove righe
-        if f:
-            line = f.readline()
-            if line:
-                try:
-                    line = line.strip()
-                    if not line: continue
-                    
-                    # Parsing JSON
-                    data = json.loads(line)
-                    sensor_name = data.get('sensor_name', 'Unknown')
-                    
-                    # Aggiorna memoria
-                    sensors_data[sensor_name] = data
-                    
-                    # Invia al frontend
-                    socketio.emit('sensor_update', {
-                        'sensor_name': sensor_name,
-                        'data': data
-                    })
-                except json.JSONDecodeError:
-                    continue # Ignora righe parziali
-                except Exception as e:
-                    print(f"Errore parsing: {e}")
-            else:
-                socketio.sleep(0.01) # Nessun dato nuovo, sleep breve
-        else:
-            # Nessun file trovato ancora, aspettiamo
-            print("⏳ In attesa di file di log...", end='\r')
-            time.sleep(1)
+        try:
+            # 1. Connessione / Riconnessione
+            if not ssh or not ssh.get_transport().is_active():
+                print("🔄 Connessione SSH...")
+                ssh = create_ssh_client()
+                if not ssh:
+                    time.sleep(5)
+                    continue
+                sftp = ssh.open_sftp()
+                print("✅ SSH Connesso!")
 
-# Avvia il thread watcher
-t = threading.Thread(target=watch_log_file)
+            # 2. Cerca file più recente
+            latest = get_latest_remote_file(sftp)
+            
+            # Se cambia file, riapri
+            if latest and latest != current_file:
+                print(f"📂 Trovato nuovo log: {latest}")
+                if remote_file: remote_file.close()
+                current_file = latest
+                remote_file = sftp.open(current_file, 'r')
+                # Vai alla fine per il real-time
+                remote_file.seek(0, 2) 
+
+            # 3. Leggi dati
+            if remote_file:
+                # Legge riga
+                # Nota: Paramiko file object non ha readline bloccante, 
+                # quindi leggiamo a blocchi o controlliamo stat
+                line = remote_file.readline()
+                if line:
+                    try:
+                        line = line.strip()
+                        if not line: continue
+                        
+                        data = json.loads(line)
+                        sensor_name = data.get('sensor_name', 'Unknown')
+                        sensors_data[sensor_name] = data
+                        
+                        socketio.emit('sensor_update', {
+                            'sensor_name': sensor_name,
+                            'data': data
+                        })
+                    except json.JSONDecodeError:
+                        continue
+                else:
+                    # Nessuna nuova riga, controlla se file è cresciuto
+                    # Per evitare polling aggressivo, sleep breve
+                    time.sleep(0.05) # 50ms (20Hz max refresh rate per non saturare SSH)
+            else:
+                print("⏳ In attesa di file log remoto...", end='\r')
+                time.sleep(2)
+                
+        except Exception as e:
+            print(f"❌ Errore Watcher SSH: {e}")
+            # Reset connessione per forzare riconnessione
+            try:
+                if ssh: ssh.close()
+            except: pass
+            ssh = None
+            time.sleep(3)
+
+# Avvia thread
+t = threading.Thread(target=watch_remote_log)
 t.daemon = True
 t.start()
 
 if __name__ == '__main__':
-    # Assicurati che la cartella esista
-    if not os.path.exists(LOG_DIR):
-        try:
-            os.makedirs(LOG_DIR)
-            print(f"📁 Creata cartella {LOG_DIR}")
-        except:
-            print(f"⚠️ Attenzione: Cartella {LOG_DIR} non trovata e impossibile crearla")
-
-    port = int(os.environ.get('PORT', 5000)) # Porta Web (default 5000)
+    port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port)
