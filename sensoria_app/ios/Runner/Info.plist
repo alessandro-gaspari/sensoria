@@ -2,8 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
+	<!-- Configurazioni App Standard -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -26,22 +25,33 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+
+	<!-- PERMESSI BLUETOOTH (Sensori) -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Questa app necessita del Bluetooth per scansionare e connettersi ai dispositivi Sensoria</string>
+	<string>Questa app necessita del Bluetooth per scansionare e connettersi ai dispositivi Sensoria.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>Questa app necessita del Bluetooth per comunicare con dispositivi Sensoria</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Questa app necessita del GPS per tracciare accuratamente le tue attività sportive</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Questa app necessita del GPS per tracciare le tue attività anche in background</string>
+	<string>Questa app necessita del Bluetooth per comunicare con dispositivi Sensoria.</string>
+
+	<!-- PERMESSI GPS (Mappa e Tracking) -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Questa app necessita del GPS per tracciare le tue attività sportive</string>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<string>Sensoria necessita della tua posizione per mostrare il tracciamento sulla mappa durante l'allenamento.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Sensoria necessita della tua posizione per tracciare le tue attività anche in background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Sensoria necessita della tua posizione per tracciare le tue attività anche in background.</string>
+
+	<!-- Configurazione APPLE MAPS -->
+	<key>io.flutter.embedded_views_preview</key>
 	<true/>
+
+	<!-- BACKGROUND MODES (Essenziale per sensori e GPS a schermo spento) -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>
+		<string>location</string>
 	</array>
+
+	<!-- Interfaccia Utente e Launch -->
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -59,5 +69,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 </dict>
 </plist>

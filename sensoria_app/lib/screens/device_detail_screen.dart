@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart'; // Import per i font
 import 'dart:async';
 import '../models/sensoria_device_type.dart';
 import '../providers/connected_devices_provider.dart';
@@ -145,7 +146,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
           const SizedBox(height: 6),
           Text(
             label,
-            style: TextStyle(
+            style: GoogleFonts.barlow(
               color: isSelected
                   ? const Color.fromRGBO(151, 201, 62, 1)
                   : const Color.fromRGBO(89, 89, 92, 1),
@@ -224,7 +225,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(color: Color(0xFF000000), fontWeight: FontWeight.w500)),
+        content: Text(
+          message, 
+          style: GoogleFonts.barlow(
+            color: const Color(0xFF000000), 
+            fontWeight: FontWeight.w600
+          )
+        ),
         backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -242,9 +249,22 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     final isStreaming = streamingManager.isStreamingDevice(deviceId);
     
     return Scaffold(
+      backgroundColor: Colors.black, // Sfondo nero come le altre schermate
       appBar: AppBar(
-        title: Text(displayName),
+        backgroundColor: Colors.black,
+        elevation: 0,
+        title: Text(
+          displayName, 
+          style: GoogleFonts.barlowCondensed(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5
+          )
+        ),
         centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: SingleChildScrollView(
         child: Padding(
@@ -258,7 +278,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   color: const Color(0xFF1A1A1A),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                      color: const Color.fromRGBO(89, 89, 92, 0.3), width: 1),
+                      color: Colors.white10, width: 1),
                 ),
                 child: Column(
                   children: [
@@ -298,45 +318,55 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                   builder: (context) => StatefulBuilder(
                                     builder: (context, setDialogState) => AlertDialog(
                                       backgroundColor: const Color(0xFF1A1A1A),
-                                      title: const Text(
-                                        'Personalizza dispositivo',
-                                        style: TextStyle(color: Color.fromRGBO(151, 201, 62, 1), fontSize: 18),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                      title: Text(
+                                        'PERSONALIZZA DISPOSITIVO',
+                                        style: GoogleFonts.barlowCondensed(
+                                          color: const Color.fromRGBO(151, 201, 62, 1), 
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold
+                                        ),
                                       ),
                                       content: SingleChildScrollView(
                                         child: Column(
                                           mainAxisSize: MainAxisSize.min,
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            const Text(
-                                              'Nome personalizzato',
-                                              style: TextStyle(
-                                                color: Color.fromRGBO(151, 201, 62, 1),
+                                            Text(
+                                              'NOME PERSONALIZZATO',
+                                              style: GoogleFonts.barlowCondensed(
+                                                color: Colors.white,
                                                 fontSize: 14,
-                                                fontWeight: FontWeight.w600,
+                                                fontWeight: FontWeight.bold,
                                               ),
                                             ),
                                             const SizedBox(height: 8),
                                             TextField(
                                               controller: nameController,
-                                              style: const TextStyle(color: Colors.white),
+                                              style: GoogleFonts.barlow(color: Colors.white),
+                                              cursorColor: const Color.fromRGBO(151, 201, 62, 1),
                                               decoration: InputDecoration(
                                                 hintText: 'Es: Ginocchio DX',
-                                                hintStyle: const TextStyle(color: Color.fromRGBO(89, 89, 92, 1)),
+                                                hintStyle: GoogleFonts.barlow(color: Colors.white38),
                                                 filled: true,
                                                 fillColor: const Color(0xFF0F0F0F),
-                                                border: OutlineInputBorder(
+                                                enabledBorder: OutlineInputBorder(
                                                   borderRadius: BorderRadius.circular(8),
-                                                  borderSide: BorderSide.none,
+                                                  borderSide: const BorderSide(color: Colors.white10),
+                                                ),
+                                                focusedBorder: OutlineInputBorder(
+                                                  borderRadius: BorderRadius.circular(8),
+                                                  borderSide: const BorderSide(color: Color.fromRGBO(151, 201, 62, 1)),
                                                 ),
                                               ),
                                             ),
                                             const SizedBox(height: 20),
-                                            const Text(
-                                              'Scegli icona',
-                                              style: TextStyle(
-                                                color: Color.fromRGBO(151, 201, 62, 1),
+                                            Text(
+                                              'SCEGLI ICONA',
+                                              style: GoogleFonts.barlowCondensed(
+                                                color: Colors.white,
                                                 fontSize: 14,
-                                                fontWeight: FontWeight.w600,
+                                                fontWeight: FontWeight.bold,
                                               ),
                                             ),
                                             const SizedBox(height: 12),
@@ -345,7 +375,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                               children: [
                                                 _buildEmojiSelector(
                                                   emoji: '🦿',
-                                                  label: 'Gamba',
+                                                  label: '',
                                                   value: 'leg',
                                                   currentValue: selectedIcon,
                                                   onTap: () {
@@ -354,7 +384,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                                 ),
                                                 _buildEmojiSelector(
                                                   emoji: '🧦',
-                                                  label: 'Piede',
+                                                  label: '',
                                                   value: 'foot',
                                                   currentValue: selectedIcon,
                                                   onTap: () {
@@ -363,7 +393,7 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                                 ),
                                                 _buildEmojiSelector(
                                                   emoji: '🦾',
-                                                  label: 'Braccio',
+                                                  label: '',
                                                   value: 'arm',
                                                   currentValue: selectedIcon,
                                                   onTap: () {
@@ -378,7 +408,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                       actions: [
                                         TextButton(
                                           onPressed: () => Navigator.of(context).pop(),
-                                          child: const Text('Annulla'),
+                                          child: Text(
+                                            'ANNULLA',
+                                            style: GoogleFonts.barlowCondensed(
+                                              color: Colors.white70, 
+                                              fontWeight: FontWeight.bold
+                                            )
+                                          ),
                                         ),
                                         ElevatedButton(
                                           onPressed: () {
@@ -387,7 +423,16 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                                               'icon': selectedIcon,
                                             });
                                           },
-                                          child: const Text('Salva'),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
+                                            foregroundColor: Colors.black,
+                                          ),
+                                          child: Text(
+                                            'SALVA',
+                                            style: GoogleFonts.barlowCondensed(
+                                              fontWeight: FontWeight.bold
+                                            )
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -430,26 +475,28 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                     const SizedBox(height: 16),
                     Text(
                       displayName,
-                      style: const TextStyle(
-                        color: Color.fromRGBO(151, 201, 62, 1),
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
+                      style: GoogleFonts.barlowCondensed(
+                        color: const Color.fromRGBO(151, 201, 62, 1),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      _getDeviceTypeName(),
-                      style: const TextStyle(
-                        color: Color.fromRGBO(151, 201, 62, 0.7),
-                        fontSize: 14,
+                      _getDeviceTypeName().toUpperCase(),
+                      style: GoogleFonts.barlow(
+                        color: Colors.white54,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        letterSpacing: 1.0
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       widget.device.remoteId.toString(),
-                      style: const TextStyle(
-                        color: Color.fromRGBO(89, 89, 92, 1),
-                        fontSize: 12,
+                      style: GoogleFonts.barlow(
+                        color: Colors.white24,
+                        fontSize: 11,
                       ),
                     ),
                     const SizedBox(height: 20),
@@ -481,12 +528,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                           const SizedBox(width: 8),
                           Text(
                             _isConnected ? 'CONNESSO' : 'DISCONNESSO',
-                            style: TextStyle(
+                            style: GoogleFonts.barlowCondensed(
                               color: _isConnected
                                   ? const Color.fromRGBO(151, 201, 62, 1)
                                   : const Color(0xFFFF4444),
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.bold,
                               fontSize: 14,
+                              letterSpacing: 1.0
                             ),
                           ),
                         ],
@@ -513,12 +561,13 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            const Text(
+                            Text(
                               'STREAMING ATTIVO',
-                              style: TextStyle(
-                                color: Color.fromRGBO(151, 201, 62, 1),
+                              style: GoogleFonts.barlowCondensed(
+                                color: const Color.fromRGBO(151, 201, 62, 1),
                                 fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.0
                               ),
                             ),
                           ],
@@ -532,8 +581,10 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
               const SizedBox(height: 16),
               
               if (_isConnecting)
-                const CircularProgressIndicator(
-                  color: Color.fromRGBO(151, 201, 62, 1),
+                const Center(
+                  child: CircularProgressIndicator(
+                    color: Color.fromRGBO(151, 201, 62, 1),
+                  ),
                 )
               else if (!_isConnected)
                 SizedBox(
@@ -542,7 +593,19 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                   child: ElevatedButton.icon(
                     onPressed: _connectToDevice,
                     icon: const Icon(Icons.bluetooth_connected),
-                    label: const Text('CONNETTI'),
+                    label: Text(
+                      'CONNETTI',
+                      style: GoogleFonts.barlowCondensed(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.0
+                      )
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
                   ),
                 )
               else
@@ -551,20 +614,25 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
+                      height: 56, // Altezza uniforme
                       child: OutlinedButton.icon(
                         onPressed: _disconnectFromDevice,
-                        icon: const Icon(Icons.power_settings_new, color: Color(0xFFFF4444),),
-                        label: const Text('DISCONNETTI',
-                          style: TextStyle(
-                            color: Color(0xFFFF4444)
+                        icon: const Icon(Icons.power_settings_new, color: Color(0xFFFF4444)),
+                        label: Text(
+                          'DISCONNETTI',
+                          style: GoogleFonts.barlowCondensed(
+                            color: const Color(0xFFFF4444),
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.0
                           )
-
                         ),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(
                             color: Color(0xFFFF4444),
+                            width: 1
                           ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         ),
                       ),
                     ),

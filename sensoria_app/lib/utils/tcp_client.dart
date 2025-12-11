@@ -48,6 +48,16 @@ class TCPDataSender {
     _socket = null;
   }
 
+  Future<bool> checkConnection() async {
+    try {
+      final socket = await Socket.connect(host, port, timeout: const Duration(seconds: 2));
+      socket.destroy(); // Chiude subito, ci serviva solo sapere se risponde
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   Future<void> sendData(String sensorName, Map<String, dynamic> data) async {
     // Se disconnesso, prova a riconnettere (ma solo se non sta già provando)
     if (!_isConnected) {

@@ -1,6 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:apple_maps_flutter/apple_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
 import '../streaming_manager.dart';
+import '../providers/connected_devices_provider.dart';
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({Key? key}) : super(key: key);
@@ -10,362 +17,414 @@ class TrackingScreen extends StatefulWidget {
 }
 
 class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProviderStateMixin {
+  Timer? _durationTimer;
+  Duration _sessionDuration = Duration.zero;
+  Position? _lastKnownPosition;
+
+  AppleMapController? _mapController;
+  StreamSubscription<Position>? _positionStream;
+  
+  // Partenza generica fino a quando non abbiamo la posizione VERA
+  CameraPosition _cameraPosition = const CameraPosition(
+    target: LatLng(0, 0), // Coordinate neutre
+    zoom: 15.0, // Zoom molto basso (mondo intero)
+  );
+  
+  bool _hasRealPosition = false; // TRUE solo quando otteniamo il GPS reale
+  String _gpsStatus = "In attesa GPS...";
+  
+  late AnimationController _markerAnimController;
+  late Animation<double> _markerAnimation;
+
   @override
   void initState() {
     super.initState();
-    debugPrint('🎯 TrackingScreen INIT');
+    _startTimer();
+    _initLocationTracking();
+
+    _markerAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+    
+    _markerAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+      CurvedAnimation(parent: _markerAnimController, curve: Curves.easeOut),
+    );
+  }
+
+  void _startTimer() {
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _sessionDuration += const Duration(seconds: 1);
+      });
+
+      // === MODIFICA: INVIO GPS COSTANTE OGNI SECONDO ===
+      if (_lastKnownPosition != null) {
+        // Invia l'ultima posizione nota anche se l'utente è fermo
+        Provider.of<StreamingManager>(context, listen: false).sendGpsData(
+          _lastKnownPosition!.latitude, 
+          _lastKnownPosition!.longitude, 
+          _lastKnownPosition!.accuracy
+        );
+      }
+      // =================================================
+    });
+  }
+
+
+      Future<void> _initLocationTracking() async {
+    // 1. Controllo Permessi... (uguale a prima)
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) return;
+    }
+
+    // 2. Ottieni la PRIMA posizione
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high, 
+        timeLimit: const Duration(seconds: 10)
+      );
+
+      if (mounted) {
+        setState(() {
+          _cameraPosition = CameraPosition(
+            target: LatLng(position.latitude, position.longitude),
+            zoom: 19.0,
+          );
+          _hasRealPosition = true;
+          _gpsStatus = "GPS Attivo";
+          _lastKnownPosition = position; // <--- SALVA SUBITO
+        });
+        
+        if (_mapController != null) {
+          _mapController!.animateCamera(
+            CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("⚠️ Errore GPS iniziale: $e");
+    }
+
+    // 3. Stream: aggiorna solo la mappa e la variabile
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 2, 
+    );
+    
+    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+      (Position position) {
+        if (position.latitude == 0 && position.longitude == 0) return;
+
+        if (mounted) {
+          // Aggiorna la variabile per il Timer
+          _lastKnownPosition = position; // <--- FONDAMENTALE
+
+          if (!_hasRealPosition) {
+             setState(() {
+               _hasRealPosition = true;
+               _gpsStatus = "GPS Agganciato";
+             });
+          }
+          
+          if (_mapController != null) {
+            _mapController!.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(position.latitude, position.longitude),
+                  zoom: 19.0,
+                ),
+              ),
+            );
+          }
+          
+          // NOTA: Ho rimosso sendGpsData da qui perché ora lo fa il Timer ogni secondo!
+        }
+      },
+      onError: (error) => debugPrint("❌ Errore stream: $error"),
+    );
+  }
+
+
+
+
+
+  Future<void> _handleStopTracking() async {
+    final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+    streamingManager.stopTracking();
+    await streamingManager.stopAll();
+    if (mounted) Navigator.pop(context);
+  }
+
+  String _getDeviceEmoji(BluetoothDevice? device, ConnectedDevicesProvider provider, {bool isHrm = false}) {
+    if (isHrm) return '❤️';
+    if (device == null) return '⚡';
+    final customIconType = provider.getDeviceIconType(device);
+    if (customIconType != null) {
+      switch (customIconType) {
+        case 'leg': return '🦿';
+        case 'foot': return '🧦';
+        case 'arm': return '🦾';
+      }
+    }
+    return '⚡';
   }
 
   @override
   void dispose() {
-    debugPrint('🛑 TrackingScreen DISPOSE');
+    _durationTimer?.cancel();
+    _positionStream?.cancel();
+    _markerAnimController.dispose();
     super.dispose();
   }
 
-  Color _getColorByIndex(int index) {
-    const colors = [
-      Color.fromRGBO(76, 175, 80, 1),
-      Color.fromRGBO(33, 150, 243, 1),
-      Color.fromRGBO(255, 152, 0, 1),
-      Color.fromRGBO(156, 39, 176, 1),
-      Color.fromRGBO(244, 67, 54, 1),
-      Color.fromRGBO(0, 188, 212, 1),
-    ];
-    return colors[index % colors.length];
-  }
-
-  String _getIconFromName(String name) {
-    final lower = name.toLowerCase();
-    if (lower.contains('ginoc') && lower.contains('sup')) return '🦿🔺';
-    if (lower.contains('ginoc') && lower.contains('inf')) return '🦿🔻';
-    if (lower.contains('calz') || lower.contains('sock') || lower.contains('piede')) return '🧦';
-    if (lower.contains('braccio') || lower.contains('arm')) return '🦾';
-    return '📍';
-  }
-
-  bool _isSocksSensor(String name) {
-    final lower = name.toLowerCase();
-    return lower.contains('calzin') || lower.contains('sock') || lower.contains('piede') || lower.contains('foot');
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return "$hours:$minutes:$seconds";
   }
 
   @override
   Widget build(BuildContext context) {
+    final streamingManager = Provider.of<StreamingManager>(context);
+    final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
+
+    final bpm = streamingManager.currentHeartRate;
+    final hrmName = streamingManager.hrmDeviceName ?? "Heart Rate Monitor";
+    
+    final int sensoriaCount = devicesProvider.connectedDevices.length;
+    final int hrmCount = (streamingManager.hrmDeviceName != null) ? 1 : 0; 
+    final int totalSensors = sensoriaCount + hrmCount;
+    
+    final isSaving = streamingManager.isTrackingActive; 
+    final isServerUp = streamingManager.isServerReachable;
+
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text('📊 Sensori In Tempo Reale'),
-        centerTitle: true,
+        backgroundColor: Colors.black,
         elevation: 0,
-      ),
-      body: SafeArea(
-        child: Consumer<StreamingManager>(
-          builder: (context, streamingManager, _) {
-            final allSensorData = streamingManager.allSensorData;
-            final sensorEntries = allSensorData.entries.toList();
-
-            return Column(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => _handleStopTracking(),
+        ),
+        title: Image.asset('assets/logo_Clean.png', height: 28),
+        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: Row(
               children: [
-                // HEADER CON STATO STREAMING + TRACKING
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  color: Colors.grey[900],
+                Icon(
+                  isSaving && isServerUp ? Icons.cloud_done : Icons.cloud_off,
+                  color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red,
+                  size: 20,
+                ),
+                const SizedBox(width: 6),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("SALVATAGGIO", style: GoogleFonts.barlowCondensed(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w600)),
+                    Text(isSaving && isServerUp ? "ON" : "OFF", style: GoogleFonts.barlowCondensed(color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red, fontWeight: FontWeight.bold, fontSize: 14)),
+                  ],
+                ),
+              ],
+            ),
+          )
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            height: 180, 
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.white10, width: 1)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      _buildLabel("DURATA"),
+                      Text(_formatDuration(_sessionDuration), style: GoogleFonts.barlowCondensed(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 16),
+                      _buildLabel("SENSORI ATTIVI"),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text(
-                            '📡 Sensori: ${allSensorData.length}',
-                            style: const TextStyle(
-                              color: Colors.white, 
-                              fontSize: 14, 
-                              fontWeight: FontWeight.w600
-                            ),
-                          ),
-                          Text(
-                            streamingManager.isStreaming ? '🟢 ATTIVO' : '🔴 FERMO',
-                            style: TextStyle(
-                              color: streamingManager.isStreaming 
-                                ? Colors.green 
-                                : Colors.red,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
+                          Text("$totalSensors", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 32, fontWeight: FontWeight.bold, height: 1.0)),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6, left: 4),
+                            child: Text("DISPOSITIVI", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 0.7), fontSize: 14, fontWeight: FontWeight.w600)),
                           ),
                         ],
                       ),
-                      // STATO TRACKING/SALVATAGGIO SSH
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: streamingManager.isSshConnected
-                            ? Colors.green.withOpacity(0.2)
-                            : Colors.grey.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: streamingManager.isSshConnected
-                              ? Colors.green 
-                              : Colors.grey,
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              streamingManager.isSshConnected
-                                ? Icons.cloud_upload
-                                : Icons.cloud_off,
-                              size: 16,
-                              color: streamingManager.isSshConnected
-                                ? Colors.green
-                                : Colors.grey,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              streamingManager.isSshConnected
-                                ? '☁️ Salvataggio SSH attivo'
-                                : '☁️ Salvataggio SSH non attivo',
-                              style: TextStyle(
-                                color: streamingManager.isSshConnected
-                                  ? Colors.green
-                                  : Colors.grey,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
                     ],
                   ),
                 ),
-                
-                // LISTA SENSORI
+
                 Expanded(
-                  child: ListView.builder(
-                    itemCount: sensorEntries.length,
-                    itemBuilder: (context, index) {
-                      final entry = sensorEntries[index];
-                      final data = entry.value;
-                      if (data == null || data.isEmpty) return const SizedBox.shrink();
-                      
-                      final sensorName = (data['sensor_name'] as String?) ?? 'Unknown';
-                      final color = _getColorByIndex(index);
-                      final icon = _getIconFromName(sensorName);
-                      final isSocks = _isSocksSensor(sensorName);
+                  flex: 3,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text("HEART RATE", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
+                      Text(bpm != null ? "$bpm" : "--", style: GoogleFonts.barlowCondensed(color: bpm != null ? const Color.fromRGBO(151, 201, 62, 1) : Colors.white12, fontSize: 80, fontWeight: FontWeight.bold, height: 1.0)),
+                      Text("BPM", style: GoogleFonts.barlowCondensed(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
 
-                      const standardKeys = {
-                        'sensor_name',
-                        'timestamp',
-                        'accel_x',
-                        'accel_y',
-                        'accel_z',
-                        'gyro_x',
-                        'gyro_y',
-                        'gyro_z',
-                        'mag_x',
-                        'mag_y',
-                        'mag_z',
-                      };
+                // MINIMAPPA
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    margin: const EdgeInsets.only(left: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white24, width: 1),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 4))],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(15),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          AppleMap(
+                            initialCameraPosition: _cameraPosition,
+                            mapType: MapType.standard,
+                            onMapCreated: (AppleMapController controller) {
+                              _mapController = controller;
+                            },
+                            myLocationEnabled: false,
+                            myLocationButtonEnabled: false,
+                            compassEnabled: false,
+                            pitchGesturesEnabled: false,
+                            scrollGesturesEnabled: false,
+                            zoomGesturesEnabled: false,
+                          ),
+                          
+                          if (_hasRealPosition) _buildAnimatedMarker(),
 
-                      final extraFields = <String, double>{};
-                      if (isSocks) {
-                        data.forEach((k, v) {
-                          if (!standardKeys.contains(k) && v is num) {
-                            extraFields[k] = v.toDouble();
-                          }
-                        });
-                      }
-
-                      return Container(
-                        margin: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1A1A1A),
-                          border: Border.all(color: color, width: 2),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: color.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
+                          if (!_hasRealPosition)
+                            Container(
+                              color: const Color(0xFF1A1A1A),
+                              child: Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Text(icon, style: const TextStyle(fontSize: 18)),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        sensorName,
-                                        style: TextStyle(
-                                          color: color,
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
+                                    const CircularProgressIndicator(
+                                      color: Color.fromRGBO(151, 201, 62, 1),
+                                      strokeWidth: 2,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _gpsStatus,
+                                      style: GoogleFonts.barlow(color: Colors.white70, fontSize: 10),
+                                      textAlign: TextAlign.center,
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('📊 Acc (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                                        _buildValue('X', data['accel_x']),
-                                        _buildValue('Y', data['accel_y']),
-                                        _buildValue('Z', data['accel_z']),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('🌀 Gyr (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                                        _buildValue('X', data['gyro_x']),
-                                        _buildValue('Y', data['gyro_y']),
-                                        _buildValue('Z', data['gyro_z']),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(width: 16),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text('🧲 Mag (RAW)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                                        _buildValue('X', data['mag_x']),
-                                        _buildValue('Y', data['mag_y']),
-                                        _buildValue('Z', data['mag_z']),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (extraFields.isNotEmpty) ...[
-                                const SizedBox(height: 16),
-                                Text('⬇️ Pressioni RAW (S0-S7)', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 4,
-                                  children: extraFields.entries.map((e) {
-                                    final val = e.value.toInt();
-                                    final absVal = val.abs();
-                                    Color pressureColor = Colors.grey;
-                                    if (absVal > 100) pressureColor = const Color(0xFF97c93e);
-                                    if (absVal > 1000) pressureColor = Colors.orange;
-                                    if (absVal > 5000) pressureColor = Colors.red;
-                                    
-                                    return Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: pressureColor.withOpacity(0.2),
-                                        border: Border.all(color: pressureColor, width: 1),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        '${e.key.toUpperCase()}: $val',
-                                        style: TextStyle(
-                                          color: pressureColor,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w600,
-                                          fontFamily: 'Courier New',
-                                        ),
-                                      ),
-                                    );
-                                  }).toList(),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                
-                // BOTTONE UNICO STOP TRACKING
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        // Ferma TRACKING (salvataggio SSH)
-                        streamingManager.stopTracking();
-                        
-                        // Ferma STREAMING (dati a Render)
-                        streamingManager.stopAll();
-                        
-                        // Torna indietro
-                        Navigator.of(context).pop();
-                      },
-                      icon: const Icon(Icons.stop_circle, size: 28),
-                      label: const Text(
-                        'STOP TRACKING',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF4444),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
                 ),
               ],
-            );
-          },
-        ),
+            ),
+          ),
+
+          Expanded(
+            child: totalSensors == 0
+                ? Center(child: Text("Nessun dispositivo attivo", style: GoogleFonts.barlow(color: Colors.white24)))
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      ...devicesProvider.connectedDevices.entries.map((entry) {
+                        return _buildDeviceCard(
+                          devicesProvider.deviceNames[entry.key] ?? "Sensoria Device", 
+                          entry.key, 
+                          streamingManager.allSensorData[entry.key] != null, 
+                          _getDeviceEmoji(entry.value, devicesProvider)
+                        );
+                      }),
+                      if (streamingManager.hrmDeviceName != null)
+                        _buildDeviceCard(hrmName, "HRM-SENSOR", true, _getDeviceEmoji(null, devicesProvider, isHrm: true)),
+                    ],
+                  ),
+          ),
+
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: const BoxDecoration(color: Colors.black, border: Border(top: BorderSide(color: Colors.white10))),
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: _handleStopTracking,
+                icon: const Icon(Icons.stop_circle_outlined, size: 28),
+                label: Text('STOP TRACKING', style: GoogleFonts.barlowCondensed(fontSize: 20, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 4),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildValue(String label, dynamic value) {
-    final val = (value as double?) ?? 0.0;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label, 
-            style: const TextStyle(
-              color: Colors.white70, 
-              fontSize: 9, 
-              fontWeight: FontWeight.w600
-            )
-          ),
-          Text(
-            val.toInt().toString(),
-            style: const TextStyle(
-              color: Color.fromRGBO(151, 201, 62, 1),
-              fontSize: 9,
-              fontFamily: 'Courier New',
-              fontWeight: FontWeight.w600,
+  Widget _buildLabel(String text) {
+    return Text(text, style: GoogleFonts.barlowCondensed(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1.0));
+  }
+
+  Widget _buildAnimatedMarker() {
+    return AnimatedBuilder(
+      animation: _markerAnimation,
+      builder: (context, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Container(
+              width: 40 * _markerAnimation.value,
+              height: 40 * _markerAnimation.value,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: const Color.fromRGBO(151, 201, 62, 1).withOpacity(1.0 - _markerAnimation.value)),
             ),
-          ),
+            Container(
+              width: 12, height: 12,
+              decoration: BoxDecoration(shape: BoxShape.circle, color: const Color.fromRGBO(151, 201, 62, 1), border: Border.all(color: Colors.white, width: 2), boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 4, offset: Offset(0, 2))]),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildDeviceCard(String name, String id, bool isActive, String emoji) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: const Color(0xFF1A1A1A), borderRadius: BorderRadius.circular(12), border: Border.all(color: isActive ? const Color.fromRGBO(151, 201, 62, 0.3) : Colors.white10, width: 1)),
+      child: Row(
+        children: [
+          Container(width: 44, height: 44, decoration: BoxDecoration(color: isActive ? const Color.fromRGBO(151, 201, 62, 0.25) : Colors.white10, borderRadius: BorderRadius.circular(12)), child: Center(child: Text(emoji, style: const TextStyle(fontSize: 24)))),
+          const SizedBox(width: 16),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(name, style: GoogleFonts.barlowCondensed(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)), Text(id, style: GoogleFonts.barlow(color: Colors.white38, fontSize: 12))])),
+          if (isActive) Container(width: 8, height: 8, decoration: const BoxDecoration(shape: BoxShape.circle, color: Color.fromRGBO(151, 201, 62, 1), boxShadow: [BoxShadow(color: Color.fromRGBO(151, 201, 62, 0.5), blurRadius: 6, spreadRadius: 2)])),
         ],
       ),
     );

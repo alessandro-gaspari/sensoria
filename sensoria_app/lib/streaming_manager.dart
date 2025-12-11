@@ -14,6 +14,14 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, String> _deviceProtocols = {};
 
+  // ==================== HRM VARIABLES ====================
+  int? _currentHeartRate;
+  int? get currentHeartRate => _currentHeartRate;
+  
+  String? _hrmDeviceId;
+  String? _hrmDeviceName; // Nuova variabile per il nome
+  String? get hrmDeviceName => _hrmDeviceName;
+
   bool get isSshConnected => _tcpSender?.isConnected ?? false;
 
   IO.Socket? _socket;
@@ -25,6 +33,9 @@ class StreamingManager extends ChangeNotifier {
   bool get isStreaming => _activeStreams.isNotEmpty;
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
   bool get isTrackingActive => _isTrackingActive;
+  bool _isServerReachable = false;
+  bool get isServerReachable => _isServerReachable;
+  Timer? _serverCheckTimer;
 
   Map<String, bool> get streamingStatus =>
       Map.from(_activeStreams.map((key, value) => MapEntry(key, true)));
@@ -32,6 +43,23 @@ class StreamingManager extends ChangeNotifier {
 
   StreamingManager() {
     _connectWebSocket();
+    _startServerCheck();
+  }
+
+  void _startServerCheck() {
+    _checkServer();
+    _serverCheckTimer = Timer.periodic(const Duration(seconds: 5), (_) => _checkServer());
+  }
+
+  Future<void> _checkServer() async {
+    final checker = TCPDataSender();
+    final isUp = await checker.checkConnection();
+    
+    if (isUp != _isServerReachable) {
+      _isServerReachable = isUp;
+      notifyListeners();
+      debugPrint('SSH Server status changed: $isUp');
+    }
   }
 
   @override
@@ -41,8 +69,41 @@ class StreamingManager extends ChangeNotifier {
     stopAll();
     _socket?.disconnect();
     _socket?.dispose();
+    _serverCheckTimer?.cancel();
     super.dispose();
   }
+
+  // ==================== HRM LOGIC ====================
+  
+  // Aggiornato per prendere anche il nome
+  void setHrmConnection(String deviceId, String deviceName, int bpm) {
+    _hrmDeviceId = deviceId;
+    _hrmDeviceName = deviceName;
+    updateHeartRate(bpm);
+  }
+
+  void updateHeartRate(int bpm) {
+    _currentHeartRate = bpm;
+    notifyListeners();
+
+    if (_isTrackingActive && _tcpSender != null && _tcpSender!.isConnected) {
+       final timestamp = DateTime.now().toUtc().toIso8601String();
+       _tcpSender!.sendData("HRM", {
+         "timestamp": timestamp,
+         "bpm": bpm,
+         "sensor_name": _hrmDeviceName ?? "HRM_GENERIC"
+       });
+    }
+  }
+
+  void clearHrmConnection() {
+    _hrmDeviceId = null;
+    _hrmDeviceName = null;
+    _currentHeartRate = null;
+    notifyListeners();
+  }
+
+  // ==================== TRACKING LOGIC ====================
 
   void startTracking() {
     if (_isTrackingActive) {
@@ -68,6 +129,8 @@ class StreamingManager extends ChangeNotifier {
     debugPrint('⏹️ Tracking fermato');
     notifyListeners();
   }
+
+  // ==================== WEBSOCKET & SENSORIA LOGIC ====================
 
   void _connectWebSocket() {
     if (_socket != null && _isSocketConnected) {
@@ -327,28 +390,8 @@ class StreamingManager extends ChangeNotifier {
   }
 
   void _sendData(String deviceId, String deviceName, Map<String, dynamic> data) {
-    // 1. NON inviamo più via WebSocket per risparmiare banda
-    // _sendDataViaWebSocket(deviceId, deviceName); 
-
-    // 2. Inviamo SOLO via TCP (SSH) se il tracking è attivo
     if (_isTrackingActive && _tcpSender != null) {
       _tcpSender!.sendData(deviceName, data);
-    }
-  }
-
-
-  void _sendDataViaWebSocket(String deviceId, String deviceName) {
-    final latestData = _latestData[deviceId];
-    if (latestData == null || latestData.isEmpty) return;
-
-    if (_socket == null || !_isSocketConnected) {
-      return;
-    }
-
-    try {
-      _socket!.emit('sensor_data', {'sensor_name': deviceName, 'data': latestData});
-    } catch (e) {
-      debugPrint('❌ [$deviceName] WebSocket send error: $e');
     }
   }
 
@@ -374,7 +417,6 @@ class StreamingManager extends ChangeNotifier {
 
   Future<void> stopAll() async {
     debugPrint('\n🛑 STOP ALL STREAMS');
-
     for (var deviceId in _activeStreams.keys.toList()) {
       try {
         await _activeStreams[deviceId]?.cancel();
@@ -382,81 +424,97 @@ class StreamingManager extends ChangeNotifier {
         debugPrint('❌ Errore disabling notify per $deviceId: $e');
       }
     }
-
     _activeStreams.clear();
     _packetCounts.clear();
     _latestData.clear();
     _lastSendTime.clear();
     _deviceProtocols.clear();
-
     debugPrint('✅ ALL STREAMS STOPPED\n');
     notifyListeners();
   }
-}
 
-Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
-  int b(int i) => data[i] & 0xFF;
-
-  if (protocol == "F20") {
-    if (data.length != 20) {
-      debugPrint('⚠️ F20 richiede 20 byte, ricevuto: ${data.length}');
-      return {};
+    // ==================== GPS LOGIC ====================
+  
+  /// Invia le coordinate GPS al server SSH
+  void sendGpsData(double latitude, double longitude, double accuracy) {
+    debugPrint("🌍 [GPS] sendGpsData chiamato: lat=$latitude, lon=$longitude, acc=$accuracy");
+    
+    // Verifica prerequisiti
+    if (!_isTrackingActive) {
+      debugPrint("⚠️ [GPS] Tracking non attivo, GPS non inviato");
+      return;
     }
     
+    if (_tcpSender == null) {
+      debugPrint("⚠️ [GPS] _tcpSender è null");
+      return;
+    }
+    
+    if (!_tcpSender!.isConnected) {
+      debugPrint("⚠️ [GPS] _tcpSender non è connesso al server");
+      return;
+    }
+    
+    final timestamp = DateTime.now().toUtc().toIso8601String();
+    
+    try {
+      _tcpSender!.sendData("GPS", {
+        "timestamp": timestamp,
+        "sensor_name": "PHONE_GPS",
+        "latitude": latitude,
+        "longitude": longitude,
+        "accuracy": accuracy
+      });
+      
+      debugPrint("✅ [GPS] Dati GPS inviati al server");
+    } catch (e) {
+      debugPrint("❌ [GPS] Errore invio: $e");
+    }
+  }
+
+}
+
+// ... parseSensoriaPacket rimane identico (omesso per brevità se non richiesto, ma includilo se copia-incolli tutto)
+Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
+  // (Incolla qui la funzione parseSensoriaPacket dal file precedente per completezza)
+  int b(int i) => data[i] & 0xFF;
+  // ... (codice parsing invariato)
+   if (protocol == "F20") {
+    if (data.length != 20) return {};
     return {
       'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
       'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      
       'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
       'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
       'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-      
       'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
       'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
       'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-      
       'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
       'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
       'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
     };
-  }
-  
-  else if (protocol == "G20") {
-    if (data.length != 20) {
-      debugPrint('⚠️ G20 richiede 20 byte, ricevuto: ${data.length}');
-      return {};
-    }
-    
-    return {
-      'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-      'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-      'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      'pressure_3': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-      'pressure_4': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-      'pressure_5': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
-      'pressure_6': (0x3FF & ((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F))).toDouble(),
-      
-      'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-      'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-      'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-      
-      'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
-      'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
-      'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-      
-      'mag_x': 0.0,
-      'mag_y': 0.0,
-      'mag_z': 0.0,
-    };
-  }
-  
-  else if (protocol == "L32") {
-    if (data.length != 32) {
-      debugPrint('⚠️ L32 richiede 32 byte, ricevuto: ${data.length}');
-      return {};
-    }
-    
+  } else if (protocol == "G20") {
+      if (data.length != 20) return {};
+      return {
+        'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
+        'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
+        'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
+        'pressure_3': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
+        'pressure_4': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
+        'pressure_5': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
+        'pressure_6': (0x3FF & ((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F))).toDouble(),
+        'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
+        'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
+        'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+        'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
+        'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
+        'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
+        'mag_x': 0.0, 'mag_y': 0.0, 'mag_z': 0.0,
+      };
+  } else if (protocol == "L32") {
+    if (data.length != 32) return {};
     return {
       'pressure_0': (0x3FF & ((b(21) << 2) | (b(22) >> 6))).toDouble(),
       'pressure_1': (0x3FF & ((b(22) << 4) | (b(23) >> 4))).toDouble(),
@@ -466,44 +524,33 @@ Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"
       'pressure_5': (0x3FF & ((b(27) << 4) | (b(28) >> 4))).toDouble(),
       'pressure_6': (0x3FF & ((b(28) << 6) | (b(29) >> 2))).toDouble(),
       'pressure_7': (0x3FF & (((b(29) & 0x03) << 8) | b(30))).toDouble(),
-      
       'accel_x': (b(3) | (b(4) << 8)).toDouble(),
       'accel_y': (b(5) | (b(6) << 8)).toDouble(),
       'accel_z': (b(7) | (b(8) << 8)).toDouble(),
-      
       'gyro_x': (b(9) | (b(10) << 8)).toDouble(),
       'gyro_y': (b(11) | (b(12) << 8)).toDouble(),
       'gyro_z': (b(13) | (b(14) << 8)).toDouble(),
-      
       'mag_x': (b(15) | (b(16) << 8)).toDouble(),
       'mag_y': (b(17) | (b(18) << 8)).toDouble(),
       'mag_z': (b(19) | (b(20) << 8)).toDouble(),
     };
+  } else if (protocol == "H20" || protocol == "I20") {
+      if (data.length != 20) return {};
+      return {
+        'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
+        'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
+        'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
+        'pressure_3': (0x3FF & ((b(0) << 6) | (b(4) & 0x3F))).toDouble(),
+        'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
+        'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
+        'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
+        'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
+        'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
+        'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
+        'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
+        'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
+        'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
+      };
   }
-
-  else if (protocol == "H20" || protocol == "I20") {
-    if (data.length != 20) return {};
-    
-    return {
-      'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-      'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-      'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      'pressure_3': (0x3FF & ((b(0) << 6) | (b(4) & 0x3F))).toDouble(),
-      
-      'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-      'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-      'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-      
-      'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
-      'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
-      'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-      
-      'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-      'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-      'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
-    };
-  }
-
-  debugPrint('❌ Protocollo non supportato: $protocol');
   return {};
 }
