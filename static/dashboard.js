@@ -49,49 +49,30 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ==========================================
-// SOCKET.IO
-// ==========================================
 function initSocket() {
     socket.on('connect', () => {
         var el = document.getElementById('connection-status');
-        if(el) el.innerHTML = '<span class="dot"></span> Connesso';
+        if(el) { el.className = ''; el.innerHTML = '<span class="dot"></span> Connesso'; }
     });
     
     socket.on('disconnect', () => {
         var el = document.getElementById('connection-status');
-        if(el) el.innerHTML = '<span class="dot"></span> Disconnesso';
+        if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
     });
 
-    // SENSORI
+    // ASCOLTO UNICO: Gestisce sia log sporchi (BPM) che dati puliti (Sensori)
     socket.on('sensor_update', (data) => processIncomingData(data));
+    socket.on('bpm_update', (data) => processIncomingData(data));
 
-    // BPM
-    socket.on('bpm_update', (data) => {
-        let val = null;
-        if (typeof data === 'number') val = data;
-        else if (typeof data === 'object') {
-            if (data.bpm !== undefined) val = data.bpm;
-            else if (data.heart_rate !== undefined) val = data.heart_rate;
-        }
-        if (val !== null && !isNaN(val) && val > 0) {
-            updateBpmUI(val);
-        }
-    });
-
-    // PROFILO
     socket.on('profile_update', (data) => updateProfileUI(data));
-
-    // GPS
     socket.on('gps_update', (data) => updateMapUI(data));
 
-    // RESET
     socket.on('data_cleared', () => {
         sensors = {};
         document.getElementById('sensors-grid').innerHTML = '';
         var empty = document.getElementById('empty-state');
         if(empty) empty.style.display = 'block';
-
+        
         var selCont = document.getElementById('selector-container');
         if(selCont) selCont.style.display = 'none';
         
@@ -115,30 +96,66 @@ function initSocket() {
 }
 
 // ==========================================
-// PARSING SENSORI
+// PARSING DEI DATI (ROBUSTO)
 // ==========================================
 function processIncomingData(data) {
-    var payload = (typeof data === 'object') ? data.data || data : null;
-
-    if (!payload || !payload.sensor_name) return;
-
-    var name = payload.sensor_name;
-
-    if (name === 'PROFILE_INFO') {
-        updateProfileUI(payload);
-        return;
+    // 1. GESTIONE BPM DA LOG SPORCO (*** Telemetry line...)
+    // Convertiamo sempre a stringa per cercare "bpm": 123 col regex, anche se è un oggetto.
+    // Questo è sicuro e non rompe nulla.
+    var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
+    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
+    
+    if (bpmMatch && bpmMatch[1]) {
+        var val = parseInt(bpmMatch[1]);
+        if (!isNaN(val) && val > 0) {
+            updateBpmUI(val);
+            // Se abbiamo trovato il BPM, non facciamo nient'altro con questo pacchetto
+            // per evitare di sporcare i grafici o creare card sensori false.
+            return;
+        }
     }
 
-    // Ignora COOSPO se non serve
-    if (name.includes("COOSPO") || name === "HRM") return;
+    // 2. GESTIONE SENSORI (Dati puliti)
+    // Se siamo qui, NON è un pacchetto BPM. Proviamo a trattarlo come sensore normale.
+    var payload = null;
 
-    sensors[name] = payload;
-    updateSensorCardUI(name, payload);
-    updateChartsUI(name, payload);
+    if (typeof data === 'object') {
+        // Se è già un oggetto (WS diretto o JSON pulito dal server)
+        payload = data.data || data;
+    } else {
+        // Se è una stringa (log sporco), proviamo a estrarre il JSON pulito
+        var jsonStart = str.indexOf('{');
+        var jsonEnd = str.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+            try {
+                payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1));
+            } catch (e) {}
+        }
+    }
+
+    // Se abbiamo estratto un payload valido e ha un nome, aggiorniamo UI
+    if (payload && payload.sensor_name) {
+        var name = payload.sensor_name;
+        
+        // Ignoriamo sensori che si chiamano "COOSPO" o simili se non siamo riusciti a estrarre il BPM sopra
+        if (name.includes("COOSPO") || name === "HRM") return;
+
+        // Se è profilo
+        if (name === 'PROFILE_INFO') {
+            updateProfileUI(payload);
+            return;
+        }
+
+        // Altrimenti è sensore vero (Ginocchio, Calzino...)
+        sensors[name] = payload;
+        updateSensorCardUI(name, payload);
+        updateChartsUI(name, payload);
+    }
 }
 
+
 // ==========================================
-// UI: SENSORI
+// UI: GRIGLIA SENSORI
 // ==========================================
 function renderSensorsGrid() {
     var grid = document.getElementById('sensors-grid');
@@ -153,7 +170,9 @@ function renderSensorsGrid() {
     }
     if(empty) empty.style.display = 'none';
 
-    keys.forEach(name => createSensorCard(name, sensors[name]));
+    keys.forEach(name => {
+        createSensorCard(name, sensors[name]);
+    });
     updateSelector();
 }
 
@@ -162,12 +181,12 @@ function createSensorCard(name, data) {
 
     var grid = document.getElementById('sensors-grid');
     var existing = document.querySelector(`[data-sensor="${name}"]`);
-    if(existing) return;
+    if(existing) return; 
 
     var div = document.createElement('div');
     div.className = 'sensor-card sensor-col connected'; 
     div.setAttribute('data-sensor', name);
-
+    
     var emoji = '📱';
     var n = name.toLowerCase();
     if(n.includes('knee') || n.includes('ginocchio')) emoji = '🦿';
@@ -177,7 +196,7 @@ function createSensorCard(name, data) {
                     <span>${emoji} ${name}</span>
                     <div class="status-indicator active"></div>
                 </div>`;
-
+    
     if (data.accel_x !== undefined) {
         html += `<div class="sensor-data-section">
                     <div class="sensor-data-section-title">Accelerometro</div>
@@ -187,12 +206,30 @@ function createSensorCard(name, data) {
                  </div>`;
     }
 
+    if (data.gyro_x !== undefined) {
+        html += `<div class="sensor-data-section">
+                    <div class="sensor-data-section-title">Giroscopio</div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">GX</span> <span class="sensor-value" data-key="gyro_x">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">GY</span> <span class="sensor-value" data-key="gyro_y">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">GZ</span> <span class="sensor-value" data-key="gyro_z">0</span></div>
+                 </div>`;
+    }
+
+    if (data.mag_x !== undefined) {
+        html += `<div class="sensor-data-section">
+                    <div class="sensor-data-section-title">Magnetometro</div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">MX</span> <span class="sensor-value" data-key="mag_x">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">MY</span> <span class="sensor-value" data-key="mag_y">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">MZ</span> <span class="sensor-value" data-key="mag_z">0</span></div>
+                 </div>`;
+    }
+
     if (data.pressure_0 !== undefined) {
-        html += `<div class="sensor-data-section" style="border:none;">
+         html += `<div class="sensor-data-section" style="border:none;">
                     <div class="sensor-data-section-title">Pressioni</div>
-                    <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" data-key="pressure_0">0</span></div>
-                    <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" data-key="pressure_1">0</span></div>
-                    <div class="sensor-data-row"><span class="sensor-data-label">P2</span> <span class="sensor-value" data-key="pressure_2">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_0">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_1">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P2</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_2">0</span></div>
                  </div>`;
     }
 
@@ -208,6 +245,38 @@ function updateSensorCardUI(name, data) {
         var el = card.querySelector(`[data-key="${k}"]`);
         if (el) el.textContent = Math.round(data[k]);
     });
+}
+
+function updateSelector() {
+    var sel = document.getElementById('chart-sensor-select');
+    var container = document.getElementById('selector-container');
+    if (!sel || !container) return;
+    
+    var current = sel.value; 
+    var names = Object.keys(sensors);
+    var savedSelection = current;
+    
+    sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
+    names.forEach(n => {
+        var opt = document.createElement('option');
+        opt.value = n; opt.textContent = n;
+        sel.appendChild(opt);
+    });
+    
+    if (names.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'block';
+
+    if (savedSelection && sensors[savedSelection]) {
+        sel.value = savedSelection;
+    } else if (!selectedSensor && names.length > 0) {
+        sel.value = names[0];
+        var event = new Event('change');
+        sel.dispatchEvent(event);
+    }
 }
 
 // ==========================================
@@ -248,9 +317,6 @@ function updateBpmUI(val) {
     }
 }
 
-// ==========================================
-// UI: MAPPA
-// ==========================================
 function initMap() {
     if (isMapInitialized) return;
     map = L.map('map').setView([41.9028, 12.4964], 5);
@@ -294,24 +360,48 @@ function updateMapUI(data) {
 }
 
 // ==========================================
-// GRAFICI (uPlot)
+// LOGICA GRAFICI (uPlot)
 // ==========================================
 function updateChartsUI(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
     
+    var cCont = document.getElementById('charts-container');
+    if(cCont && cCont.style.display === 'none') cCont.style.display = 'block';
+
     const push = (arr, vals) => {
         arr[0].push(timestamp);
         vals.forEach((v, i) => arr[i+1].push(v || 0));
         if(arr[0].length > 1000) arr.forEach(s => s.shift());
     };
 
-    if (data.accel_x !== undefined && charts.accel) push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]), charts.accel.setData(chartData.accel), autoScroll(charts.accel, chartData.accel);
-    if (data.gyro_x !== undefined && charts.gyro) push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]), charts.gyro.setData(chartData.gyro), autoScroll(charts.gyro, chartData.gyro);
-    if (data.mag_x !== undefined && charts.mag) push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]), charts.mag.setData(chartData.mag), autoScroll(charts.mag, chartData.mag);
-    if (data.pressure_0 !== undefined && charts.pressure) push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]), charts.pressure.setData(chartData.pressure), document.getElementById('pressure-chart-container').style.display='block';
-    else document.getElementById('pressure-chart-container').style.display='none';
+    if (data.accel_x !== undefined && charts.accel) {
+        push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]);
+        charts.accel.setData(chartData.accel);
+        autoScroll(charts.accel, chartData.accel);
+    }
+
+    if (data.gyro_x !== undefined && charts.gyro) {
+        push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]);
+        charts.gyro.setData(chartData.gyro);
+        autoScroll(charts.gyro, chartData.gyro);
+    }
+
+    if (data.mag_x !== undefined && charts.mag) {
+        push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]);
+        charts.mag.setData(chartData.mag);
+        autoScroll(charts.mag, chartData.mag);
+    }
+
+    if (data.pressure_0 !== undefined && charts.pressure) {
+        push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]);
+        charts.pressure.setData(chartData.pressure);
+        autoScroll(charts.pressure, chartData.pressure);
+        document.getElementById('pressure-chart-container').style.display = 'block';
+    } else {
+        document.getElementById('pressure-chart-container').style.display = 'none';
+    }
 }
 
 function autoScroll(u, data) {
@@ -322,25 +412,39 @@ function autoScroll(u, data) {
         var windowSize = 10; 
         var minX = lastTime - windowSize;
         if (xData[0] > minX) minX = xData[0];
+        
         u.setScale('x', { min: minX, max: lastTime });
     }
 }
 
 function resetChartData() {
     isUserInteracting = false;
-    chartData = { accel: [[],[],[],[]], gyro: [[],[],[],[]], mag: [[],[],[],[]], pressure: [[],[],[],[]] };
+    chartData = { 
+        accel: [[],[],[],[]], 
+        gyro: [[],[],[],[]], 
+        mag: [[],[],[],[]], 
+        pressure: [[],[],[],[]] 
+    };
+    
     if(!chartsInitialized) return;
-    Object.values(charts).forEach(c => { if(c) c.setData(chartData[c === charts.accel ? 'accel' : c === charts.gyro ? 'gyro' : c === charts.mag ? 'mag' : 'pressure']); });
+    if(charts.accel) charts.accel.setData(chartData.accel);
+    if(charts.gyro) charts.gyro.setData(chartData.gyro);
+    if(charts.mag) charts.mag.setData(chartData.mag);
+    if(charts.pressure) charts.pressure.setData(chartData.pressure);
 }
 
 function initCharts() {
-    var divs = { accel: document.getElementById('accel-chart'), gyro: document.getElementById('gyro-chart'), mag: document.getElementById('mag-chart'), pressure: document.getElementById('pressure-chart') };
-    if(Object.values(divs).some(d => !d)) return;
+    var accelDiv = document.getElementById('accel-chart');
+    var gyroDiv = document.getElementById('gyro-chart');
+    var magDiv = document.getElementById('mag-chart');
+    var pressureDiv = document.getElementById('pressure-chart');
 
-    Object.values(divs).forEach(d => d.innerHTML = '');
+    if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
+    
+    accelDiv.innerHTML = ''; gyroDiv.innerHTML = ''; magDiv.innerHTML = ''; pressureDiv.innerHTML = '';
 
-    const commonOpts = () => ({
-        width: divs.accel.offsetWidth, height: 200,
+    var commonOpts = () => ({
+        width: accelDiv.offsetWidth, height: 200,
         cursor: { show: true, drag: { x: true, y: false } },
         scales: { x: { time: true }, y: { auto: true } },
         axes: [
@@ -350,38 +454,49 @@ function initCharts() {
         plugins: [wheelZoomPlugin()]
     });
 
-    var opts = commonOpts();
-    opts.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
-    charts.accel = new uPlot(opts, chartData.accel, divs.accel); addInteraction(charts.accel);
+    var opts1 = commonOpts();
+    opts1.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
+    charts.accel = new uPlot(opts1, chartData.accel, accelDiv);
+    addInteraction(charts.accel);
 
-    opts = commonOpts();
-    opts.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
-    charts.gyro = new uPlot(opts, chartData.gyro, divs.gyro); addInteraction(charts.gyro);
+    var opts2 = commonOpts();
+    opts2.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
+    charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv);
+    addInteraction(charts.gyro);
 
-    opts = commonOpts();
-    opts.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
-    charts.mag = new uPlot(opts, chartData.mag, divs.mag); addInteraction(charts.mag);
+    var opts3 = commonOpts();
+    opts3.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
+    charts.mag = new uPlot(opts3, chartData.mag, magDiv);
+    addInteraction(charts.mag);
 
-    opts = commonOpts();
-    opts.height = 250; opts.scales.y = { auto: false, range: [0, 1024] };
-    opts.series = [{}, {label:'P0', stroke:'#ff6384', width:3}, {label:'P1', stroke:'#36a2eb', width:3}, {label:'P2', stroke:'#ffce56', width:3}];
-    charts.pressure = new uPlot(opts, chartData.pressure, divs.pressure); addInteraction(charts.pressure);
+    var opts4 = commonOpts();
+    opts4.height = 250;
+    opts4.scales.y = { auto: false, range: [0, 1024] };
+    opts4.series = [{}, {label:'P0', stroke:'#ff6384', width:3}, {label:'P1', stroke:'#36a2eb', width:3}, {label:'P2', stroke:'#ffce56', width:3}];
+    charts.pressure = new uPlot(opts4, chartData.pressure, pressureDiv);
+    addInteraction(charts.pressure);
 }
 
 function wheelZoomPlugin() {
-    return { hooks: { init: (u) => {
-        u.over.addEventListener("wheel", e => {
-            e.preventDefault();
-            var {min, max} = u.scales.x;
-            var range = max - min;
-            var factor = e.deltaY < 0 ? 0.9 : 1.1;
-            var newRange = range * factor;
-            if(newRange < MIN_ZOOM_RANGE) newRange = MIN_ZOOM_RANGE;
-            var center = min + range/2;
-            u.setScale('x', {min: center - newRange/2, max: center + newRange/2});
-        });
-        u.over.addEventListener("dblclick", () => { isUserInteracting = false; });
-    }}};
+    return {
+        hooks: {
+            init: (u) => {
+                u.over.addEventListener("wheel", e => {
+                    e.preventDefault();
+                    var {min, max} = u.scales.x;
+                    var range = max - min;
+                    var factor = e.deltaY < 0 ? 0.9 : 1.1;
+                    var newRange = range * factor;
+                    if(newRange < MIN_ZOOM_RANGE) newRange = MIN_ZOOM_RANGE;
+                    var center = min + range/2;
+                    u.setScale('x', {min: center - newRange/2, max: center + newRange/2});
+                });
+                u.over.addEventListener("dblclick", () => {
+                    isUserInteracting = false; 
+                });
+            }
+        }
+    };
 }
 
 function addInteraction(u) {
