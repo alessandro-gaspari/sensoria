@@ -198,7 +198,7 @@ def background_watcher():
                                 })
 
                                 # Battito cardiaco integrato
-                                if "heart_rate" in data:
+                                if "heart_rate" in data or "bpm" in data:
                                     last_bpm_data = data["heart_rate"]
                                     socketio.emit("bpm_update", last_bpm_data)
 

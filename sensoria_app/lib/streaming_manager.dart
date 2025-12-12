@@ -87,14 +87,15 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
 
     if (_isTrackingActive && _tcpSender != null && _tcpSender!.isConnected) {
-       final timestamp = DateTime.now().toUtc().toIso8601String();
-       _tcpSender!.sendData("HRM", {
-         "timestamp": timestamp,
-         "bpm": bpm,
-         "sensor_name": _hrmDeviceName ?? "HRM_GENERIC"
-       });
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      _tcpSender!.sendData("HRM", {
+        "timestamp": timestamp,
+        "heart_rate": bpm,  // ← CAMBIA DA "bpm" A "heart_rate"
+        "sensor_name": _hrmDeviceName ?? "COOSPO"
+      });
     }
   }
+
 
   void clearHrmConnection() {
     _hrmDeviceId = null;
