@@ -1,248 +1,392 @@
-import sys
-sys.stdout.reconfigure(line_buffering=True)
+// ==========================================
+// CONFIGURAZIONE GLOBALE
+// ==========================================
+var socket = io({ 
+    transports: ['websocket'], 
+    reconnection: true, 
+    reconnectionDelay: 500 
+});
 
-import eventlet
-eventlet.monkey_patch()
+var sensors = {};
+var map = null;
+var mapMarker = null;
+var isMapInitialized = false;
 
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO
-from flask_cors import CORS
+var charts = { accel: null, gyro: null, mag: null, pressure: null };
+var chartData = { 
+    accel: [[],[],[],[]], 
+    gyro: [[],[],[],[]], 
+    mag: [[],[],[],[]], 
+    pressure: [[],[],[],[]] 
+};
+var selectedSensor = null;
+var chartsInitialized = false;
+var isUserInteracting = false; 
+var MIN_ZOOM_RANGE = 0.5;
 
-import json
-import time
-import os
-import paramiko
+// ==========================================
+// INIZIALIZZAZIONE
+// ==========================================
+document.addEventListener('DOMContentLoaded', function() {
+    initSocket();
+    
+    var sel = document.getElementById('chart-sensor-select');
+    if(sel) {
+        sel.addEventListener('change', function(e) {
+            selectedSensor = e.target.value || null;
+            resetChartData();
+            var container = document.getElementById('charts-container');
+            if (selectedSensor) {
+                container.style.display = 'block';
+                if(!chartsInitialized) {
+                    initCharts();
+                    chartsInitialized = true;
+                }
+            } else {
+                container.style.display = 'none';
+            }
+        });
+    }
+});
 
-# --------------------------------------------------------------------
-# FLASK SETUP
-# --------------------------------------------------------------------
+// ==========================================
+// SOCKET.IO
+// ==========================================
+function initSocket() {
+    socket.on('connect', () => {
+        var el = document.getElementById('connection-status');
+        if(el) el.innerHTML = '<span class="dot"></span> Connesso';
+    });
+    
+    socket.on('disconnect', () => {
+        var el = document.getElementById('connection-status');
+        if(el) el.innerHTML = '<span class="dot"></span> Disconnesso';
+    });
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'sensoria_secret!'
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+    // SENSORI
+    socket.on('sensor_update', (data) => processIncomingData(data));
 
-# --------------------------------------------------------------------
-# SSH CONFIG
-# --------------------------------------------------------------------
+    // BPM
+    socket.on('bpm_update', (data) => {
+        let val = null;
+        if (typeof data === 'number') val = data;
+        else if (typeof data === 'object') {
+            if (data.bpm !== undefined) val = data.bpm;
+            else if (data.heart_rate !== undefined) val = data.heart_rate;
+        }
+        if (val !== null && !isNaN(val) && val > 0) {
+            updateBpmUI(val);
+        }
+    });
 
-SSH_HOST = "lambda-iot.uniud.it"
-SSH_USER = "gaspari"
-SSH_PORT = 22729
-SSH_PASS = os.environ.get("SSH_PASSWORD")
-REMOTE_LOG_DIR = "/home/gaspari/data/"
+    // PROFILO
+    socket.on('profile_update', (data) => updateProfileUI(data));
 
-# --------------------------------------------------------------------
-# IN-MEMORY DATABASE
-# --------------------------------------------------------------------
+    // GPS
+    socket.on('gps_update', (data) => updateMapUI(data));
 
-sensors_data = {}       # Sensori (accelerometro / pressione)
-last_profile_data = {}  # Profilo atleta
-last_gps_data = {}      # GPS
-last_bpm_data = 0       # Battito cardiaco
+    // RESET
+    socket.on('data_cleared', () => {
+        sensors = {};
+        document.getElementById('sensors-grid').innerHTML = '';
+        var empty = document.getElementById('empty-state');
+        if(empty) empty.style.display = 'block';
 
-# --------------------------------------------------------------------
-# ROUTES
-# --------------------------------------------------------------------
+        var selCont = document.getElementById('selector-container');
+        if(selCont) selCont.style.display = 'none';
+        
+        var chartsCont = document.getElementById('charts-container');
+        if(chartsCont) chartsCont.style.display = 'none';
+        
+        var profile = document.getElementById('user-profile-display');
+        if(profile) profile.style.display = 'none';
+        
+        var bpm = document.getElementById('bpm-display');
+        if(bpm) bpm.style.display = 'none';
+        
+        if(mapMarker) { map.removeLayer(mapMarker); mapMarker = null; }
+        var mapSec = document.getElementById('map-section');
+        if(mapSec) mapSec.style.display = 'none';
+        
+        resetChartData();
+        chartsInitialized = false;
+        selectedSensor = null;
+    });
+}
 
-@app.route('/')
-def index():
-    return render_template('dashboard.html')
+// ==========================================
+// PARSING SENSORI
+// ==========================================
+function processIncomingData(data) {
+    var payload = (typeof data === 'object') ? data.data || data : null;
 
-@app.route('/api/sensors', methods=['GET'])
-def get_sensors():
-    return jsonify({
-        'sensors': sensors_data,
-        'profile': last_profile_data,
-        'gps': last_gps_data,
-        'bpm': last_bpm_data
-    })
+    if (!payload || !payload.sensor_name) return;
 
-# --------------------------------------------------------------------
-# SSH HELPERS
-# --------------------------------------------------------------------
+    var name = payload.sensor_name;
 
-def create_ssh_client():
-    print("🔄 [SSH] Connessione...", flush=True)
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    if (name === 'PROFILE_INFO') {
+        updateProfileUI(payload);
+        return;
+    }
 
-    try:
-        client.connect(
-            SSH_HOST,
-            port=SSH_PORT,
-            username=SSH_USER,
-            password=SSH_PASS,
-            timeout=10
-        )
-        print("✅ [SSH] Connesso!", flush=True)
-        return client
-    except Exception as e:
-        print(f"❌ [SSH] Errore connessione: {e}", flush=True)
-        return None
+    // Ignora COOSPO se non serve
+    if (name.includes("COOSPO") || name === "HRM") return;
 
+    sensors[name] = payload;
+    updateSensorCardUI(name, payload);
+    updateChartsUI(name, payload);
+}
 
-def get_latest_remote_file(sftp):
-    """Restituisce il file log più recente basato sul nome (YYYY-MM-DD...)."""
-    try:
-        files = sftp.listdir_attr(REMOTE_LOG_DIR)
-        log_files = [f for f in files if f.filename.endswith('_session_log.txt')]
-        if not log_files:
-            return None
+// ==========================================
+// UI: SENSORI
+// ==========================================
+function renderSensorsGrid() {
+    var grid = document.getElementById('sensors-grid');
+    grid.innerHTML = '';
+    
+    var keys = Object.keys(sensors);
+    var empty = document.getElementById('empty-state');
+    
+    if (keys.length === 0) {
+        if(empty) empty.style.display = 'block';
+        return;
+    }
+    if(empty) empty.style.display = 'none';
 
-        # Ordine discendente: il nome contiene la data
-        log_files.sort(key=lambda f: f.filename, reverse=True)
-        return os.path.join(REMOTE_LOG_DIR, log_files[0].filename)
+    keys.forEach(name => createSensorCard(name, sensors[name]));
+    updateSelector();
+}
 
-    except Exception:
-        return None
+function createSensorCard(name, data) {
+    if (data.accel_x === undefined && data.pressure_0 === undefined) return;
 
-# --------------------------------------------------------------------
-# BACKGROUND WATCHER
-# --------------------------------------------------------------------
+    var grid = document.getElementById('sensors-grid');
+    var existing = document.querySelector(`[data-sensor="${name}"]`);
+    if(existing) return;
 
-def background_watcher():
-    global last_profile_data, last_gps_data, last_bpm_data
+    var div = document.createElement('div');
+    div.className = 'sensor-card sensor-col connected'; 
+    div.setAttribute('data-sensor', name);
 
-    print("🚀 [WATCHER] Avviato", flush=True)
+    var emoji = '📱';
+    var n = name.toLowerCase();
+    if(n.includes('knee') || n.includes('ginocchio')) emoji = '🦿';
+    if(n.includes('foot') || n.includes('sock') || n.includes('calzino')) emoji = '🧦';
 
-    ssh = None
-    sftp = None
-    remote_file = None
+    var html = `<div class="sensor-header">
+                    <span>${emoji} ${name}</span>
+                    <div class="status-indicator active"></div>
+                </div>`;
 
-    current_file_path = None
-    last_file_size = 0
+    if (data.accel_x !== undefined) {
+        html += `<div class="sensor-data-section">
+                    <div class="sensor-data-section-title">Accelerometro</div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">AX</span> <span class="sensor-value" data-key="accel_x">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">AY</span> <span class="sensor-value" data-key="accel_y">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">AZ</span> <span class="sensor-value" data-key="accel_z">0</span></div>
+                 </div>`;
+    }
 
-    while True:
-        try:
-            # ------------------------------------------------------------
-            # 1. Se SSH è morto → ricollegarsi
-            # ------------------------------------------------------------
-            if not ssh or not ssh.get_transport() or not ssh.get_transport().is_active():
-                ssh = create_ssh_client()
-                if not ssh:
-                    socketio.sleep(5)
-                    continue
-                sftp = ssh.open_sftp()
+    if (data.pressure_0 !== undefined) {
+        html += `<div class="sensor-data-section" style="border:none;">
+                    <div class="sensor-data-section-title">Pressioni</div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" data-key="pressure_0">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" data-key="pressure_1">0</span></div>
+                    <div class="sensor-data-row"><span class="sensor-data-label">P2</span> <span class="sensor-value" data-key="pressure_2">0</span></div>
+                 </div>`;
+    }
 
-            # ------------------------------------------------------------
-            # 2. Scopri il file più recente
-            # ------------------------------------------------------------
-            latest_path = get_latest_remote_file(sftp)
+    div.innerHTML = html;
+    grid.appendChild(div);
+}
 
-            # ---- NUOVA SESSIONE (cambio file) ----
-            if latest_path and latest_path != current_file_path:
-                print(f"📂 [FILE] Nuova sessione rilevata: {latest_path}", flush=True)
+function updateSensorCardUI(name, data) {
+    var card = document.querySelector(`[data-sensor="${name}"]`);
+    if (!card) { createSensorCard(name, data); updateSelector(); return; }
+    
+    Object.keys(data).forEach(k => {
+        var el = card.querySelector(`[data-key="${k}"]`);
+        if (el) el.textContent = Math.round(data[k]);
+    });
+}
 
-                # Chiudi il file precedente
-                if remote_file:
-                    try:
-                        remote_file.close()
-                    except:
-                        pass
+// ==========================================
+// UI: PROFILO, BPM, MAPPA
+// ==========================================
+function updateProfileUI(data) {
+    var div = document.getElementById('user-profile-display');
+    if (!data.name || !div) return;
+    div.style.display = 'flex';
+    document.getElementById('profile-name').textContent = data.name.toUpperCase();
+    document.getElementById('profile-avatar').textContent = data.avatar || "👤";
+    var gender = data.gender === 'M' ? '♂' : (data.gender === 'F' ? '♀' : '');
+    document.getElementById('profile-details').textContent = `${data.age} anni | ${data.weight} kg | ${gender}`;
+}
 
-                current_file_path = latest_path
+function updateBpmUI(val) {
+    var div = document.getElementById('bpm-display');
+    var mapSection = document.getElementById('map-section');
+    
+    val = parseInt(val);
 
-                # Reset dati
-                sensors_data.clear()
-                last_profile_data = {}
-                last_gps_data = {}
-                last_bpm_data = 0
-                socketio.emit("data_cleared")
+    if (val > 0) {
+        if (mapSection && mapSection.style.display === 'none') {
+            mapSection.style.display = 'block';
+            if(!isMapInitialized) initMap();
+        }
+        
+        if(div) {
+            div.style.display = 'flex';
+            document.getElementById('bpm-value').textContent = val;
+            var icon = div.querySelector('.heart-icon');
+            if (icon) {
+                var d = 60/val; 
+                if(d<0.3) d=0.3; 
+                icon.style.animationDuration = d+'s';
+            }
+        }
+    }
+}
 
-                try:
-                    remote_file = sftp.open(current_file_path, "r")
-                    stat = sftp.stat(current_file_path)
-                    last_file_size = stat.st_size
-                    remote_file.seek(last_file_size)
-                except Exception as e:
-                    print(f"❌ Errore apertura file remoto: {e}", flush=True)
-                    current_file_path = None
-                    continue
+// ==========================================
+// UI: MAPPA
+// ==========================================
+function initMap() {
+    if (isMapInitialized) return;
+    map = L.map('map').setView([41.9028, 12.4964], 5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
+        attribution: '© OpenStreetMap, © CartoDB',
+        maxZoom: 20 
+    }).addTo(map);
+    isMapInitialized = true;
+    setTimeout(() => map.invalidateSize(), 100);
+}
 
-            # ------------------------------------------------------------
-            # 3. Lettura incrementale del file corrente
-            # ------------------------------------------------------------
-            if remote_file:
-                try:
-                    stat = sftp.stat(current_file_path)
+function updateMapUI(data) {
+    var section = document.getElementById('map-section');
+    if(section) section.style.display = 'block';
 
-                    if stat.st_size > last_file_size:
-                        # Nuovi byte disponibili
-                        new_bytes = stat.st_size - last_file_size
-                        new_data = remote_file.read(new_bytes)
-                        last_file_size = stat.st_size
+    if (!isMapInitialized) {
+        map = L.map('map').setView([data.latitude, data.longitude], 15);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap, © CartoDB',
+            maxZoom: 20
+        }).addTo(map);
+        isMapInitialized = true;
+        setTimeout(() => map.invalidateSize(), 100);
+    }
 
-                        # Splitta in righe JSON
-                        lines = new_data.decode("utf-8", errors="ignore").split("\n")
+    var latlng = [data.latitude, data.longitude];
+    var accEl = document.getElementById('gps-accuracy');
+    if(accEl) accEl.textContent = Math.round(data.accuracy);
 
-                        for line in lines:
-                            if not line.strip():
-                                continue
+    if (!mapMarker) {
+        var greenIcon = new L.Icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+        });
+        mapMarker = L.marker(latlng, {icon: greenIcon}).addTo(map);
+        map.panTo(latlng);
+    } else {
+        mapMarker.setLatLng(latlng);
+    }
+}
 
-                            try:
-                                data = json.loads(line)
-                            except:
-                                continue  # linea marcia
+// ==========================================
+// GRAFICI (uPlot)
+// ==========================================
+function updateChartsUI(sensorName, data) {
+    if (selectedSensor !== sensorName || !chartsInitialized) return;
 
-                            # ------------------------------------------------
-                            # SENSORI REALI (accel/press)
-                            # ------------------------------------------------
-                            if "accel_x" in data or "pressure_0" in data:
-                                s_name = data.get("sensor_name", "Unknown")
-                                sensors_data[s_name] = data
+    var timestamp = Date.now() / 1000;
+    
+    const push = (arr, vals) => {
+        arr[0].push(timestamp);
+        vals.forEach((v, i) => arr[i+1].push(v || 0));
+        if(arr[0].length > 1000) arr.forEach(s => s.shift());
+    };
 
-                                socketio.emit("sensor_update", {
-                                    "sensor_name": s_name,
-                                    "data": data
-                                })
+    if (data.accel_x !== undefined && charts.accel) push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]), charts.accel.setData(chartData.accel), autoScroll(charts.accel, chartData.accel);
+    if (data.gyro_x !== undefined && charts.gyro) push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]), charts.gyro.setData(chartData.gyro), autoScroll(charts.gyro, chartData.gyro);
+    if (data.mag_x !== undefined && charts.mag) push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]), charts.mag.setData(chartData.mag), autoScroll(charts.mag, chartData.mag);
+    if (data.pressure_0 !== undefined && charts.pressure) push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]), charts.pressure.setData(chartData.pressure), document.getElementById('pressure-chart-container').style.display='block';
+    else document.getElementById('pressure-chart-container').style.display='none';
+}
 
-                                # Battito cardiaco integrato
-                                if "heart_rate" in data:
-                                    last_bpm_data = data["heart_rate"]
-                                    socketio.emit("bpm_update", last_bpm_data)
+function autoScroll(u, data) {
+    if (!isUserInteracting) {
+        var xData = data[0];
+        if (xData.length < 2) return;
+        var lastTime = xData[xData.length - 1];
+        var windowSize = 10; 
+        var minX = lastTime - windowSize;
+        if (xData[0] > minX) minX = xData[0];
+        u.setScale('x', { min: minX, max: lastTime });
+    }
+}
 
-                            # ------------------------------------------------
-                            # GPS
-                            # ------------------------------------------------
-                            elif "latitude" in data and "longitude" in data:
-                                last_gps_data = data
-                                socketio.emit("gps_update", data)
+function resetChartData() {
+    isUserInteracting = false;
+    chartData = { accel: [[],[],[],[]], gyro: [[],[],[],[]], mag: [[],[],[],[]], pressure: [[],[],[],[]] };
+    if(!chartsInitialized) return;
+    Object.values(charts).forEach(c => { if(c) c.setData(chartData[c === charts.accel ? 'accel' : c === charts.gyro ? 'gyro' : c === charts.mag ? 'mag' : 'pressure']); });
+}
 
-                            # ------------------------------------------------
-                            # PROFILO (name, weight, age)
-                            # ------------------------------------------------
-                            elif (
-                                "name" in data and
-                                "weight" in data and
-                                "age" in data
-                            ):
-                                last_profile_data = data
-                                socketio.emit("profile_update", data)
+function initCharts() {
+    var divs = { accel: document.getElementById('accel-chart'), gyro: document.getElementById('gyro-chart'), mag: document.getElementById('mag-chart'), pressure: document.getElementById('pressure-chart') };
+    if(Object.values(divs).some(d => !d)) return;
 
-                    else:
-                        socketio.sleep(0.05)
+    Object.values(divs).forEach(d => d.innerHTML = '');
 
-                except Exception as e:
-                    print(f"❌ Errore lettura file → riconnessione: {e}", flush=True)
-                    try:
-                        ssh.close()
-                    except:
-                        pass
-                    ssh = None
+    const commonOpts = () => ({
+        width: divs.accel.offsetWidth, height: 200,
+        cursor: { show: true, drag: { x: true, y: false } },
+        scales: { x: { time: true }, y: { auto: true } },
+        axes: [
+            { stroke: '#97c93e', grid: { stroke: '#333' }, values: (u, vals) => vals.map(v => new Date(v*1000).toLocaleTimeString()) },
+            { stroke: '#97c93e', grid: { stroke: '#333' }, size: 50 }
+        ],
+        plugins: [wheelZoomPlugin()]
+    });
 
-            else:
-                socketio.sleep(2)
+    var opts = commonOpts();
+    opts.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
+    charts.accel = new uPlot(opts, chartData.accel, divs.accel); addInteraction(charts.accel);
 
-        except Exception as e:
-            print(f"❌ Crash watcher: {e}", flush=True)
-            socketio.sleep(5)
+    opts = commonOpts();
+    opts.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
+    charts.gyro = new uPlot(opts, chartData.gyro, divs.gyro); addInteraction(charts.gyro);
 
-# --------------------------------------------------------------------
-# MAIN
-# --------------------------------------------------------------------
+    opts = commonOpts();
+    opts.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
+    charts.mag = new uPlot(opts, chartData.mag, divs.mag); addInteraction(charts.mag);
 
-if __name__ == "__main__":
-    socketio.start_background_task(background_watcher)
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port)
+    opts = commonOpts();
+    opts.height = 250; opts.scales.y = { auto: false, range: [0, 1024] };
+    opts.series = [{}, {label:'P0', stroke:'#ff6384', width:3}, {label:'P1', stroke:'#36a2eb', width:3}, {label:'P2', stroke:'#ffce56', width:3}];
+    charts.pressure = new uPlot(opts, chartData.pressure, divs.pressure); addInteraction(charts.pressure);
+}
+
+function wheelZoomPlugin() {
+    return { hooks: { init: (u) => {
+        u.over.addEventListener("wheel", e => {
+            e.preventDefault();
+            var {min, max} = u.scales.x;
+            var range = max - min;
+            var factor = e.deltaY < 0 ? 0.9 : 1.1;
+            var newRange = range * factor;
+            if(newRange < MIN_ZOOM_RANGE) newRange = MIN_ZOOM_RANGE;
+            var center = min + range/2;
+            u.setScale('x', {min: center - newRange/2, max: center + newRange/2});
+        });
+        u.over.addEventListener("dblclick", () => { isUserInteracting = false; });
+    }}};
+}
+
+function addInteraction(u) {
+    u.over.addEventListener('mousedown', () => isUserInteracting = true);
+    u.over.addEventListener('wheel', () => isUserInteracting = true);
+}
+
+function clearAllData() { if(confirm('Pulire tutto?')) fetch('/api/clear', {method:'POST'}); }
