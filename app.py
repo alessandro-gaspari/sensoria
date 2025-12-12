@@ -1,5 +1,4 @@
 import sys
-# 1. FIX LOGGING: Forza l'output immediato dei print
 sys.stdout.reconfigure(line_buffering=True)
 
 import eventlet
@@ -8,28 +7,43 @@ eventlet.monkey_patch()
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO
 from flask_cors import CORS
+
 import json
 import time
 import os
 import paramiko
-import stat
+
+# --------------------------------------------------------------------
+# FLASK SETUP
+# --------------------------------------------------------------------
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'sensoria_secret!'
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# --- CONFIGURAZIONE SSH ---
+# --------------------------------------------------------------------
+# SSH CONFIG
+# --------------------------------------------------------------------
+
 SSH_HOST = "lambda-iot.uniud.it"
 SSH_USER = "gaspari"
 SSH_PORT = 22729
 SSH_PASS = os.environ.get("SSH_PASSWORD")
 REMOTE_LOG_DIR = "/home/gaspari/data/"
 
-sensors_data = {}
-last_profile_data = None
-last_gps_data = None
-last_bpm_data = None  # Cache BPM
+# --------------------------------------------------------------------
+# IN-MEMORY DATABASE
+# --------------------------------------------------------------------
+
+sensors_data = {}       # Sensori (accelerometro / pressione)
+last_profile_data = {}  # Profilo atleta
+last_gps_data = {}      # GPS
+last_bpm_data = 0       # Battito cardiaco
+
+# --------------------------------------------------------------------
+# ROUTES
+# --------------------------------------------------------------------
 
 @app.route('/')
 def index():
@@ -37,60 +51,73 @@ def index():
 
 @app.route('/api/sensors', methods=['GET'])
 def get_sensors():
-    response = {'sensors': sensors_data}
-    if last_profile_data:
-        response['profile'] = last_profile_data
-    if last_gps_data:
-        response['gps'] = last_gps_data
-    if last_bpm_data:
-        response['bpm'] = last_bpm_data
-    return jsonify(response)
+    return jsonify({
+        'sensors': sensors_data,
+        'profile': last_profile_data,
+        'gps': last_gps_data,
+        'bpm': last_bpm_data
+    })
 
-# =========================================================
-# LOGICA WATCHER
-# =========================================================
+# --------------------------------------------------------------------
+# SSH HELPERS
+# --------------------------------------------------------------------
+
 def create_ssh_client():
-    print(f"🔄 [SSH] Connessione a {SSH_HOST}:{SSH_PORT}...", flush=True)
+    print("🔄 [SSH] Connessione...", flush=True)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
     try:
-        client.connect(SSH_HOST, port=SSH_PORT, username=SSH_USER, password=SSH_PASS, timeout=10)
+        client.connect(
+            SSH_HOST,
+            port=SSH_PORT,
+            username=SSH_USER,
+            password=SSH_PASS,
+            timeout=10
+        )
         print("✅ [SSH] Connesso!", flush=True)
         return client
     except Exception as e:
-        print(f"❌ [SSH] Errore: {e}", flush=True)
+        print(f"❌ [SSH] Errore connessione: {e}", flush=True)
         return None
 
+
 def get_latest_remote_file(sftp):
+    """Restituisce il file log più recente basato sul nome (YYYY-MM-DD...)."""
     try:
         files = sftp.listdir_attr(REMOTE_LOG_DIR)
         log_files = [f for f in files if f.filename.endswith('_session_log.txt')]
         if not log_files:
             return None
 
-        # Ordina per nome (data)
+        # Ordine discendente: il nome contiene la data
         log_files.sort(key=lambda f: f.filename, reverse=True)
+        return os.path.join(REMOTE_LOG_DIR, log_files[0].filename)
 
-        latest = log_files[0]
-        return os.path.join(REMOTE_LOG_DIR, latest.filename)
-
-    except Exception as e:
-        print(f"⚠️ [SSH] Errore listdir: {e}", flush=True)
+    except Exception:
         return None
 
+# --------------------------------------------------------------------
+# BACKGROUND WATCHER
+# --------------------------------------------------------------------
 
 def background_watcher():
     global last_profile_data, last_gps_data, last_bpm_data
-    print("🚀 [WATCHER] Thread avviato!", flush=True)
+
+    print("🚀 [WATCHER] Avviato", flush=True)
 
     ssh = None
     sftp = None
     remote_file = None
+
     current_file_path = None
     last_file_size = 0
 
     while True:
         try:
+            # ------------------------------------------------------------
+            # 1. Se SSH è morto → ricollegarsi
+            # ------------------------------------------------------------
             if not ssh or not ssh.get_transport() or not ssh.get_transport().is_active():
                 ssh = create_ssh_client()
                 if not ssh:
@@ -98,11 +125,16 @@ def background_watcher():
                     continue
                 sftp = ssh.open_sftp()
 
+            # ------------------------------------------------------------
+            # 2. Scopri il file più recente
+            # ------------------------------------------------------------
             latest_path = get_latest_remote_file(sftp)
 
+            # ---- NUOVA SESSIONE (cambio file) ----
             if latest_path and latest_path != current_file_path:
-                print(f"📂 [WATCHER] Monitoraggio file: {latest_path}", flush=True)
+                print(f"📂 [FILE] Nuova sessione rilevata: {latest_path}", flush=True)
 
+                # Chiudi il file precedente
                 if remote_file:
                     try:
                         remote_file.close()
@@ -111,82 +143,88 @@ def background_watcher():
 
                 current_file_path = latest_path
 
+                # Reset dati
+                sensors_data.clear()
+                last_profile_data = {}
+                last_gps_data = {}
+                last_bpm_data = 0
+                socketio.emit("data_cleared")
+
                 try:
-                    remote_file = sftp.open(current_file_path, 'r')
-                    stat_info = sftp.stat(current_file_path)
-                    last_file_size = stat_info.st_size
+                    remote_file = sftp.open(current_file_path, "r")
+                    stat = sftp.stat(current_file_path)
+                    last_file_size = stat.st_size
                     remote_file.seek(last_file_size)
-
-                    sensors_data.clear()
-                    last_profile_data = None
-                    last_gps_data = None
-                    last_bpm_data = None
-                    socketio.emit('data_cleared')
-
-                except IOError as e:
-                    print(f"⚠️ [WATCHER] Errore apertura file: {e}", flush=True)
+                except Exception as e:
+                    print(f"❌ Errore apertura file remoto: {e}", flush=True)
                     current_file_path = None
-                    socketio.sleep(2)
                     continue
 
-            if remote_file and current_file_path:
+            # ------------------------------------------------------------
+            # 3. Lettura incrementale del file corrente
+            # ------------------------------------------------------------
+            if remote_file:
                 try:
-                    stat_info = sftp.stat(current_file_path)
-                    current_size = stat_info.st_size
+                    stat = sftp.stat(current_file_path)
 
-                    if current_size > last_file_size:
-                        new_data = remote_file.read(current_size - last_file_size)
-                        last_file_size = current_size
+                    if stat.st_size > last_file_size:
+                        # Nuovi byte disponibili
+                        new_bytes = stat.st_size - last_file_size
+                        new_data = remote_file.read(new_bytes)
+                        last_file_size = stat.st_size
 
-                        chunk = new_data.decode('utf-8', errors='ignore')
-                        lines = chunk.split('\n')
+                        # Splitta in righe JSON
+                        lines = new_data.decode("utf-8", errors="ignore").split("\n")
 
                         for line in lines:
-                            line = line.strip()
-                            if not line:
+                            if not line.strip():
                                 continue
+
                             try:
                                 data = json.loads(line)
-
-                                # A. Sensori
-                                if 'sensor_name' in data:
-                                    s_name = data.get('sensor_name', 'Unknown')
-                                    sensors_data[s_name] = data
-                                    socketio.emit(
-                                        'sensor_update',
-                                        {'sensor_name': s_name, 'data': data}
-                                    )
-
-                                    # BPM dentro sensore
-                                    if 'heart_rate' in data:
-                                        bpm_val = data['heart_rate']
-                                        last_bpm_data = bpm_val
-                                        socketio.emit('bpm_update', bpm_val)
-
-                                # B. GPS
-                                elif 'latitude' in data and 'longitude' in data:
-                                    last_gps_data = data
-                                    socketio.emit('gps_update', data)
-
-                                # C. Profilo
-                                elif 'name' in data and 'weight' in data:
-                                    last_profile_data = data
-                                    socketio.emit('profile_update', data)
-                                    print(f"👤 [PROFILE] Rilevato utente: {data['name']}", flush=True)
-
-                                # D. Pacchetto BPM standalone
-                                elif 'bpm' in data:
-                                    last_bpm_data = data['bpm']
-                                    socketio.emit('bpm_update', data['bpm'])
-
                             except:
-                                pass
+                                continue  # linea marcia
+
+                            # ------------------------------------------------
+                            # SENSORI REALI (accel/press)
+                            # ------------------------------------------------
+                            if "accel_x" in data or "pressure_0" in data:
+                                s_name = data.get("sensor_name", "Unknown")
+                                sensors_data[s_name] = data
+
+                                socketio.emit("sensor_update", {
+                                    "sensor_name": s_name,
+                                    "data": data
+                                })
+
+                                # Battito cardiaco integrato
+                                if "heart_rate" in data:
+                                    last_bpm_data = data["heart_rate"]
+                                    socketio.emit("bpm_update", last_bpm_data)
+
+                            # ------------------------------------------------
+                            # GPS
+                            # ------------------------------------------------
+                            elif "latitude" in data and "longitude" in data:
+                                last_gps_data = data
+                                socketio.emit("gps_update", data)
+
+                            # ------------------------------------------------
+                            # PROFILO (name, weight, age)
+                            # ------------------------------------------------
+                            elif (
+                                "name" in data and
+                                "weight" in data and
+                                "age" in data
+                            ):
+                                last_profile_data = data
+                                socketio.emit("profile_update", data)
 
                     else:
-                        socketio.sleep(0.01)
+                        socketio.sleep(0.05)
 
                 except Exception as e:
-                    print(f"⚠️ [WATCHER] Errore durante lettura loop: {e}", flush=True)
+                    print(f"❌ Errore lettura file → riconnessione: {e}", flush=True)
                     try:
                         ssh.close()
                     except:
@@ -197,13 +235,14 @@ def background_watcher():
                 socketio.sleep(2)
 
         except Exception as e:
-            print(f"❌ [WATCHER] Crash loop critico: {e}", flush=True)
-            ssh = None
+            print(f"❌ Crash watcher: {e}", flush=True)
             socketio.sleep(5)
 
+# --------------------------------------------------------------------
+# MAIN
+# --------------------------------------------------------------------
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     socketio.start_background_task(background_watcher)
-    port = int(os.environ.get('PORT', 5000))
-    print(f"🌍 Server in ascolto su porta {port}...", flush=True)
-    socketio.run(app, host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    socketio.run(app, host="0.0.0.0", port=port)
