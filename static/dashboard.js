@@ -130,20 +130,19 @@ function renderSensorsGrid() {
 }
 
 function createSensorCard(name, data) {
-    // --- FILTRO CRITICO ---
-    // Se non ha dati IMU o Pressione, non è un sensore da mostrare qui (è spazzatura o altro)
+    // FILTRO BASE: Deve avere almeno un dato utile
     if (data.accel_x === undefined && data.pressure_0 === undefined) return;
 
     var grid = document.getElementById('sensors-grid');
     var div = document.createElement('div');
-    div.className = 'sensor-card'; // Assicurati di avere CSS per questa classe se vuoi
+    div.className = 'sensor-card';
     div.setAttribute('data-sensor', name);
     div.style.cssText = "background:#1a1a1a; padding:15px; border-radius:12px; border:1px solid #333; min-width: 280px;";
     
     var emoji = '📱';
     var n = name.toLowerCase();
-    if(n.includes('leg') || n.includes('knee')) emoji = '🦿';
-    if(n.includes('foot') || n.includes('sock')) emoji = '🧦';
+    if(n.includes('leg') || n.includes('knee') || n.includes('ginocchio')) emoji = '🦿';
+    if(n.includes('foot') || n.includes('sock') || n.includes('calzino') || n.includes('piede')) emoji = '🧦';
     if(n.includes('arm')) emoji = '🦾';
 
     var html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -151,20 +150,51 @@ function createSensorCard(name, data) {
                     <div class="status-indicator active"></div>
                 </div>`;
     
-    // Sezione IMU
+    // --- ACCELEROMETRO ---
     if (data.accel_x !== undefined) {
-        html += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px; margin-bottom:12px;">
-                    <div style="color:#888;">AX <b style="color:#fff; display:block;" data-key="accel_x">0</b></div>
-                    <div style="color:#888;">AY <b style="color:#fff; display:block;" data-key="accel_y">0</b></div>
-                    <div style="color:#888;">AZ <b style="color:#fff; display:block;" data-key="accel_z">0</b></div>
+        html += `<div style="margin-bottom:8px;">
+                    <div style="color:#97c93e; font-size:11px; font-weight:bold; margin-bottom:4px;">ACCELEROMETRO</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px;">
+                        <div style="color:#888;">AX <b style="color:#fff; display:block;" data-key="accel_x">0</b></div>
+                        <div style="color:#888;">AY <b style="color:#fff; display:block;" data-key="accel_y">0</b></div>
+                        <div style="color:#888;">AZ <b style="color:#fff; display:block;" data-key="accel_z">0</b></div>
+                    </div>
                  </div>`;
     }
-    // Sezione Pressioni
+
+    // --- GIROSCOPIO (Solo se presente) ---
+    if (data.gyro_x !== undefined) {
+        html += `<div style="margin-bottom:8px; border-top:1px solid #333; padding-top:8px;">
+                    <div style="color:#97c93e; font-size:11px; font-weight:bold; margin-bottom:4px;">GIROSCOPIO</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px;">
+                        <div style="color:#888;">GX <b style="color:#fff; display:block;" data-key="gyro_x">0</b></div>
+                        <div style="color:#888;">GY <b style="color:#fff; display:block;" data-key="gyro_y">0</b></div>
+                        <div style="color:#888;">GZ <b style="color:#fff; display:block;" data-key="gyro_z">0</b></div>
+                    </div>
+                 </div>`;
+    }
+
+    // --- MAGNETOMETRO (Solo se presente) ---
+    if (data.mag_x !== undefined) {
+        html += `<div style="margin-bottom:8px; border-top:1px solid #333; padding-top:8px;">
+                    <div style="color:#97c93e; font-size:11px; font-weight:bold; margin-bottom:4px;">MAGNETOMETRO</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px;">
+                        <div style="color:#888;">MX <b style="color:#fff; display:block;" data-key="mag_x">0</b></div>
+                        <div style="color:#888;">MY <b style="color:#fff; display:block;" data-key="mag_y">0</b></div>
+                        <div style="color:#888;">MZ <b style="color:#fff; display:block;" data-key="mag_z">0</b></div>
+                    </div>
+                 </div>`;
+    }
+
+    // --- PRESSIONI (Solo se presente) ---
     if (data.pressure_0 !== undefined) {
-         html += `<div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px; border-top:1px solid #333; padding-top:10px;">
-                    <div style="color:#888;">P0 <b style="color:#ffce56; display:block;" data-key="pressure_0">0</b></div>
-                    <div style="color:#888;">P1 <b style="color:#ffce56; display:block;" data-key="pressure_1">0</b></div>
-                    <div style="color:#888;">P2 <b style="color:#ffce56; display:block;" data-key="pressure_2">0</b></div>
+         html += `<div style="border-top:1px solid #333; padding-top:8px;">
+                    <div style="color:#97c93e; font-size:11px; font-weight:bold; margin-bottom:4px;">PRESSIONI</div>
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; font-size:13px;">
+                        <div style="color:#888;">P0 <b style="color:#ffce56; display:block;" data-key="pressure_0">0</b></div>
+                        <div style="color:#888;">P1 <b style="color:#ffce56; display:block;" data-key="pressure_1">0</b></div>
+                        <div style="color:#888;">P2 <b style="color:#ffce56; display:block;" data-key="pressure_2">0</b></div>
+                    </div>
                  </div>`;
     }
 
@@ -193,30 +223,47 @@ function updateSensorCardUI(name, data) {
 
 function updateSelector() {
     var sel = document.getElementById('chart-sensor-select');
-    var current = sel.value; // Salva selezione corrente
+    var current = sel.value; 
     
     sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
     
-    Object.keys(sensors).forEach(name => {
+    var sensorNames = Object.keys(sensors);
+    sensorNames.forEach(name => {
         var opt = document.createElement('option');
         opt.value = name;
         opt.textContent = name;
         sel.appendChild(opt);
     });
     
-    // Ripristina selezione se possibile
-    if (current && sensors[current]) {
-        sel.value = current;
+    // VISIBILITA' DEL MENU A TENDINA
+    var selectorContainer = document.getElementById('selector-container');
+    if (sensorNames.length > 0) {
+        selectorContainer.style.display = 'block'; // Mostra il menu se ci sono sensori
+    } else {
+        selectorContainer.style.display = 'none';
     }
 
-    // Mostra/Nascondi container grafici
-    var container = document.getElementById('charts-container');
-    if (Object.keys(sensors).length > 0) {
-        // container.style.display = 'block'; // Non forzare block se l'utente non ha scelto
+    // LOGICA AUTO-SELEZIONE (Se vuoi che parta in automatico)
+    if (current && sensors[current]) {
+        sel.value = current;
+    } else if (sensorNames.length > 0) {
+        sel.value = sensorNames[0];
+        selectedSensor = sensorNames[0];
+        if(!chartsInitialized) {
+            initCharts();
+            chartsInitialized = true;
+        }
+    }
+
+    // VISIBILITA' DEI GRAFICI
+    var chartsContainer = document.getElementById('charts-container');
+    if (selectedSensor && sensors[selectedSensor]) {
+        chartsContainer.style.display = 'block';
     } else {
-        container.style.display = 'none';
+        chartsContainer.style.display = 'none';
     }
 }
+
 
 
 // ==========================================
