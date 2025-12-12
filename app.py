@@ -177,66 +177,58 @@ def background_watcher():
                         lines = new_data.decode("utf-8", errors="ignore").split("\n")
 
                         for line in lines:
-                            if not line.strip():
+                            line = line.strip()
+                            if not line:
                                 continue
 
+                            data = None
                             try:
-                                # === FIX 1: PULIZIA DEL LOG ===
-                                # Il log inizia con "*** ... chunk=", quindi dobbiamo
-                                # trovare dove inizia la prima parentesi graffa '{' e dove finisce '}'
-                                json_str = line
-                                start_idx = json_str.find("{")
-                                end_idx = json_str.rfind("}")
-
-                                # Se non troviamo le graffe, la riga non è JSON valido, saltiamo
-                                if start_idx == -1 or end_idx == -1:
-                                    continue
+                                # === FIX: CERCA SOLO LA PARTE JSON TRA { } ===
+                                idx_start = line.find("{")
+                                idx_end = line.rfind("}")
                                 
-                                # Estraiamo solo il JSON pulito
-                                json_str = json_str[start_idx : end_idx + 1]
-                                data = json.loads(json_str)
-
-                            except Exception as e:
-                                # Se fallisce ancora, è proprio una riga corrotta
-                                continue 
+                                if idx_start != -1 and idx_end != -1:
+                                    # Prende solo quello che c'è tra la prima { e l'ultima }
+                                    clean_json = line[idx_start : idx_end + 1]
+                                    data = json.loads(clean_json)
+                                else:
+                                    continue # Riga spazzatura senza graffe
+                            except:
+                                continue # JSON rotto
 
                             # ------------------------------------------------
-                            # FIX 2: LETTURA BPM (Chiave "bpm" vs "heart_rate")
+                            # 1. BATTITO CARDIACO (Priorità assoluta)
                             # ------------------------------------------------
+                            # Cerca sia "bpm" (dal tuo log) che "heart_rate" (standard)
                             if "bpm" in data:
-                                last_bpm_data = data["bpm"]
-                                socketio.emit("bpm_update", last_bpm_data) # Modo A: numero secco
-                                # socketio.emit("bpm_update", {"bpm": last_bpm_data}) # Modo B: se il JS vuole oggetto (ma il tuo JS gestisce entrambi)
-                            
+                                val = data["bpm"]
+                                last_bpm_data = val
+                                # EMETTE L'EVENTO FONDAMENTALE
+                                socketio.emit("bpm_update", val)
+                                print(f"❤️ BPM TROVATO: {val}", flush=True) # Log di debug per te
+
                             elif "heart_rate" in data:
-                                last_bpm_data = data["heart_rate"]
-                                socketio.emit("bpm_update", last_bpm_data)
+                                val = data["heart_rate"]
+                                last_bpm_data = val
+                                socketio.emit("bpm_update", val)
+                                print(f"❤️ HEART_RATE TROVATO: {val}", flush=True)
 
                             # ------------------------------------------------
-                            # SENSORI REALI (accel/press)
+                            # 2. ALTRI SENSORI E GPS (Resto del codice uguale)
                             # ------------------------------------------------
-                            elif "accel_x" in data or "pressure_0" in data:
+                            elif "accel_x" in data:
                                 s_name = data.get("sensor_name", "Unknown")
                                 sensors_data[s_name] = data
+                                socketio.emit("sensor_update", {"sensor_name": s_name, "data": data})
 
-                                socketio.emit("sensor_update", {
-                                    "sensor_name": s_name,
-                                    "data": data
-                                })
-
-                            # ------------------------------------------------
-                            # GPS
-                            # ------------------------------------------------
-                            elif "latitude" in data and "longitude" in data:
+                            elif "latitude" in data:
                                 last_gps_data = data
                                 socketio.emit("gps_update", data)
 
-                            # ------------------------------------------------
-                            # PROFILO (name, weight, age)
-                            # ------------------------------------------------
-                            elif "name" in data and "weight" in data:
+                            elif "name" in data:  # Profilo
                                 last_profile_data = data
                                 socketio.emit("profile_update", data)
+
 
                     else:
                         socketio.sleep(0.05)
