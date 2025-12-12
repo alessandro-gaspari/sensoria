@@ -95,49 +95,18 @@ function startFpsCounter() {
 }
 
 function initializeSocketListeners() {
-    socket.on('connect', function() {
-        isConnected = true;
-        updateConnectionStatus(true);
-    });
 
-    socket.on('disconnect', function() {
-        isConnected = false;
-        updateConnectionStatus(false);
-    });
-
-    socket.on('connection_response', function(data) {
-        if (data.sensors) {
-            sensors = data.sensors;
-            renderSensors();
-        }
-    });
-
-    socket.on('sensor_update', function(data) {
-        frameCount++;
-        var sensorName = data.sensor_name;
-        var sensorData = data.data;
-        sensors[sensorName] = sensorData;
-        pendingUpdates[sensorName] = sensorData;
-        updateCharts(sensorName, sensorData);
-    });
-
-    socket.on('sensor_disconnected', function(data) {
-        if (!data.sensor_name) return;
-        delete sensors[data.sensor_name];
-        delete pendingUpdates[data.sensor_name];
-        var card = document.querySelector('[data-sensor="' + data.sensor_name + '"]');
-        if (card) card.remove();
-        renderSensors();
-    });
-
-    // --- NUOVO: LISTENER PROFILO ---
     socket.on('profile_update', function(data) {
         updateProfileUI(data);
     });
 
-    // --- NUOVO: LISTENER GPS ---
     socket.on('gps_update', function(data) {
         updateMap(data);
+    });
+
+    // --- NUOVO: LISTENER BPM ---
+    socket.on('bpm_update', function(bpm) {
+        updateBpmUI(bpm);
     });
 
     socket.on('data_cleared', function() {
@@ -146,10 +115,10 @@ function initializeSocketListeners() {
         pendingUpdates = {};
         renderSensors();
         
-        // Pulisci Profilo UI
+        // Pulisci UI
         document.getElementById('user-profile-display').style.display = 'none';
+        document.getElementById('bpm-display').style.display = 'none'; // Nascondi BPM
         
-        // Pulisci Mappa (non la distruggiamo, ma nascondiamo il marker)
         if (mapMarker) {
             map.removeLayer(mapMarker);
             mapMarker = null;
@@ -157,6 +126,45 @@ function initializeSocketListeners() {
         document.getElementById('map-section').style.display = 'none';
     });
 }
+
+// ...
+
+// --- NUOVA FUNZIONE BPM ---
+function updateBpmUI(bpm) {
+    var container = document.getElementById('bpm-display');
+    var valueEl = document.getElementById('bpm-value');
+    
+    if (container && valueEl && bpm > 0) {
+        container.style.display = 'flex';
+        valueEl.textContent = bpm;
+        
+        // Animazione più veloce se il cuore batte forte
+        var icon = container.querySelector('.heart-icon');
+        if (icon) {
+            var speed = 60 / bpm; // Es: 60bpm -> 1s, 120bpm -> 0.5s
+            if(speed < 0.3) speed = 0.3; // Limite visivo
+            icon.style.animationDuration = speed + 's';
+        }
+    }
+}
+
+// ... (Resto del codice uguale: initMap, updateMap, fetchInitialData con aggiunta bpm...) ...
+
+function fetchInitialData() {
+    fetch('/api/sensors')
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            sensors = data.sensors || {};
+            renderSensors();
+            
+            if (data.profile) updateProfileUI(data.profile);
+            if (data.gps) updateMap(data.gps);
+            if (data.bpm) updateBpmUI(data.bpm); // Carica BPM iniziale
+        });
+}
+
+// ... (Resto del file invariato) ...
+
 
 // --- FUNZIONI PROFILO ---
 function updateProfileUI(data) {

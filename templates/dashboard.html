@@ -6,13 +6,26 @@
     <title>Sensoria Dashboard</title>
     <link rel="stylesheet" href="/static/dashboard.css">
     
-    <!-- uPlot CSS e JS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.min.css">
     <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
 
-    <!-- Leaflet CSS e JS (Mappa) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        /* Animazione Battito Cardiaco */
+        @keyframes heartbeat {
+            0% { transform: scale(1); }
+            15% { transform: scale(1.3); }
+            30% { transform: scale(1); }
+            45% { transform: scale(1.15); }
+            60% { transform: scale(1); }
+        }
+        .heart-icon.beating {
+            animation: heartbeat 1s infinite;
+            display: inline-block;
+        }
+    </style>
 </head>
 <body style="background-color: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;">
     
@@ -20,13 +33,20 @@
         <div style="display: flex; align-items: center; gap: 20px;">
             <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo" style="height: 40px; object-fit: contain;">
             
-            <!-- NUOVO: SEZIONE PROFILO UTENTE -->
+            <!-- PROFILO UTENTE -->
             <div id="user-profile-display" style="display: none; align-items: center; gap: 12px; background: #1a1a1a; padding: 6px 16px; border-radius: 50px; border: 1px solid #333;">
                 <span id="profile-avatar" style="font-size: 24px;">👤</span>
                 <div style="display: flex; flex-direction: column; justify-content: center;">
                     <span id="profile-name" style="font-weight: bold; color: #97c93e; font-size: 14px; line-height: 1;">--</span>
                     <span id="profile-details" style="font-size: 11px; color: #888; margin-top: 2px;">-- anni | -- kg</span>
                 </div>
+            </div>
+
+            <!-- NUOVO: BPM DISPLAY -->
+            <div id="bpm-display" style="display: none; align-items: center; gap: 8px; background: #2a1a1a; padding: 6px 16px; border-radius: 50px; border: 1px solid #552222;">
+                <span class="heart-icon beating" style="font-size: 20px; color: #ff4444;">❤️</span>
+                <span id="bpm-value" style="font-weight: bold; color: #ff4444; font-size: 18px; line-height: 1;">--</span>
+                <span style="font-size: 10px; color: #aa5555; margin-top: 2px;">BPM</span>
             </div>
         </div>
 
@@ -40,7 +60,7 @@
     </div>
     
     <div class="dashboard-container">
-        <!-- Sezione grafici (INVARIATA) -->
+        <!-- GRAFICI -->
         <div id="charts-container" style="display: none; margin-bottom: 30px;">
             <h2 style="color: #97c93e; margin-bottom: 20px; font-size: 20px;">📈 Grafici Real-Time</h2>
             
@@ -81,16 +101,10 @@
         
         <div id="sensors-grid"></div>
 
-        <!-- NUOVO: SEZIONE MAPPA GPS -->
+        <!-- MAPPA GPS -->
         <div id="map-section" style="margin-top: 40px; display: none;">
             <h2 style="color: #97c93e; margin-bottom: 20px; font-size: 20px;">🌍 Posizione GPS Real-Time</h2>
-            <div id="map" style="
-                height: 400px; 
-                width: 100%; 
-                border-radius: 12px; 
-                border: 2px solid #333; 
-                z-index: 1;
-            "></div>
+            <div id="map" style="height: 400px; width: 100%; border-radius: 12px; border: 2px solid #333; z-index: 1;"></div>
             <div style="margin-top: 8px; color: #888; font-size: 12px; text-align: right;">
                 Accuratezza: <span id="gps-accuracy">--</span> m
             </div>

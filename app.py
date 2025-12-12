@@ -29,6 +29,7 @@ REMOTE_LOG_DIR = "/home/gaspari/data/"
 sensors_data = {}
 last_profile_data = None
 last_gps_data = None
+last_bpm_data = None  # Cache BPM
 
 @app.route('/')
 def index():
@@ -41,6 +42,8 @@ def get_sensors():
         response['profile'] = last_profile_data
     if last_gps_data:
         response['gps'] = last_gps_data
+    if last_bpm_data:
+        response['bpm'] = last_bpm_data
     return jsonify(response)
 
 # =========================================================
@@ -64,14 +67,20 @@ def get_latest_remote_file(sftp):
         log_files = [f for f in files if f.filename.endswith('_session_log.txt')]
         if not log_files:
             return None
-        latest = max(log_files, key=lambda f: f.st_mtime)
+
+        # Ordina per nome (data)
+        log_files.sort(key=lambda f: f.filename, reverse=True)
+
+        latest = log_files[0]
         return os.path.join(REMOTE_LOG_DIR, latest.filename)
+
     except Exception as e:
         print(f"⚠️ [SSH] Errore listdir: {e}", flush=True)
         return None
 
+
 def background_watcher():
-    global last_profile_data, last_gps_data
+    global last_profile_data, last_gps_data, last_bpm_data
     print("🚀 [WATCHER] Thread avviato!", flush=True)
 
     ssh = None
@@ -82,7 +91,6 @@ def background_watcher():
 
     while True:
         try:
-            # 1. Connessione
             if not ssh or not ssh.get_transport() or not ssh.get_transport().is_active():
                 ssh = create_ssh_client()
                 if not ssh:
@@ -90,27 +98,37 @@ def background_watcher():
                     continue
                 sftp = ssh.open_sftp()
 
-            # 2. Cerca file
             latest_path = get_latest_remote_file(sftp)
 
             if latest_path and latest_path != current_file_path:
-                print(f"📂 [WATCHER] Nuovo file: {latest_path}", flush=True)
+                print(f"📂 [WATCHER] Monitoraggio file: {latest_path}", flush=True)
+
                 if remote_file:
-                    remote_file.close()
+                    try:
+                        remote_file.close()
+                    except:
+                        pass
 
                 current_file_path = latest_path
-                remote_file = sftp.open(current_file_path, 'r')
 
-                sensors_data.clear()
-                last_profile_data = None
-                last_gps_data = None
-                socketio.emit('data_cleared')
+                try:
+                    remote_file = sftp.open(current_file_path, 'r')
+                    stat_info = sftp.stat(current_file_path)
+                    last_file_size = stat_info.st_size
+                    remote_file.seek(last_file_size)
 
-                stat_info = sftp.stat(current_file_path)
-                last_file_size = stat_info.st_size
-                remote_file.seek(last_file_size)
+                    sensors_data.clear()
+                    last_profile_data = None
+                    last_gps_data = None
+                    last_bpm_data = None
+                    socketio.emit('data_cleared')
 
-            # 3. Lettura incrementale
+                except IOError as e:
+                    print(f"⚠️ [WATCHER] Errore apertura file: {e}", flush=True)
+                    current_file_path = None
+                    socketio.sleep(2)
+                    continue
+
             if remote_file and current_file_path:
                 try:
                     stat_info = sftp.stat(current_file_path)
@@ -134,18 +152,32 @@ def background_watcher():
                                 if 'sensor_name' in data:
                                     s_name = data.get('sensor_name', 'Unknown')
                                     sensors_data[s_name] = data
-                                    socketio.emit('sensor_update', {'sensor_name': s_name, 'data': data})
+                                    socketio.emit(
+                                        'sensor_update',
+                                        {'sensor_name': s_name, 'data': data}
+                                    )
+
+                                    # BPM dentro sensore
+                                    if 'heart_rate' in data:
+                                        bpm_val = data['heart_rate']
+                                        last_bpm_data = bpm_val
+                                        socketio.emit('bpm_update', bpm_val)
 
                                 # B. GPS
                                 elif 'latitude' in data and 'longitude' in data:
                                     last_gps_data = data
                                     socketio.emit('gps_update', data)
 
-                                # C. Profilo utente
+                                # C. Profilo
                                 elif 'name' in data and 'weight' in data:
                                     last_profile_data = data
                                     socketio.emit('profile_update', data)
                                     print(f"👤 [PROFILE] Rilevato utente: {data['name']}", flush=True)
+
+                                # D. Pacchetto BPM standalone
+                                elif 'bpm' in data:
+                                    last_bpm_data = data['bpm']
+                                    socketio.emit('bpm_update', data['bpm'])
 
                             except:
                                 pass
@@ -154,16 +186,21 @@ def background_watcher():
                         socketio.sleep(0.01)
 
                 except Exception as e:
-                    print(f"⚠️ [WATCHER] Errore lettura: {e}", flush=True)
-                    current_file_path = None
+                    print(f"⚠️ [WATCHER] Errore durante lettura loop: {e}", flush=True)
+                    try:
+                        ssh.close()
+                    except:
+                        pass
+                    ssh = None
+
             else:
-                print("⏳ [WATCHER] In attesa di file...", flush=True)
                 socketio.sleep(2)
 
         except Exception as e:
-            print(f"❌ [WATCHER] Crash loop: {e}", flush=True)
+            print(f"❌ [WATCHER] Crash loop critico: {e}", flush=True)
             ssh = None
             socketio.sleep(5)
+
 
 if __name__ == '__main__':
     socketio.start_background_task(background_watcher)
