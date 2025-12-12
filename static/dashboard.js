@@ -60,15 +60,13 @@ function initSocket() {
         if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
     });
 
-    // 1. ASCOLTO UNIVERSALE (Intercetta tutto e pulisce il log)
+    // ASCOLTO UNICO: Gestisce sia log sporchi (BPM) che dati puliti (Sensori)
     socket.on('sensor_update', (data) => processIncomingData(data));
-    socket.on('bpm_update', (data) => processIncomingData(data)); 
-    
-    // Altri eventi
+    socket.on('bpm_update', (data) => processIncomingData(data));
+
     socket.on('profile_update', (data) => updateProfileUI(data));
     socket.on('gps_update', (data) => updateMapUI(data));
 
-    // 2. RESET
     socket.on('data_cleared', () => {
         sensors = {};
         document.getElementById('sensors-grid').innerHTML = '';
@@ -98,59 +96,63 @@ function initSocket() {
 }
 
 // ==========================================
-// PARSING DEI DATI (NUOVA FUNZIONE PER PULIRE IL LOG)
+// PARSING DEI DATI (ROBUSTO)
 // ==========================================
 function processIncomingData(data) {
-    // Convertiamo in stringa per analizzare anche i log sporchi ("*** Telemetry...")
-    var dataStr = (typeof data === 'object') ? JSON.stringify(data) : String(data);
-
-    // 1. CERCA IL BPM con Regex (Trova "bpm": 59 in mezzo al testo)
-    var bpmMatch = dataStr.match(/"bpm"\s*:\s*(\d+)/);
+    // 1. GESTIONE BPM DA LOG SPORCO (*** Telemetry line...)
+    // Convertiamo sempre a stringa per cercare "bpm": 123 col regex, anche se è un oggetto.
+    // Questo è sicuro e non rompe nulla.
+    var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
+    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
+    
     if (bpmMatch && bpmMatch[1]) {
-        var bpmVal = parseInt(bpmMatch[1]);
-        if (!isNaN(bpmVal) && bpmVal > 0) {
-            updateBpmUI(bpmVal);
-            return; // Trovato BPM, fine.
+        var val = parseInt(bpmMatch[1]);
+        if (!isNaN(val) && val > 0) {
+            updateBpmUI(val);
+            // Se abbiamo trovato il BPM, non facciamo nient'altro con questo pacchetto
+            // per evitare di sporcare i grafici o creare card sensori false.
+            return;
         }
     }
 
-    // 2. TENTA DI ESTRARRE IL JSON PULITO DALLA STRINGA SPORCA
-    var jsonStart = dataStr.indexOf('{');
-    var jsonEnd = dataStr.lastIndexOf('}');
-    
-    if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
-        var jsonSubStr = dataStr.substring(jsonStart, jsonEnd + 1);
-        try {
-            var payload = JSON.parse(jsonSubStr);
-            var name = payload.sensor_name || payload.name;
+    // 2. GESTIONE SENSORI (Dati puliti)
+    // Se siamo qui, NON è un pacchetto BPM. Proviamo a trattarlo come sensore normale.
+    var payload = null;
 
-            // Se è il profilo utente
-            if (name === 'PROFILE_INFO') {
-                updateProfileUI(payload);
-                return;
-            }
-
-            // Se è un sensore normale (Es. Ginocchio Sup) e NON ha bpm
-            if (name && !payload.bpm) {
-                sensors[name] = payload;
-                updateSensorCardUI(name, payload);
-                updateChartsUI(name, payload);
-            }
-        } catch (e) {
-            // Parsing fallito, ignoriamo
+    if (typeof data === 'object') {
+        // Se è già un oggetto (WS diretto o JSON pulito dal server)
+        payload = data.data || data;
+    } else {
+        // Se è una stringa (log sporco), proviamo a estrarre il JSON pulito
+        var jsonStart = str.indexOf('{');
+        var jsonEnd = str.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+            try {
+                payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1));
+            } catch (e) {}
         }
-    } 
-    // 3. CASO FALLBACK (Oggetto pulito)
-    else if (typeof data === 'object') {
-        var payload = data.data || data;
+    }
+
+    // Se abbiamo estratto un payload valido e ha un nome, aggiorniamo UI
+    if (payload && payload.sensor_name) {
         var name = payload.sensor_name;
-        if (name && !payload.bpm) {
-            sensors[name] = payload;
-            updateSensorCardUI(name, payload);
-            updateChartsUI(name, payload);
+        
+        // Ignoriamo sensori che si chiamano "COOSPO" o simili se non siamo riusciti a estrarre il BPM sopra
+        if (name.includes("COOSPO") || name === "HRM") return;
+
+        // Se è profilo
+        if (name === 'PROFILE_INFO') {
+            updateProfileUI(payload);
+            return;
         }
+
+        // Altrimenti è sensore vero (Ginocchio, Calzino...)
+        sensors[name] = payload;
+        updateSensorCardUI(name, payload);
+        updateChartsUI(name, payload);
     }
 }
+
 
 // ==========================================
 // UI: GRIGLIA SENSORI
@@ -294,7 +296,6 @@ function updateBpmUI(val) {
     var div = document.getElementById('bpm-display');
     var mapSection = document.getElementById('map-section');
     
-    // Sicurezza: converti in intero
     val = parseInt(val);
 
     if (val > 0) {
