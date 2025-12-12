@@ -181,14 +181,41 @@ def background_watcher():
                                 continue
 
                             try:
-                                data = json.loads(line)
-                            except:
-                                continue  # linea marcia
+                                # === FIX 1: PULIZIA DEL LOG ===
+                                # Il log inizia con "*** ... chunk=", quindi dobbiamo
+                                # trovare dove inizia la prima parentesi graffa '{' e dove finisce '}'
+                                json_str = line
+                                start_idx = json_str.find("{")
+                                end_idx = json_str.rfind("}")
+
+                                # Se non troviamo le graffe, la riga non è JSON valido, saltiamo
+                                if start_idx == -1 or end_idx == -1:
+                                    continue
+                                
+                                # Estraiamo solo il JSON pulito
+                                json_str = json_str[start_idx : end_idx + 1]
+                                data = json.loads(json_str)
+
+                            except Exception as e:
+                                # Se fallisce ancora, è proprio una riga corrotta
+                                continue 
+
+                            # ------------------------------------------------
+                            # FIX 2: LETTURA BPM (Chiave "bpm" vs "heart_rate")
+                            # ------------------------------------------------
+                            if "bpm" in data:
+                                last_bpm_data = data["bpm"]
+                                socketio.emit("bpm_update", last_bpm_data) # Modo A: numero secco
+                                # socketio.emit("bpm_update", {"bpm": last_bpm_data}) # Modo B: se il JS vuole oggetto (ma il tuo JS gestisce entrambi)
+                            
+                            elif "heart_rate" in data:
+                                last_bpm_data = data["heart_rate"]
+                                socketio.emit("bpm_update", last_bpm_data)
 
                             # ------------------------------------------------
                             # SENSORI REALI (accel/press)
                             # ------------------------------------------------
-                            if "accel_x" in data or "pressure_0" in data:
+                            elif "accel_x" in data or "pressure_0" in data:
                                 s_name = data.get("sensor_name", "Unknown")
                                 sensors_data[s_name] = data
 
@@ -196,11 +223,6 @@ def background_watcher():
                                     "sensor_name": s_name,
                                     "data": data
                                 })
-
-                                # Battito cardiaco integrato
-                                if "heart_rate" in data or "bpm" in data:
-                                    last_bpm_data = data["heart_rate"]
-                                    socketio.emit("bpm_update", last_bpm_data)
 
                             # ------------------------------------------------
                             # GPS
@@ -212,11 +234,7 @@ def background_watcher():
                             # ------------------------------------------------
                             # PROFILO (name, weight, age)
                             # ------------------------------------------------
-                            elif (
-                                "name" in data and
-                                "weight" in data and
-                                "age" in data
-                            ):
+                            elif "name" in data and "weight" in data:
                                 last_profile_data = data
                                 socketio.emit("profile_update", data)
 
