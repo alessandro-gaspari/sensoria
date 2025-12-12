@@ -7,11 +7,13 @@ var socket = io({
     reconnectionDelay: 500 
 });
 
+// Stato Dati
 var sensors = {};
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
 
+// Stato Grafici
 var charts = { accel: null, gyro: null, mag: null, pressure: null };
 var chartData = { 
     accel: [[],[],[],[]], 
@@ -22,19 +24,23 @@ var chartData = {
 var selectedSensor = null;
 var chartsInitialized = false;
 var isUserInteracting = false; 
+
 var MIN_ZOOM_RANGE = 0.5;
 
 // ==========================================
-// INIZIALIZZAZIONE
+// INIZIALIZZAZIONE DOM
 // ==========================================
 document.addEventListener('DOMContentLoaded', function() {
     initSocket();
     
+    // Gestione Dropdown Sensore per Grafici
     var sel = document.getElementById('chart-sensor-select');
     if(sel) {
         sel.addEventListener('change', function(e) {
             selectedSensor = e.target.value || null;
             resetChartData();
+            
+            // Gestione visibilità contenitore grafici
             var container = document.getElementById('charts-container');
             if (selectedSensor) {
                 container.style.display = 'block';
@@ -49,6 +55,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// ==========================================
+// GESTIONE SOCKET E DATI IN INGRESSO
+// ==========================================
 function initSocket() {
     socket.on('connect', () => {
         var el = document.getElementById('connection-status');
@@ -60,34 +69,42 @@ function initSocket() {
         if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
     });
 
-    // ASCOLTO UNICO: Gestisce sia log sporchi (BPM) che dati puliti (Sensori)
+    // 1. CARICAMENTO DATI INIZIALI (Snapshot)
+    fetch('/api/sensors').then(r => r.json()).then(data => {
+        if (data.sensors) {
+            sensors = data.sensors;
+            renderSensorsGrid();
+        }
+        if (data.profile) updateProfileUI(data.profile);
+        if (data.gps) updateMapUI(data.gps);
+        if (data.bpm) updateBpmUI(data.bpm);
+    }).catch(console.error);
+
+    // 2. EVENTI REAL-TIME (Routing unico per gestire log sporchi)
     socket.on('sensor_update', (data) => processIncomingData(data));
     socket.on('bpm_update', (data) => processIncomingData(data));
 
+    // Eventi specifici puliti (se arrivano dal server già filtrati)
     socket.on('profile_update', (data) => updateProfileUI(data));
     socket.on('gps_update', (data) => updateMapUI(data));
-
+    
+    // 3. RESET TOTALE
     socket.on('data_cleared', () => {
         sensors = {};
+        
+        // Pulisci DOM
         document.getElementById('sensors-grid').innerHTML = '';
-        var empty = document.getElementById('empty-state');
-        if(empty) empty.style.display = 'block';
+        document.getElementById('empty-state').style.display = 'block';
+        document.getElementById('selector-container').style.display = 'none';
+        document.getElementById('charts-container').style.display = 'none';
+        document.getElementById('user-profile-display').style.display = 'none';
+        document.getElementById('bpm-display').style.display = 'none';
+        document.getElementById('map-section').style.display = 'none';
         
-        var selCont = document.getElementById('selector-container');
-        if(selCont) selCont.style.display = 'none';
-        
-        var chartsCont = document.getElementById('charts-container');
-        if(chartsCont) chartsCont.style.display = 'none';
-        
-        var profile = document.getElementById('user-profile-display');
-        if(profile) profile.style.display = 'none';
-        
-        var bpm = document.getElementById('bpm-display');
-        if(bpm) bpm.style.display = 'none';
-        
-        if(mapMarker) { map.removeLayer(mapMarker); mapMarker = null; }
-        var mapSec = document.getElementById('map-section');
-        if(mapSec) mapSec.style.display = 'none';
+        if(mapMarker && map) { 
+            map.removeLayer(mapMarker); 
+            mapMarker = null; 
+        }
         
         resetChartData();
         chartsInitialized = false;
@@ -96,63 +113,145 @@ function initSocket() {
 }
 
 // ==========================================
-// PARSING DEI DATI (ROBUSTO)
+// PARSING DEI DATI (Logica "Sporca" e "Pulita")
 // ==========================================
 function processIncomingData(data) {
-    // 1. GESTIONE BPM DA LOG SPORCO (*** Telemetry line...)
-    // Convertiamo sempre a stringa per cercare "bpm": 123 col regex, anche se è un oggetto.
-    // Questo è sicuro e non rompe nulla.
+    // 1. Convertiamo TUTTO in stringa per poter usare Regex sul log sporco
     var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
-    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
-    
-    if (bpmMatch && bpmMatch[1]) {
-        var val = parseInt(bpmMatch[1]);
-        if (!isNaN(val) && val > 0) {
-            updateBpmUI(val);
-            // Se abbiamo trovato il BPM, non facciamo nient'altro con questo pacchetto
-            // per evitare di sporcare i grafici o creare card sensori false.
-            return;
+
+    // 2. CERCA BPM (Priorità assoluta)
+    // Cerca pattern: "bpm": 123 oppure "bpm":123
+    var bpmRegex = /"bpm"\s*:\s*(\d+)/;
+    var match = str.match(bpmRegex);
+
+    if (match && match[1]) {
+        var bpmVal = parseInt(match[1]);
+        if (!isNaN(bpmVal) && bpmVal > 0) {
+            updateBpmUI(bpmVal);
+            // NON ritorniamo qui, perché teoricamente una riga potrebbe avere sia BPM che dati sensore
+            // ma solitamente BPM arriva da solo o con COOSPO.
         }
     }
 
-    // 2. GESTIONE SENSORI (Dati puliti)
-    // Se siamo qui, NON è un pacchetto BPM. Proviamo a trattarlo come sensore normale.
+    // 3. ESTRAZIONE JSON (Per Sensori, Profilo, etc.)
     var payload = null;
-
-    if (typeof data === 'object') {
-        // Se è già un oggetto (WS diretto o JSON pulito dal server)
-        payload = data.data || data;
+    
+    if (typeof data === 'object' && data.sensor_name) {
+        // È già un oggetto pulito
+        payload = data;
     } else {
-        // Se è una stringa (log sporco), proviamo a estrarre il JSON pulito
-        var jsonStart = str.indexOf('{');
-        var jsonEnd = str.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+        // È una stringa sporca: cerchiamo il JSON dentro {...}
+        var start = str.indexOf('{');
+        var end = str.lastIndexOf('}');
+        if (start !== -1 && end > start) {
             try {
-                payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1));
-            } catch (e) {}
+                payload = JSON.parse(str.substring(start, end + 1));
+            } catch(e) {
+                // JSON non valido, ignoriamo
+            }
         }
     }
 
-    // Se abbiamo estratto un payload valido e ha un nome, aggiorniamo UI
+    // 4. ROUTING DEL PAYLOAD ESTRATTO
     if (payload && payload.sensor_name) {
         var name = payload.sensor_name;
-        
-        // Ignoriamo sensori che si chiamano "COOSPO" o simili se non siamo riusciti a estrarre il BPM sopra
-        if (name.includes("COOSPO") || name === "HRM") return;
 
-        // Se è profilo
+        // Se è info profilo
         if (name === 'PROFILE_INFO') {
             updateProfileUI(payload);
             return;
         }
 
-        // Altrimenti è sensore vero (Ginocchio, Calzino...)
+        // Se è un dato cardio (già gestito dal regex sopra, o da ignorare nella griglia)
+        if (name === 'HRM' || name.toUpperCase().includes('COOSPO') || payload.bpm !== undefined) {
+            return; 
+        }
+
+        // Se è un sensore vero (accel, gyro, pressure...)
         sensors[name] = payload;
         updateSensorCardUI(name, payload);
         updateChartsUI(name, payload);
     }
 }
 
+
+// ==========================================
+// UI: PROFILO, BPM, MAPPA
+// ==========================================
+function updateProfileUI(data) {
+    var div = document.getElementById('user-profile-display');
+    if (!data.name || !div) return;
+    
+    div.style.display = 'flex';
+    document.getElementById('profile-name').textContent = data.name.toUpperCase();
+    document.getElementById('profile-avatar').textContent = data.avatar || "👤";
+    var gender = data.gender === 'M' ? '♂' : (data.gender === 'F' ? '♀' : '');
+    document.getElementById('profile-details').textContent = `${data.age} anni | ${data.weight} kg | ${gender}`;
+}
+
+function updateBpmUI(val) {
+    var div = document.getElementById('bpm-display');
+    var mapSection = document.getElementById('map-section');
+    var valEl = document.getElementById('bpm-value');
+    
+    if (!div || !valEl) return;
+
+    val = parseInt(val);
+    if (val > 0) {
+        // Se arriva il BPM, mostriamo la mappa (dove vive il widget)
+        if (mapSection && mapSection.style.display === 'none') {
+            mapSection.style.display = 'block';
+            if(!isMapInitialized) initMap();
+        }
+
+        div.style.display = 'flex';
+        valEl.textContent = val;
+        
+        // Animazione
+        var icon = div.querySelector('.heart-icon');
+        if (icon) {
+            var d = 60/val; 
+            if(d<0.3) d=0.3; 
+            icon.style.animationDuration = d + 's';
+        }
+    }
+}
+
+function updateMapUI(data) {
+    var section = document.getElementById('map-section');
+    if(section) section.style.display = 'block';
+
+    if (!isMapInitialized) initMap();
+
+    // Centra mappa se necessario (o rimuovere setView per non seguire sempre)
+    if(map) map.setView([data.latitude, data.longitude], 15);
+
+    var latlng = [data.latitude, data.longitude];
+    var accEl = document.getElementById('gps-accuracy');
+    if(accEl) accEl.textContent = Math.round(data.accuracy);
+
+    if (!mapMarker) {
+        var greenIcon = new L.Icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+        });
+        mapMarker = L.marker(latlng, {icon: greenIcon}).addTo(map);
+    } else {
+        mapMarker.setLatLng(latlng);
+    }
+}
+
+function initMap() {
+    if (isMapInitialized) return;
+    map = L.map('map').setView([41.9028, 12.4964], 5); // Default Roma
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
+        attribution: '© OpenStreetMap, © CartoDB',
+        maxZoom: 20 
+    }).addTo(map);
+    isMapInitialized = true;
+    setTimeout(() => map.invalidateSize(), 100);
+}
 
 // ==========================================
 // UI: GRIGLIA SENSORI
@@ -177,6 +276,7 @@ function renderSensorsGrid() {
 }
 
 function createSensorCard(name, data) {
+    // Filtro per evitare card vuote
     if (data.accel_x === undefined && data.pressure_0 === undefined) return;
 
     var grid = document.getElementById('sensors-grid');
@@ -254,7 +354,6 @@ function updateSelector() {
     
     var current = sel.value; 
     var names = Object.keys(sensors);
-    var savedSelection = current;
     
     sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
     names.forEach(n => {
@@ -265,108 +364,27 @@ function updateSelector() {
     
     if (names.length === 0) {
         container.style.display = 'none';
-        return;
-    }
-
-    container.style.display = 'block';
-
-    if (savedSelection && sensors[savedSelection]) {
-        sel.value = savedSelection;
-    } else if (!selectedSensor && names.length > 0) {
-        sel.value = names[0];
-        var event = new Event('change');
-        sel.dispatchEvent(event);
-    }
-}
-
-// ==========================================
-// UI: PROFILO, BPM, MAPPA
-// ==========================================
-function updateProfileUI(data) {
-    var div = document.getElementById('user-profile-display');
-    if (!data.name || !div) return;
-    div.style.display = 'flex';
-    document.getElementById('profile-name').textContent = data.name.toUpperCase();
-    document.getElementById('profile-avatar').textContent = data.avatar || "👤";
-    var gender = data.gender === 'M' ? '♂' : (data.gender === 'F' ? '♀' : '');
-    document.getElementById('profile-details').textContent = `${data.age} anni | ${data.weight} kg | ${gender}`;
-}
-
-function updateBpmUI(val) {
-    var div = document.getElementById('bpm-display');
-    var mapSection = document.getElementById('map-section');
-    
-    val = parseInt(val);
-
-    if (val > 0) {
-        if (mapSection && mapSection.style.display === 'none') {
-            mapSection.style.display = 'block';
-            if(!isMapInitialized) initMap();
-        }
-        
-        if(div) {
-            div.style.display = 'flex';
-            document.getElementById('bpm-value').textContent = val;
-            var icon = div.querySelector('.heart-icon');
-            if (icon) {
-                var d = 60/val; 
-                if(d<0.3) d=0.3; 
-                icon.style.animationDuration = d+'s';
-            }
-        }
-    }
-}
-
-function initMap() {
-    if (isMapInitialized) return;
-    map = L.map('map').setView([41.9028, 12.4964], 5);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
-        attribution: '© OpenStreetMap, © CartoDB',
-        maxZoom: 20 
-    }).addTo(map);
-    isMapInitialized = true;
-    setTimeout(() => map.invalidateSize(), 100);
-}
-
-function updateMapUI(data) {
-    var section = document.getElementById('map-section');
-    if(section) section.style.display = 'block';
-
-    if (!isMapInitialized) {
-        map = L.map('map').setView([data.latitude, data.longitude], 15);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© OpenStreetMap, © CartoDB',
-            maxZoom: 20
-        }).addTo(map);
-        isMapInitialized = true;
-        setTimeout(() => map.invalidateSize(), 100);
-    }
-
-    var latlng = [data.latitude, data.longitude];
-    var accEl = document.getElementById('gps-accuracy');
-    if(accEl) accEl.textContent = Math.round(data.accuracy);
-
-    if (!mapMarker) {
-        var greenIcon = new L.Icon({
-            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
-        });
-        mapMarker = L.marker(latlng, {icon: greenIcon}).addTo(map);
-        map.panTo(latlng);
     } else {
-        mapMarker.setLatLng(latlng);
+        container.style.display = 'block';
+        // Auto-selezione intelligente
+        if (current && sensors[current]) {
+            sel.value = current;
+        } else if (!selectedSensor && names.length > 0) {
+            sel.value = names[0];
+            sel.dispatchEvent(new Event('change'));
+        }
     }
 }
 
+
 // ==========================================
-// LOGICA GRAFICI (uPlot)
+// GRAFICI uPLOT
 // ==========================================
+
 function updateChartsUI(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
-    
     var cCont = document.getElementById('charts-container');
     if(cCont && cCont.style.display === 'none') cCont.style.display = 'block';
 
@@ -376,24 +394,28 @@ function updateChartsUI(sensorName, data) {
         if(arr[0].length > 1000) arr.forEach(s => s.shift());
     };
 
+    // 1. Accel
     if (data.accel_x !== undefined && charts.accel) {
         push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]);
         charts.accel.setData(chartData.accel);
         autoScroll(charts.accel, chartData.accel);
     }
 
+    // 2. Gyro
     if (data.gyro_x !== undefined && charts.gyro) {
         push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]);
         charts.gyro.setData(chartData.gyro);
         autoScroll(charts.gyro, chartData.gyro);
     }
 
+    // 3. Mag
     if (data.mag_x !== undefined && charts.mag) {
         push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]);
         charts.mag.setData(chartData.mag);
         autoScroll(charts.mag, chartData.mag);
     }
 
+    // 4. Pressioni
     if (data.pressure_0 !== undefined && charts.pressure) {
         push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]);
         charts.pressure.setData(chartData.pressure);
@@ -409,10 +431,8 @@ function autoScroll(u, data) {
         var xData = data[0];
         if (xData.length < 2) return;
         var lastTime = xData[xData.length - 1];
-        var windowSize = 10; 
-        var minX = lastTime - windowSize;
+        var minX = lastTime - 10;
         if (xData[0] > minX) minX = xData[0];
-        
         u.setScale('x', { min: minX, max: lastTime });
     }
 }
@@ -433,16 +453,20 @@ function resetChartData() {
     if(charts.pressure) charts.pressure.setData(chartData.pressure);
 }
 
+// INIZIALIZZAZIONE COMPLETA DI TUTTI I GRAFICI
 function initCharts() {
     var accelDiv = document.getElementById('accel-chart');
     var gyroDiv = document.getElementById('gyro-chart');
     var magDiv = document.getElementById('mag-chart');
     var pressureDiv = document.getElementById('pressure-chart');
 
+    // Se mancano i DIV, esci
     if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
     
+    // Pulisci
     accelDiv.innerHTML = ''; gyroDiv.innerHTML = ''; magDiv.innerHTML = ''; pressureDiv.innerHTML = '';
 
+    // Opzioni comuni
     var commonOpts = () => ({
         width: accelDiv.offsetWidth, height: 200,
         cursor: { show: true, drag: { x: true, y: false } },
@@ -454,21 +478,25 @@ function initCharts() {
         plugins: [wheelZoomPlugin()]
     });
 
+    // 1. Accel
     var opts1 = commonOpts();
     opts1.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
     charts.accel = new uPlot(opts1, chartData.accel, accelDiv);
     addInteraction(charts.accel);
 
+    // 2. Gyro
     var opts2 = commonOpts();
     opts2.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
     charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv);
     addInteraction(charts.gyro);
 
+    // 3. Mag
     var opts3 = commonOpts();
     opts3.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
     charts.mag = new uPlot(opts3, chartData.mag, magDiv);
     addInteraction(charts.mag);
 
+    // 4. Pressure
     var opts4 = commonOpts();
     opts4.height = 250;
     opts4.scales.y = { auto: false, range: [0, 1024] };
@@ -477,6 +505,7 @@ function initCharts() {
     addInteraction(charts.pressure);
 }
 
+// Helpers grafici
 function wheelZoomPlugin() {
     return {
         hooks: {
