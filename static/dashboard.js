@@ -7,13 +7,11 @@ var socket = io({
     reconnectionDelay: 500 
 });
 
-// Stato Dati
 var sensors = {};
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
 
-// Stato Grafici
 var charts = { accel: null, gyro: null, mag: null, pressure: null };
 var chartData = { 
     accel: [[],[],[],[]], 
@@ -24,7 +22,6 @@ var chartData = {
 var selectedSensor = null;
 var chartsInitialized = false;
 var isUserInteracting = false; 
-
 var MIN_ZOOM_RANGE = 0.5;
 
 // ==========================================
@@ -33,14 +30,11 @@ var MIN_ZOOM_RANGE = 0.5;
 document.addEventListener('DOMContentLoaded', function() {
     initSocket();
     
-    // Gestione Dropdown Sensore per Grafici
     var sel = document.getElementById('chart-sensor-select');
     if(sel) {
         sel.addEventListener('change', function(e) {
             selectedSensor = e.target.value || null;
             resetChartData();
-            
-            // Gestione visibilità
             var container = document.getElementById('charts-container');
             if (selectedSensor) {
                 container.style.display = 'block';
@@ -66,23 +60,21 @@ function initSocket() {
         if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
     });
 
-    // 1. CARICAMENTO DATI INIZIALI
-    fetch('/api/sensors').then(r => r.json()).then(data => {
-        if (data.sensors) {
-            sensors = data.sensors;
-            renderSensorsGrid();
-        }
-        if (data.profile && Object.keys(data.profile).length > 0) updateProfileUI(data.profile);
-        if (data.gps && Object.keys(data.gps).length > 0) updateMapUI(data.gps);
-        if (data.bpm) updateBpmUI(data.bpm);
-    }).catch(console.error);
-
-    // 2. EVENTI REAL-TIME (CORRETTI PER TCP FLUTTER)
+    // 1. EVENTI REAL-TIME
     socket.on('sensor_update', (data) => {
-        // FIX: I dati arrivano piatti, non c'è .data
         var payload = data.data || data; 
-        var name = payload.sensor_name || data.sensor_name;
+        var name = payload.sensor_name || data.sensor_name || "";
 
+        // === FIX CRITICO BPM ===
+        // Se il pacchetto si chiama HRM o contiene il campo 'bpm', 
+        // lo dirotto alla funzione del cuore e NON creo la card.
+        if (name === 'HRM' || payload.bpm !== undefined) {
+            var val = payload.bpm !== undefined ? payload.bpm : payload;
+            updateBpmUI(val);
+            return; 
+        }
+
+        // Altrimenti è un sensore normale
         if (name) {
             sensors[name] = payload;
             updateSensorCardUI(name, payload);
@@ -92,11 +84,9 @@ function initSocket() {
 
     socket.on('profile_update', (data) => updateProfileUI(data));
     socket.on('gps_update', (data) => updateMapUI(data));
-    
-    // FIX BPM: Gestisce sia numero che oggetto JSON
-    socket.on('bpm_update', (payload) => updateBpmUI(payload));
+    socket.on('bpm_update', (data) => updateBpmUI(data)); // Caso in cui arrivi giusto
 
-    // 3. RESET
+    // 2. RESET
     socket.on('data_cleared', () => {
         sensors = {};
         document.getElementById('sensors-grid').innerHTML = '';
@@ -126,7 +116,7 @@ function initSocket() {
 }
 
 // ==========================================
-// LOGICA UI: GRIGLIA SENSORI
+// UI: GRIGLIA SENSORI
 // ==========================================
 function renderSensorsGrid() {
     var grid = document.getElementById('sensors-grid');
@@ -168,7 +158,6 @@ function createSensorCard(name, data) {
                     <div class="status-indicator active"></div>
                 </div>`;
     
-    // --- ACCELEROMETRO ---
     if (data.accel_x !== undefined) {
         html += `<div class="sensor-data-section">
                     <div class="sensor-data-section-title">Accelerometro</div>
@@ -178,7 +167,6 @@ function createSensorCard(name, data) {
                  </div>`;
     }
 
-    // --- GIROSCOPIO ---
     if (data.gyro_x !== undefined) {
         html += `<div class="sensor-data-section">
                     <div class="sensor-data-section-title">Giroscopio</div>
@@ -188,7 +176,6 @@ function createSensorCard(name, data) {
                  </div>`;
     }
 
-    // --- MAGNETOMETRO ---
     if (data.mag_x !== undefined) {
         html += `<div class="sensor-data-section">
                     <div class="sensor-data-section-title">Magnetometro</div>
@@ -198,7 +185,6 @@ function createSensorCard(name, data) {
                  </div>`;
     }
 
-    // --- PRESSIONI ---
     if (data.pressure_0 !== undefined) {
          html += `<div class="sensor-data-section" style="border:none;">
                     <div class="sensor-data-section-title">Pressioni</div>
@@ -225,13 +211,10 @@ function updateSensorCardUI(name, data) {
 function updateSelector() {
     var sel = document.getElementById('chart-sensor-select');
     var container = document.getElementById('selector-container');
-    
     if (!sel || !container) return;
     
     var current = sel.value; 
     var names = Object.keys(sensors);
-    
-    // Salva la selezione corrente o metti default
     var savedSelection = current;
     
     sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
@@ -248,12 +231,10 @@ function updateSelector() {
 
     container.style.display = 'block';
 
-    // Ripristina selezione o seleziona il primo
     if (savedSelection && sensors[savedSelection]) {
         sel.value = savedSelection;
     } else if (!selectedSensor && names.length > 0) {
         sel.value = names[0];
-        // Attiva automaticamente il primo se l'utente non ha scelto
         var event = new Event('change');
         sel.dispatchEvent(event);
     }
@@ -276,9 +257,12 @@ function updateBpmUI(payload) {
     var div = document.getElementById('bpm-display');
     var mapSection = document.getElementById('map-section');
     
-    // FIX: Estrai il valore numerico da payload (oggetto o numero)
+    // Gestione robusta: payload può essere {bpm:75} oppure direttamente 75
     var val = (typeof payload === 'object' && payload !== null) ? payload.bpm : payload;
     
+    // Converte in numero sicuro
+    val = parseInt(val);
+
     if (val > 0) {
         if (mapSection && mapSection.style.display === 'none') {
             mapSection.style.display = 'block';
@@ -343,7 +327,6 @@ function updateMapUI(data) {
 // LOGICA GRAFICI (uPlot)
 // ==========================================
 function updateChartsUI(sensorName, data) {
-    // Aggiorna SOLO se è il sensore selezionato
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
@@ -414,7 +397,6 @@ function resetChartData() {
     if(charts.pressure) charts.pressure.setData(chartData.pressure);
 }
 
-// --- CONFIGURAZIONE uPLOT ---
 function initCharts() {
     var accelDiv = document.getElementById('accel-chart');
     var gyroDiv = document.getElementById('gyro-chart');
@@ -436,25 +418,21 @@ function initCharts() {
         plugins: [wheelZoomPlugin()]
     });
 
-    // 1. Accel
     var opts1 = commonOpts();
     opts1.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
     charts.accel = new uPlot(opts1, chartData.accel, accelDiv);
     addInteraction(charts.accel);
 
-    // 2. Gyro
     var opts2 = commonOpts();
     opts2.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
     charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv);
     addInteraction(charts.gyro);
 
-    // 3. Mag
     var opts3 = commonOpts();
     opts3.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
     charts.mag = new uPlot(opts3, chartData.mag, magDiv);
     addInteraction(charts.mag);
 
-    // 4. Pressure
     var opts4 = commonOpts();
     opts4.height = 250;
     opts4.scales.y = { auto: false, range: [0, 1024] };
