@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:provider/provider.dart';
-import 'package:google_fonts/google_fonts.dart'; // Import necessario
+import 'package:google_fonts/google_fonts.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -11,6 +11,7 @@ import '../models/sensoria_device_type.dart';
 import '../providers/connected_devices_provider.dart';
 import '../streaming_manager.dart';
 import 'tracking_screen.dart';
+import '../providers/profile_provider.dart'; // <--- IMPORTANTE
 
 enum GpsSignalQuality { excellent, good, poor }
 
@@ -39,6 +40,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
   // ==================== HRM (COOSPO) VARS ====================
   bool _showHrmOverlay = false;
   bool _isScanningHrm = false;
+  bool _isStartingTracking = false;
   List<ScanResult> _hrmDevices = [];
   BluetoothDevice? _connectedHrm;
   StreamSubscription? _hrmSubscription;
@@ -60,7 +62,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
   void _initGPS() async {
     _gpsEnabled = await Geolocator.isLocationServiceEnabled();
     if (!_gpsEnabled) {
-      setState(() => _gpsQuality = GpsSignalQuality.poor);
+      if (mounted) setState(() => _gpsQuality = GpsSignalQuality.poor);
       return;
     }
     LocationPermission permission = await Geolocator.checkPermission();
@@ -68,7 +70,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
       permission = await Geolocator.requestPermission();
     }
     if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-      setState(() => _gpsQuality = GpsSignalQuality.poor);
+      if (mounted) setState(() => _gpsQuality = GpsSignalQuality.poor);
       return;
     }
     const locationSettings = LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 10);
@@ -308,7 +310,6 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
           _localBpm = null;
         });
         
-        // Passiamo 3 argomenti corretti: ID, NOME, BPM iniziale
         streamingManager.setHrmConnection(device.remoteId.toString(), name, 0);
 
         _hrmSubscription = hrmChar.lastValueStream.listen((value) {
@@ -363,6 +364,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
 
   // ==================== UI HELPERS ====================
   void _showMessage(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -389,10 +391,16 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
 
   // ==================== WIDGET BUILDERS ====================
 
+
+  // 2. Sostituisci questo metodo intero
   Widget _buildStreamingControls(ConnectedDevicesProvider devicesProvider) {
     final streamingManager = Provider.of<StreamingManager>(context);
     final hasActiveStreams = streamingManager.streamingStatus.isNotEmpty;
-    final bool canStart = !hasActiveStreams; 
+    
+    // Il pulsante è abilitato SOLO se:
+    // 1. Non ci sono stream attivi
+    // 2. Non stiamo già avviando la procedura (evita doppi click)
+    final bool canStart = !hasActiveStreams && !_isStartingTracking; 
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -405,33 +413,65 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
             child: ElevatedButton.icon(
               onPressed: canStart
                   ? () async {
+                      // BLOCCO SUBITO IL PULSANTE
+                      setState(() => _isStartingTracking = true);
+
                       try {
                         final manager = Provider.of<StreamingManager>(context, listen: false);
+                        final profileProvider = Provider.of<ProfileProvider>(context, listen: false);
+                        final activeProfile = profileProvider.activeProfile;
+
                         manager.startTracking();
+                        
+                        // Avvia streaming sensori
                         await manager.startAllStreaming(
                             devicesProvider.connectedDevices, 
                             devicesProvider.deviceNames
                         );
+                        
+                        // INVIO PROFILO (UNA VOLTA SOLA)
+                        if (activeProfile != null) {
+                          // Piccolo ritardo per stabilità socket
+                          await Future.delayed(const Duration(milliseconds: 300));
+                          
+                          await manager.sendProfileData(
+                            activeProfile.name,
+                            activeProfile.age,
+                            activeProfile.gender,
+                            activeProfile.weight
+                          );
+                          debugPrint("✅ Profilo inviato (Singolo invio)");
+                        }
+
                         if (mounted) {
                           Navigator.push(
                               context, 
                               MaterialPageRoute(builder: (context) => const TrackingScreen())
-                          );
+                          ).then((_) {
+                            // Quando torniamo indietro dalla TrackingScreen, 
+                            // riabilitiamo il pulsante
+                            if (mounted) setState(() => _isStartingTracking = false);
+                          });
                         }
                       } catch (e) {
                         _showMessage('❌ Errore: $e');
+                        // In caso di errore, riabilita il pulsante
+                        if (mounted) setState(() => _isStartingTracking = false);
                       }
                     }
                   : null,
-              icon: const Icon(Icons.play_arrow, size: 22),
+              icon: _isStartingTracking 
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black))
+                : const Icon(Icons.play_arrow, size: 22),
               label: Text(
-                'AVVIA TRACKING',
+                _isStartingTracking ? 'AVVIO...' : 'AVVIA TRACKING',
                 style: GoogleFonts.barlowCondensed(
                   fontSize: 18, 
                   fontWeight: FontWeight.bold, 
                   letterSpacing: 1.0
                 ),
               ),
+              // ... resto dello stile uguale ...
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.transparent,
                 foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
@@ -450,6 +490,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
       ),
     );
   }
+
 
   Widget _buildHrmOverlay() {
     return TweenAnimationBuilder<double>(
@@ -507,7 +548,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                             _isScanningHrm ? "CERCA..." : "AVVIA SCANSIONE",
                             style: GoogleFonts.barlowCondensed(
                               fontWeight: FontWeight.bold,
-                              fontSize: 18,
+                              fontSize: 16,
                               letterSpacing: 1.0
                             ),
                           ),
@@ -553,7 +594,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                                     padding: const EdgeInsets.all(16),
                                     child: Row(
                                       children: [
-                                        const Text("💚", style: TextStyle(fontSize: 22)),
+                                        const Text("❤️", style: TextStyle(fontSize: 22)),
                                         const SizedBox(width: 16),
                                         Expanded(
                                           child: Text(
@@ -601,11 +642,11 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
     final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
 
     return Scaffold(
-      backgroundColor: Colors.black, // Uniformità sfondo
+      backgroundColor: Colors.black, 
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
-        title: Image.asset('assets/logo_Clean.png', height: 40),
+        title: Image.asset('assets/logo_Clean.png', height: 28),
         centerTitle: true,
       ),
       body: Stack(
@@ -646,7 +687,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                                       style: GoogleFonts.barlowCondensed(
                                         color: isReady ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red, 
                                         fontWeight: FontWeight.bold, 
-                                        fontSize: 14,
+                                        fontSize: 16,
                                         letterSpacing: 0.5
                                       )
                                     )
@@ -670,7 +711,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                             style: GoogleFonts.barlowCondensed(
                               color: _getGpsColor(), 
                               fontWeight: FontWeight.bold, 
-                              fontSize: 18, 
+                              fontSize: 16, 
                               letterSpacing: 0.5
                             )
                           ),
@@ -701,7 +742,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                         : Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              const Icon(Icons.radar, size: 24),
+                              const Icon(Icons.radar, size: 22),
                               const SizedBox(width: 10),
                               Text(devicesProvider.connectedCount == 0 ? 'AVVIA SCANSIONE' : 'CONNETTI ALTRO SENSORE'),
                             ],
@@ -709,7 +750,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
                       foregroundColor: const Color(0xFF000000),
-                      textStyle: GoogleFonts.barlowCondensed(fontWeight: FontWeight.bold, fontSize: 18, letterSpacing: 1.0),
+                      textStyle: GoogleFonts.barlowCondensed(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 1.0),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
@@ -940,10 +981,10 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                 )
               : FloatingActionButton(
                   onPressed: () => setState(() => _showHrmOverlay = true),
-                  backgroundColor: Colors.transparent, // Trasparente come richiesto prima
+                  backgroundColor: Colors.transparent,
                   elevation: 0,
                   highlightElevation: 0,
-                  child: const Text("💚", style: TextStyle(fontSize: 44)), // Cuore Emoji come icona
+                  child: const Text("❤️", style: TextStyle(fontSize: 44)),
                 ),
           ),
 

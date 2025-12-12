@@ -8,6 +8,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../streaming_manager.dart';
 import '../providers/connected_devices_provider.dart';
+import '../providers/profile_provider.dart'; // <--- IMPORT AGGIUNTO
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({Key? key}) : super(key: key);
@@ -27,10 +28,10 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
   // Partenza generica fino a quando non abbiamo la posizione VERA
   CameraPosition _cameraPosition = const CameraPosition(
     target: LatLng(0, 0), // Coordinate neutre
-    zoom: 15.0, // Zoom molto basso (mondo intero)
+    zoom: 15.0, 
   );
   
-  bool _hasRealPosition = false; // TRUE solo quando otteniamo il GPS reale
+  bool _hasRealPosition = false; 
   String _gpsStatus = "In attesa GPS...";
   
   late AnimationController _markerAnimController;
@@ -58,22 +59,19 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
         _sessionDuration += const Duration(seconds: 1);
       });
 
-      // === MODIFICA: INVIO GPS COSTANTE OGNI SECONDO ===
+      // === INVIO GPS COSTANTE OGNI SECONDO ===
       if (_lastKnownPosition != null) {
-        // Invia l'ultima posizione nota anche se l'utente è fermo
         Provider.of<StreamingManager>(context, listen: false).sendGpsData(
           _lastKnownPosition!.latitude, 
           _lastKnownPosition!.longitude, 
           _lastKnownPosition!.accuracy
         );
       }
-      // =================================================
     });
   }
 
-
-      Future<void> _initLocationTracking() async {
-    // 1. Controllo Permessi... (uguale a prima)
+  Future<void> _initLocationTracking() async {
+    // 1. Controllo Permessi
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return;
 
@@ -83,7 +81,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
       if (permission == LocationPermission.denied) return;
     }
 
-    // 2. Ottieni la PRIMA posizione
+    // 2. Ottieni la PRIMA posizione (Bloccante)
     try {
       Position position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high, 
@@ -98,7 +96,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
           );
           _hasRealPosition = true;
           _gpsStatus = "GPS Attivo";
-          _lastKnownPosition = position; // <--- SALVA SUBITO
+          _lastKnownPosition = position; 
         });
         
         if (_mapController != null) {
@@ -111,7 +109,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
       debugPrint("⚠️ Errore GPS iniziale: $e");
     }
 
-    // 3. Stream: aggiorna solo la mappa e la variabile
+    // 3. Stream: aggiorna solo la mappa e la variabile (sendGpsData è nel timer)
     const locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
       distanceFilter: 2, 
@@ -122,8 +120,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
         if (position.latitude == 0 && position.longitude == 0) return;
 
         if (mounted) {
-          // Aggiorna la variabile per il Timer
-          _lastKnownPosition = position; // <--- FONDAMENTALE
+          _lastKnownPosition = position; 
 
           if (!_hasRealPosition) {
              setState(() {
@@ -142,17 +139,11 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
               ),
             );
           }
-          
-          // NOTA: Ho rimosso sendGpsData da qui perché ora lo fa il Timer ogni secondo!
         }
       },
       onError: (error) => debugPrint("❌ Errore stream: $error"),
     );
   }
-
-
-
-
 
   Future<void> _handleStopTracking() async {
     final streamingManager = Provider.of<StreamingManager>(context, listen: false);
@@ -195,6 +186,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
   Widget build(BuildContext context) {
     final streamingManager = Provider.of<StreamingManager>(context);
     final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
+    final activeProfile = Provider.of<ProfileProvider>(context).activeProfile; // <--- RECUPERO PROFILO
 
     final bpm = streamingManager.currentHeartRate;
     final hrmName = streamingManager.hrmDeviceName ?? "Heart Rate Monitor";
@@ -215,7 +207,25 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () => _handleStopTracking(),
         ),
-        title: Image.asset('assets/logo_Clean.png', height: 28),
+        // --- LOGO + NOME PROFILO ---
+        title: Column(
+          children: [
+            Image.asset('assets/logo_Clean.png', height: 24),
+            if (activeProfile != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4.0),
+                child: Text(
+                  "UTENTE: ${activeProfile.name.toUpperCase()}",
+                  style: GoogleFonts.barlowCondensed(
+                    fontSize: 12,
+                    color: const Color.fromRGBO(151, 201, 62, 1),
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0
+                  ),
+                ),
+              )
+          ],
+        ),
         centerTitle: true,
         actions: [
           Padding(
@@ -252,6 +262,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
             ),
             child: Row(
               children: [
+                // 1. INFO
                 Expanded(
                   flex: 3,
                   child: Column(
@@ -276,6 +287,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
                   ),
                 ),
 
+                // 2. BPM
                 Expanded(
                   flex: 3,
                   child: Column(
@@ -288,7 +300,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
                   ),
                 ),
 
-                // MINIMAPPA
+                // 3. MINIMAPPA
                 Expanded(
                   flex: 3,
                   child: Container(

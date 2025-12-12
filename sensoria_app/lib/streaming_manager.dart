@@ -197,6 +197,23 @@ class StreamingManager extends ChangeNotifier {
     );
   }
 
+  Future<void> sendProfileData(String name, int age, String gender, double weight) async {
+    if (_tcpSender != null && _tcpSender!.isConnected) {
+      final timestamp = DateTime.now().toUtc().toIso8601String();
+      
+      _tcpSender!.sendData("PROFILE_INFO", {
+        "timestamp": timestamp,
+        "name": name,
+        "age": age,
+        "gender": gender,
+        "weight": weight,
+      });
+      
+      debugPrint("👤 [PROFILE] Dati profilo inviati al server: $name");
+    }
+  }
+
+
   Future<void> startAllStreaming(
       Map<String, BluetoothDevice> connectedDevices,
       Map<String, String> deviceNames) async {
@@ -460,7 +477,7 @@ class StreamingManager extends ChangeNotifier {
     try {
       _tcpSender!.sendData("GPS", {
         "timestamp": timestamp,
-        "sensor_name": "PHONE_GPS",
+        "sensor_name": "GPS Telefono",
         "latitude": latitude,
         "longitude": longitude,
         "accuracy": accuracy

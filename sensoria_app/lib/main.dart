@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:provider/provider.dart';
+
+// Providers
 import 'providers/connected_devices_provider.dart';
 import 'streaming_manager.dart';
-import 'screens/scanner_screen.dart';
+import 'providers/profile_provider.dart'; // <--- NUOVO PROVIDER
+
+// Screens
+import 'screens/profile_screen.dart'; // <--- Per il wizard iniziale
+import 'screens/main_wrapper_screen.dart'; // <--- Per la navigazione a Tab
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +34,11 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (context) => StreamingManager(),
           lazy: false,
+        ),
+        // --- NUOVO PROVIDER PROFILI ---
+        ChangeNotifierProvider(
+          create: (context) => ProfileProvider(),
+          lazy: false, // Carica subito i dati da disco
         ),
       ],
       child: MaterialApp(
@@ -192,8 +203,38 @@ class MyApp extends StatelessWidget {
             linearMinHeight: 4,
           ),
         ),
-        home: const ScannerScreen(),
+        // Sostituiamo ScannerScreen diretto con il wrapper di controllo
+        home: const AuthCheckWrapper(), 
       ),
     );
+  }
+}
+
+// === WIDGET DI CONTROLLO INIZIALE ===
+class AuthCheckWrapper extends StatelessWidget {
+  const AuthCheckWrapper({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    // Ascolta il provider dei profili
+    final profileProvider = Provider.of<ProfileProvider>(context);
+
+    // 1. Se sta ancora caricando da disco, mostra spinner
+    if (profileProvider.isLoading) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: Color.fromRGBO(151, 201, 62, 1)),
+        ),
+      );
+    }
+
+    // 2. Se non ci sono profili nel DB, mostra la schermata di creazione (Wizard)
+    if (profileProvider.profiles.isEmpty) {
+      return const ProfileFormScreen(); // Schermata obbligatoria
+    }
+
+    // 3. Se ci sono profili, mostra l'app principale con la BottomBar (Wrapper)
+    return const MainWrapperScreen();
   }
 }
