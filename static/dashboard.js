@@ -284,19 +284,41 @@ function updateProfileUI(data) {
 
 function updateBpmUI(val) {
     var div = document.getElementById('bpm-display');
+    var mapSection = document.getElementById('map-section');
+    
     if (val > 0) {
+        // Mostra la sezione mappa se è nascosta (così si vede il box BPM)
+        if (mapSection.style.display === 'none') {
+            mapSection.style.display = 'block';
+            if(!isMapInitialized) initMap(); // Inizializza mappa vuota se serve
+        }
+
         div.style.display = 'flex';
         document.getElementById('bpm-value').textContent = val;
         
-        // Regola velocità animazione cuore
+        // Animazione
         var icon = div.querySelector('.heart-icon');
         if (icon) {
-            var duration = 60 / val; // bpm -> secondi per battito
-            if(duration < 0.3) duration = 0.3; // Cap velocità massima
+            var duration = 60 / val;
+            if(duration < 0.3) duration = 0.3;
             icon.style.animationDuration = duration + 's';
         }
     }
 }
+
+function initMap() {
+    if (isMapInitialized) return;
+    // Inizializza su Roma (default) se non c'è ancora GPS
+    map = L.map('map').setView([41.9028, 12.4964], 5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap, © CartoDB',
+        maxZoom: 20
+    }).addTo(map);
+    isMapInitialized = true;
+    setTimeout(() => map.invalidateSize(), 100);
+}
+
+
 
 function updateMapUI(data) {
     var section = document.getElementById('map-section');
@@ -342,8 +364,12 @@ function updateMapUI(data) {
 // LOGICA GRAFICI (uPlot)
 // ==========================================
 
+// ==========================================
+// LOGICA GRAFICI (uPlot)
+// ==========================================
+
 function updateChartsUI(sensorName, data) {
-    // Aggiorna solo se è il sensore selezionato dal menu a tendina
+    // 1. Controllo: Aggiorna SOLO se è il sensore selezionato
     if (selectedSensor !== sensorName || !chartsInitialized) return;
 
     var timestamp = Date.now() / 1000;
@@ -351,26 +377,32 @@ function updateChartsUI(sensorName, data) {
     // Mostra container se nascosto
     document.getElementById('charts-container').style.display = 'block';
 
-    // 1. ACCELEROMETRO
-    if (data.accel_x !== undefined) {
+    // 2. ACCELEROMETRO (Controllo che esistano i dati)
+    if (data.accel_x !== undefined && charts.accel) {
+        // Log di debug (rimuovilo se dà fastidio)
+        // console.log("📈 Update Accel:", data.accel_x, data.accel_y, data.accel_z);
+        
         pushData(chartData.accel, timestamp, [data.accel_x, data.accel_y, data.accel_z]);
         charts.accel.setData(chartData.accel);
         autoScroll(charts.accel, chartData.accel);
     }
-    // 2. GIROSCOPIO
-    if (data.gyro_x !== undefined) {
+
+    // 3. GIROSCOPIO
+    if (data.gyro_x !== undefined && charts.gyro) {
         pushData(chartData.gyro, timestamp, [data.gyro_x, data.gyro_y, data.gyro_z]);
         charts.gyro.setData(chartData.gyro);
         autoScroll(charts.gyro, chartData.gyro);
     }
-    // 3. MAGNETOMETRO
-    if (data.mag_x !== undefined) {
+
+    // 4. MAGNETOMETRO
+    if (data.mag_x !== undefined && charts.mag) {
         pushData(chartData.mag, timestamp, [data.mag_x, data.mag_y, data.mag_z]);
         charts.mag.setData(chartData.mag);
         autoScroll(charts.mag, chartData.mag);
     }
-    // 4. PRESSIONI
-    if (data.pressure_0 !== undefined) {
+
+    // 5. PRESSIONI
+    if (data.pressure_0 !== undefined && charts.pressure) {
         pushData(chartData.pressure, timestamp, [data.pressure_0, data.pressure_1, data.pressure_2]);
         charts.pressure.setData(chartData.pressure);
         autoScroll(charts.pressure, chartData.pressure);
@@ -380,16 +412,62 @@ function updateChartsUI(sensorName, data) {
     }
 }
 
-// Helper per aggiungere dati agli array uPlot
-function pushData(target, time, values) {
-    target[0].push(time);
-    values.forEach((v, i) => target[i+1].push(v));
+// Helper CRITICO per uPlot
+function pushData(targetArr, time, values) {
+    // targetArr[0] è l'asse X (Tempo)
+    // targetArr[1] è la Serie 1 (es. Accel X)
+    // targetArr[2] è la Serie 2 (es. Accel Y)
+    // ...
     
-    // Limita memoria (es. max 5000 punti)
-    if(target[0].length > 5000) {
-        target.forEach(series => series.shift());
+    targetArr[0].push(time);
+    
+    // Inseriamo i valori nelle rispettive serie
+    values.forEach((val, i) => {
+        // Se il valore è undefined o null, metti 0 per evitare crash del grafico
+        var safeVal = (val !== undefined && val !== null) ? val : 0;
+        targetArr[i+1].push(safeVal);
+    });
+    
+    // Limita memoria (mantieni solo gli ultimi 1000 punti per fluidità)
+    if(targetArr[0].length > 1000) {
+        targetArr.forEach(series => series.shift());
     }
 }
+
+function autoScroll(u, data) {
+    if (!isUserInteracting) {
+        var xData = data[0]; // Array dei tempi
+        if (xData.length < 2) return;
+        
+        var lastTime = xData[xData.length - 1];
+        var windowSize = 10; // Finestra di 10 secondi
+        
+        var minX = lastTime - windowSize;
+        if (xData[0] > minX) minX = xData[0]; // Non andare nel vuoto a sinistra
+        
+        // Imposta la scala X
+        u.setScale('x', { min: minX, max: lastTime });
+    }
+}
+
+function resetChartData() {
+    isUserInteracting = false;
+    // Resetta gli array vuoti pronti per uPlot
+    // [ [Tempo], [X], [Y], [Z] ]
+    chartData = { 
+        accel: [[],[],[],[]], 
+        gyro: [[],[],[],[]], 
+        mag: [[],[],[],[]], 
+        pressure: [[],[],[],[]] 
+    };
+    
+    // Pulisce i grafici visivi
+    if(charts.accel) charts.accel.setData(chartData.accel);
+    if(charts.gyro) charts.gyro.setData(chartData.gyro);
+    if(charts.mag) charts.mag.setData(chartData.mag);
+    if(charts.pressure) charts.pressure.setData(chartData.pressure);
+}
+
 
 function autoScroll(u, data) {
     if (!isUserInteracting) {
