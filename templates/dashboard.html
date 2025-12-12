@@ -108,7 +108,7 @@
         <div id="sensors-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px;"></div>
 
         <!-- ================= 4. MAPPA GPS + BPM ================= -->
-        <div id="map-section" style="margin-top: 50px; display: none; padding-top: 30px; border-top: 1px solid #333;">
+        <div id="map-section" style="margin-top: 50px; display: block; padding-top: 30px; border-top: 1px solid #333;">
             <h2 style="color: #97c93e; margin-bottom: 15px; font-size: 18px;">🌍 Posizione GPS Live</h2>
             
             <div style="position: relative; height: 500px; width: 100%;">
@@ -119,7 +119,7 @@
                 <!-- BPM WIDGET (Overlay) -->
 <!-- BPM WIDGET (Sempre visibile come richiesto) -->
             <div id="bpm-display" style="
-                display: flex; /* ERA 'none', ORA È 'flex' PER FARLO VEDERE SEMPRE */
+                display: flex; 
                 position: absolute; 
                 top: 20px; 
                 right: 20px; 

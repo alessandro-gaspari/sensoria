@@ -62,7 +62,7 @@ function initSocket() {
 
     // ASCOLTO UNICO: Gestisce sia log sporchi (BPM) che dati puliti (Sensori)
     socket.on('sensor_update', (data) => processIncomingData(data));
-    socket.on('bpm_update', (data) => processIncomingData(data));
+    socket.on('bpm_update', (val) => updateBpmUI(val));
 
     socket.on('profile_update', (data) => updateProfileUI(data));
     socket.on('gps_update', (data) => updateMapUI(data));
