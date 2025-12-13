@@ -317,6 +317,30 @@
     color: #999;
 }
 
+/* MARKER VERDE PULSANTE */
+.pulsating-marker {
+    width: 20px;
+    height: 20px;
+    background-color: #00ff00; /* Verde acceso */
+    border-radius: 50%;
+    border: 3px solid #ffffff; /* Bordo bianco per contrasto */
+    box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
+    animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 20px rgba(0, 255, 0, 0); /* L'onda si allarga e svanisce */
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
+    }
+}
+
+
 /* Responsive */
 @media (max-width: 1024px) {
     #sensors-grid {
