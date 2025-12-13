@@ -38,20 +38,26 @@ document.addEventListener('DOMContentLoaded', function() {
     // Gestione Menu a tendina sensori
     var sel = document.getElementById('chart-sensor-select');
     if(sel) {
-        sel.addEventListener('change', function(e) {
-            selectedSensor = e.target.value || null;
-            resetChartData(); // Reset visuale, i dati rimangono in memoria se volessimo
-            
-            var container = document.getElementById('charts-container');
-            if (selectedSensor) {
-                container.style.display = 'block';
-                if(!chartsInitialized) {
-                    initCharts();
+    sel.addEventListener('change', function(e) {
+                selectedSensor = e.target.value || null;
+                resetChartData();
+                
+                var container = document.getElementById('charts-container');
+                if (selectedSensor) {
+                    container.style.display = 'block'; // PRIMA
+                    
+                    if(!chartsInitialized) {
+                        // Timeout tattico per il rendering
+                        setTimeout(() => initCharts(), 10); 
+                    } else {
+                        // Se esistono già, forza il resize perché erano nascosti
+                        var w = container.offsetWidth - 40;
+                        uPlots.forEach(u => u.setSize({width: w, height: u.height}));
+                    }
+                } else {
+                    container.style.display = 'none';
                 }
-            } else {
-                container.style.display = 'none';
-            }
-        });
+            });
     }
 });
 
@@ -159,9 +165,17 @@ function processIncomingData(data) {
                 // Forza evento change per mostrare i grafici
                 sel.dispatchEvent(new Event('change')); 
             }
+            var cCont = document.getElementById('charts-container');
+            if (selectedSensor && cCont.style.display === 'none') {
+                cCont.style.display = 'block';
+            }
         }
-
-        updateChartsUI(name, payload);
+        if (selectedSensor && !chartsInitialized) {
+             // Piccolo timeout per dare tempo al browser di applicare display:block
+             setTimeout(() => initCharts(), 10); 
+        } else {
+             updateChartsUI(name, payload);
+        }
     }
 }
 
@@ -341,18 +355,23 @@ function updateMapUI(data) {
 // ==========================================
 // GRAFICI (uPlot) - SYNC & LOCK
 // ==========================================
+// Funzione Helper Opzioni Comuni
 function getCommonOpts(title, seriesLabels, seriesColors, height) {
+    // CALCOLA LARGHEZZA REALE O FALLBACK A 800px SE NASCOSTO
+    var containerWidth = document.getElementById('charts-container').offsetWidth || 800; 
+    
     return {
         title: title,
-        width: document.getElementById('charts-container').offsetWidth - 40,
+        width: containerWidth - 40, // Margine di sicurezza
         height: height || 200,
+        // ... (resto delle opzioni cursore/scale identiche a prima) ...
         cursor: {
             drag: { x: true, y: false, uni: 50 },
-            sync: { key: "mooviti_sync" }, // CHIAVE PER SINCRONIZZARE TUTTI
+            sync: { key: "mooviti_sync" }, 
             focus: { prox: 30 }
         },
         scales: {
-            x: { time: true, auto: false }, // Gestione manuale range
+            x: { time: true, auto: false },
             y: { auto: true }
         },
         series: [
@@ -366,78 +385,44 @@ function getCommonOpts(title, seriesLabels, seriesColors, height) {
             { stroke: '#97c93e', grid: { stroke: '#333' }, size: 60 }
         ],
         plugins: [
-            {
+            // ... (copia qui il plugin init/wheel che ti ho dato prima) ...
+             {
                 hooks: {
                     init: u => {
-                        // DOPPIO CLICK: RESETTA E TORNA AL LIVE
                         u.over.addEventListener("dblclick", () => {
                             isUserInteracting = false;
                             var xData = u.data[0];
-                            if (xData.length > 0) {
+                            if (xData && xData.length > 0) {
                                 var last = xData[xData.length - 1];
-                                uPlot.sync("mooviti_sync").setScale('x', {
-                                    min: last - 10,
-                                    max: last
-                                });
+                                uPlot.sync("mooviti_sync").setScale('x', { min: last - 10, max: last });
                             }
                         });
-
-                        // WHEEL ZOOM: LIMITATO AI DATI (NO SPAZI NERI)
                         u.over.addEventListener("wheel", e => {
                             e.preventDefault();
-                            isUserInteracting = true; // Pausa auto-scroll
-
+                            isUserInteracting = true;
                             var { left, width } = u.cursor;
                             var { min, max } = u.scales.x;
                             var range = max - min;
-                            
                             var oxRange = (e.clientX - u.bbox.left) / u.bbox.width * range; 
                             var factor = e.deltaY < 0 ? 0.9 : 1.1;
                             var newRange = range * factor;
-
-                            if (newRange < 0.5) newRange = 0.5; // Minimo zoom in
-
+                            if (newRange < 0.5) newRange = 0.5;
                             var newMin = min + oxRange - (oxRange / range) * newRange;
                             var newMax = newMin + newRange;
-
-                            // LIMITI LOCK: Non uscire dai dati registrati
+                            
                             var xData = u.data[0];
-                            if (xData.length > 0) {
+                            if (xData && xData.length > 0) {
                                 var dataMin = xData[0];
                                 var dataMax = xData[xData.length - 1];
-
                                 if (newMin < dataMin) newMin = dataMin;
                                 if (newMax > dataMax) newMax = dataMax;
-                                
-                                // Se zoom out eccessivo, fissa ai bordi
                                 if ((newMax - newMin) > (dataMax - dataMin)) {
-                                    newMin = dataMin;
-                                    newMax = dataMax;
+                                    newMin = dataMin; newMax = dataMax;
                                 }
                             }
-
-                            // Applica a TUTTI i grafici
                             uPlot.sync("mooviti_sync").setScale('x', { min: newMin, max: newMax });
                         });
-                        
                         u.over.addEventListener("mousedown", () => isUserInteracting = true);
-                    },
-                    setSelect: u => {
-                         // PAN LOCK: Impedisce trascinamento fuori dai bordi
-                        var { min, max } = u.scales.x;
-                        var xData = u.data[0];
-                        if (xData.length > 0) {
-                            var dataMin = xData[0];
-                            var dataMax = xData[xData.length - 1];
-                            
-                            var changed = false;
-                            if (min < dataMin) { min = dataMin; changed = true; }
-                            if (max > dataMax) { max = dataMax; changed = true; }
-                            
-                            if (changed) {
-                                uPlot.sync("mooviti_sync").setScale('x', { min, max });
-                            }
-                        }
                     }
                 }
             }
@@ -451,6 +436,9 @@ function initCharts() {
     var divM = document.getElementById('mag-chart');
     var divP = document.getElementById('pressure-chart');
     
+    // IMPORTANTE: Se il container è nascosto, non possiamo inizializzare correttamente le dimensioni.
+    // Ma se siamo qui, assumiamo che charts-container sia già 'block'.
+    
     if(!divA || chartsInitialized) return;
     
     divA.innerHTML = ""; divG.innerHTML = ""; divM.innerHTML = ""; divP.innerHTML = "";
@@ -460,13 +448,18 @@ function initCharts() {
     charts.gyro  = new uPlot(getCommonOpts("GIROSCOPIO",    ['GX','GY','GZ'], ['#ff9f40','#9966ff','#ffcd56']), chartData.gyro,  divG);
     charts.mag   = new uPlot(getCommonOpts("MAGNETOMETRO",  ['MX','MY','MZ'], ['#c9cbcf','#4bc0c0','#ff6384']), chartData.mag,   divM);
 
-    // Pressure custom opts
     var pOpts = getCommonOpts("PRESSIONI", ['P0','P1','P2'], ['#ff6384','#36a2eb','#ffce56'], 250);
     pOpts.scales.y = { auto: false, range: [0, 1024] };
     charts.pressure = new uPlot(pOpts, chartData.pressure, divP);
 
     uPlots.push(charts.accel, charts.gyro, charts.mag, charts.pressure);
     chartsInitialized = true;
+    
+    // FIX FINALE: Aggiungi un resize observer per adattare i grafici se la finestra cambia
+    window.addEventListener("resize", () => {
+        var w = document.getElementById('charts-container').offsetWidth - 40;
+        uPlots.forEach(u => u.setSize({ width: w, height: u.height }));
+    });
 }
 
 function updateChartsUI(sensorName, data) {
