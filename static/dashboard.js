@@ -49,9 +49,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-// ==========================================
-// SOCKET
-// ==========================================
 function initSocket() {
     socket.on('connect', () => {
         var el = document.getElementById('connection-status');
@@ -63,10 +60,8 @@ function initSocket() {
         if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
     });
 
-    // Sensori (IMU / pressioni)
+    // ASCOLTO UNICO: Gestisce sia log sporchi (BPM) che dati puliti (Sensori)
     socket.on('sensor_update', (data) => processIncomingData(data));
-
-    // BPM: il server manda un numero (es. 82), lo passiamo diretto alla UI
     socket.on('bpm_update', (val) => updateBpmUI(val));
 
     socket.on('profile_update', (data) => updateProfileUI(data));
@@ -74,9 +69,7 @@ function initSocket() {
 
     socket.on('data_cleared', () => {
         sensors = {};
-        var grid = document.getElementById('sensors-grid');
-        if (grid) grid.innerHTML = '';
-
+        document.getElementById('sensors-grid').innerHTML = '';
         var empty = document.getElementById('empty-state');
         if(empty) empty.style.display = 'block';
         
@@ -90,13 +83,11 @@ function initSocket() {
         if(profile) profile.style.display = 'none';
         
         var bpm = document.getElementById('bpm-display');
-        if(bpm) bpm.style.display = 'flex';        // resta visibile con --
-        var bpmValue = document.getElementById('bpm-value');
-        if (bpmValue) bpmValue.textContent = '--';
+        if(bpm) bpm.style.display = 'none';
         
-        if(mapMarker && map) { map.removeLayer(mapMarker); mapMarker = null; }
+        if(mapMarker) { map.removeLayer(mapMarker); mapMarker = null; }
         var mapSec = document.getElementById('map-section');
-        if(mapSec) mapSec.style.display = 'block';
+        if(mapSec) mapSec.style.display = 'none';
         
         resetChartData();
         chartsInitialized = false;
@@ -105,79 +96,94 @@ function initSocket() {
 }
 
 // ==========================================
-// PARSING DEI DATI SENSORI
+// PARSING DEI DATI (ROBUSTO)
 // ==========================================
-function processIncomingData(msg) {
-    // Il backend invia: { sensor_name: "...",  { ... } }
-    var payload = null;
-
-    if (typeof msg === 'object' && msg !== null) {
-        if (msg.data) payload = msg.data;
-        else payload = msg;
-    } else {
-        // fallback: prova a parsare stringhe JSON pure
-        try {
-            payload = JSON.parse(msg);
-        } catch (e) {
+function processIncomingData(data) {
+    // 1. GESTIONE BPM DA LOG SPORCO (*** Telemetry line...)
+    // Convertiamo sempre a stringa per cercare "bpm": 123 col regex, anche se è un oggetto.
+    // Questo è sicuro e non rompe nulla.
+    var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
+    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
+    
+    if (bpmMatch && bpmMatch[1]) {
+        var val = parseInt(bpmMatch[1]);
+        if (!isNaN(val) && val > 0) {
+            updateBpmUI(val);
+            // Se abbiamo trovato il BPM, non facciamo nient'altro con questo pacchetto
+            // per evitare di sporcare i grafici o creare card sensori false.
             return;
         }
     }
 
-    if (!payload || !payload.sensor_name) return;
+    // 2. GESTIONE SENSORI (Dati puliti)
+    // Se siamo qui, NON è un pacchetto BPM. Proviamo a trattarlo come sensore normale.
+    var payload = null;
 
-    var name = payload.sensor_name;
-
-    // Ignora eventuali HRM che non siano stati gestiti come BPM
-    if (name.includes("COOSPO") || name === "HRM") {
-        return;
+    if (typeof data === 'object') {
+        // Se è già un oggetto (WS diretto o JSON pulito dal server)
+        payload = data.data || data;
+    } else {
+        // Se è una stringa (log sporco), proviamo a estrarre il JSON pulito
+        var jsonStart = str.indexOf('{');
+        var jsonEnd = str.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd > jsonStart) {
+            try {
+                payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1));
+            } catch (e) {}
+        }
     }
 
-    // Profilo
-    if (name === 'PROFILE_INFO') {
-        updateProfileUI(payload);
-        return;
-    }
+    // Se abbiamo estratto un payload valido e ha un nome, aggiorniamo UI
+    if (payload && payload.sensor_name) {
+        var name = payload.sensor_name;
+        
+        if (name.includes("COOSPO") || name === "HRM") return;
 
-    // Sensore reale
-    sensors[name] = payload;
-    updateSensorCardUI(name, payload);
-    renderSensorsGrid();        // <-- garantisce che la griglia/empty-state si aggiornino
+        if (name === 'PROFILE_INFO') {
+            updateProfileUI(payload);
+            return;
+        }
+
+        // Altrimenti è sensore vero (Ginocchio, Calzino...)
+        sensors[name] = payload;
+
+        // NASCONDI SUBITO IL MESSAGGIO "IN ATTESA DI DATI"
+        var empty = document.getElementById('empty-state');
+        if (empty) empty.style.display = 'none';
+
+        updateSensorCardUI(name, payload);
+        updateChartsUI(name, payload);
+    }
 }
+
 
 // ==========================================
 // UI: GRIGLIA SENSORI
 // ==========================================
 function renderSensorsGrid() {
     var grid = document.getElementById('sensors-grid');
-    var empty = document.getElementById('empty-state');
-    if (!grid) return;
-
     grid.innerHTML = '';
-
+    
     var keys = Object.keys(sensors);
-
+    var empty = document.getElementById('empty-state');
+    
     if (keys.length === 0) {
         if(empty) empty.style.display = 'block';
         return;
     }
-
     if(empty) empty.style.display = 'none';
 
     keys.forEach(name => {
         createSensorCard(name, sensors[name]);
     });
-
     updateSelector();
 }
 
 function createSensorCard(name, data) {
-    if (!data) return;
     if (data.accel_x === undefined && data.pressure_0 === undefined) return;
 
     var grid = document.getElementById('sensors-grid');
-    if (!grid) return;
-
-    var existing = document.querySelector('[data-sensor="'+name+'"]');
+    var existing = document.querySelector(`[data-sensor="${name}"]`);
     if(existing) return; 
 
     var div = document.createElement('div');
@@ -222,7 +228,7 @@ function createSensorCard(name, data) {
     }
 
     if (data.pressure_0 !== undefined) {
-        html += `<div class="sensor-data-section" style="border:none;">
+         html += `<div class="sensor-data-section" style="border:none;">
                     <div class="sensor-data-section-title">Pressioni</div>
                     <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_0">0</span></div>
                     <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_1">0</span></div>
@@ -235,14 +241,11 @@ function createSensorCard(name, data) {
 }
 
 function updateSensorCardUI(name, data) {
-    var card = document.querySelector('[data-sensor="'+name+'"]');
-    if (!card) { 
-        createSensorCard(name, data); 
-        return; 
-    }
+    var card = document.querySelector(`[data-sensor="${name}"]`);
+    if (!card) { createSensorCard(name, data); updateSelector(); return; }
     
     Object.keys(data).forEach(k => {
-        var el = card.querySelector('[data-key="'+k+'"]');
+        var el = card.querySelector(`[data-key="${k}"]`);
         if (el) el.textContent = Math.round(data[k]);
     });
 }
@@ -284,7 +287,7 @@ function updateSelector() {
 // ==========================================
 function updateProfileUI(data) {
     var div = document.getElementById('user-profile-display');
-    if (!data || !data.name || !div) return;
+    if (!data.name || !div) return;
     div.style.display = 'flex';
     document.getElementById('profile-name').textContent = data.name.toUpperCase();
     document.getElementById('profile-avatar').textContent = data.avatar || "👤";
@@ -298,40 +301,46 @@ function updateBpmUI(val) {
     
     val = parseInt(val);
 
-    if (mapSection) {
-        mapSection.style.display = 'block';
-        if(!isMapInitialized) initMap();
-    }
-
-    if (div) {
-        div.style.display = 'flex';
-        var v = document.getElementById('bpm-value');
-        if (v) v.textContent = isNaN(val) || val <= 0 ? '--' : val;
-        var icon = div.querySelector('.heart-icon');
-        if (icon && !isNaN(val) && val > 0) {
-            var d = 60/val; 
-            if(d<0.3) d=0.3; 
-            icon.style.animationDuration = d+'s';
+    if (val > 0) {
+        if (mapSection && mapSection.style.display === 'none') {
+            mapSection.style.display = 'block';
+            if(!isMapInitialized) initMap();
+        }
+        
+        if(div) {
+            div.style.display = 'flex';
+            document.getElementById('bpm-value').textContent = val;
+            var icon = div.querySelector('.heart-icon');
+            if (icon) {
+                var d = 60/val; 
+                if(d<0.3) d=0.3; 
+                icon.style.animationDuration = d+'s';
+            }
         }
     }
 }
 
-// MAPPA SENZA ATTRIBUTION + MARKER VERDE PULSANTE
 function initMap() {
     if (isMapInitialized) return;
+    
+    // RIMOSSA LA SCRITTA "Leaflet | OpenStreetMap..." con attributionControl: false
     map = L.map('map', { attributionControl: false }).setView([41.9028, 12.4964], 5);
+    
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { 
         maxZoom: 20 
     }).addTo(map);
+    
     isMapInitialized = true;
     setTimeout(() => map.invalidateSize(), 100);
 }
+
 
 function updateMapUI(data) {
     var section = document.getElementById('map-section');
     if(section) section.style.display = 'block';
 
     if (!isMapInitialized) {
+        // Anche qui aggiungiamo attributionControl: false per sicurezza
         map = L.map('map', { attributionControl: false }).setView([data.latitude, data.longitude], 15);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             maxZoom: 20
@@ -344,17 +353,21 @@ function updateMapUI(data) {
     var accEl = document.getElementById('gps-accuracy');
     if(accEl) accEl.textContent = Math.round(data.accuracy);
 
+    // LOGICA PER IL NUOVO MARKER PULSANTE
     if (!mapMarker) {
+        // Creiamo un'icona DIV personalizzata invece dell'immagine standard
         var pulseIcon = L.divIcon({
-            className: 'custom-div-icon',
-            html: "<div class='pulsating-marker'></div>",
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
+            className: 'custom-div-icon', // Classe vuota per non avere stili default brutti
+            html: "<div class='pulsating-marker'></div>", // Il nostro div animato
+            iconSize: [24, 24], // Dimensione del contenitore
+            iconAnchor: [12, 12] // Centro esatto
         });
+
         mapMarker = L.marker(latlng, {icon: pulseIcon}).addTo(map);
         map.panTo(latlng);
     } else {
         mapMarker.setLatLng(latlng);
+        // map.panTo(latlng); // Decommenta se vuoi che la mappa segua sempre il punto
     }
 }
 
@@ -482,8 +495,7 @@ function wheelZoomPlugin() {
             init: (u) => {
                 u.over.addEventListener("wheel", e => {
                     e.preventDefault();
-                    var s = u.scales.x;
-                    var min = s.min, max = s.max;
+                    var {min, max} = u.scales.x;
                     var range = max - min;
                     var factor = e.deltaY < 0 ? 0.9 : 1.1;
                     var newRange = range * factor;
