@@ -12,12 +12,12 @@ var sensors = {};
 // --- MAPPA & REPLAY ---
 var map = null;
 var mapMarker = null;
-var routePath = null;           // NUOVO: La linea verde del percorso
-var routeHistory = [];          // NUOVO: Storico di tutti i punti GPS
+var routePath = null;           // Linea verde
+var routeHistory = [];          // Storico punti
 var isMapInitialized = false;
-var isReplayMode = false;       // NUOVO: Stato del replay
+var isReplayMode = false;       
 
-const SENSORIA_GREEN = '#97c93e'; // Colore ufficiale
+const SENSORIA_GREEN = '#97c93e'; 
 
 // --- INTERPOLAZIONE MARKER ---
 var currentMapPos = null; 
@@ -45,8 +45,8 @@ var MIN_ZOOM_RANGE = 0.5;
 // ==========================================
 document.addEventListener('DOMContentLoaded', function() {
     initSocket();
-    setupReplayControls(); // NUOVO: Inizializza slider replay
     
+    // Setup listener dropdown grafici
     var sel = document.getElementById('chart-sensor-select');
     if(sel) {
         sel.addEventListener('change', function(e) {
@@ -80,46 +80,38 @@ function initSocket() {
     socket.on('sensor_update', (data) => processIncomingData(data));
     socket.on('bpm_update', (val) => updateBpmUI(val));
     socket.on('profile_update', (data) => updateProfileUI(data));
-    
-    // GPS -> Aggiorna Mappa E Percorso
     socket.on('gps_update', (data) => updateMapUI(data));
 
     socket.on('data_cleared', () => {
-        // RESET COMPLETO
-        sensors = {};
-        routeHistory = []; // Pulisce storico percorso
-        
-        document.getElementById('sensors-grid').innerHTML = '';
-        var empty = document.getElementById('empty-state');
-        if(empty) empty.style.display = 'block';
-        
-        var selCont = document.getElementById('selector-container');
-        if(selCont) selCont.style.display = 'none';
-        
-        var chartsCont = document.getElementById('charts-container');
-        if(chartsCont) chartsCont.style.display = 'none';
-        
-        var profile = document.getElementById('user-profile-display');
-        if(profile) profile.style.display = 'none';
-        
-        var bpm = document.getElementById('bpm-display');
-        if(bpm) bpm.style.display = 'none';
-        
-        // Reset Mappa
-        if(mapMarker) { map.removeLayer(mapMarker); mapMarker = null; }
-        if(routePath) { map.removeLayer(routePath); routePath = null; } // Rimuove linea verde
-        
-        var mapSec = document.getElementById('map-section');
-        if(mapSec) mapSec.style.display = 'none';
-        
-        // Nasconde controlli replay
-        var replayDiv = document.getElementById('replay-controls');
-        if(replayDiv) replayDiv.style.display = 'none';
-        
-        resetChartData();
-        chartsInitialized = false;
-        selectedSensor = null;
+        resetAll();
     });
+}
+
+function resetAll() {
+    sensors = {};
+    routeHistory = []; 
+    
+    document.getElementById('sensors-grid').innerHTML = '';
+    var empty = document.getElementById('empty-state');
+    if(empty) empty.style.display = 'block';
+    
+    document.getElementById('charts-container').style.display = 'none';
+    document.getElementById('user-profile-display').style.display = 'none';
+    document.getElementById('bpm-display').style.display = 'none';
+    
+    // Reset Mappa
+    if(routePath) routePath.setLatLngs([]); // Pulisce la linea
+    if(mapMarker) mapMarker.setOpacity(0); // Nasconde marker temporaneamente
+    
+    // Reset Replay
+    isReplayMode = false;
+    var slider = document.getElementById('replay-slider');
+    if(slider) { slider.value = 0; slider.max = 0; }
+    document.getElementById('replay-controls').style.display = 'none';
+    
+    resetChartData();
+    chartsInitialized = false;
+    selectedSensor = null;
 }
 
 // ==========================================
@@ -127,13 +119,15 @@ function initSocket() {
 // ==========================================
 function processIncomingData(data) {
     var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
-    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
     
+    // 1. Check BPM veloce
+    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
     if (bpmMatch && bpmMatch[1]) {
         var val = parseInt(bpmMatch[1]);
         if (!isNaN(val) && val > 0) { updateBpmUI(val); return; }
     }
 
+    // 2. Parsing JSON sicuro
     var payload = null;
     if (typeof data === 'object') {
         payload = data.data || data;
@@ -145,9 +139,10 @@ function processIncomingData(data) {
         }
     }
 
+    // 3. Routing dati
     if (payload && payload.sensor_name) {
         var name = payload.sensor_name;
-        if (name.includes("COOSPO") || name === "HRM") return;
+        if (name.includes("COOSPO") || name === "HRM") return; // Ignora cardio qui
         if (name === 'PROFILE_INFO') { updateProfileUI(payload); return; }
 
         sensors[name] = payload;
@@ -160,71 +155,86 @@ function processIncomingData(data) {
 }
 
 // ==========================================
-// MAPPA, PERCORSO & REPLAY (NUOVO CODICE)
+// MAPPA, PERCORSO & REPLAY (CORRETTO)
 // ==========================================
 
-function updateMapUI(data) {
+function ensureMapInitialized(lat, lng) {
+    if (isMapInitialized) return;
+
     var section = document.getElementById('map-section');
     if(section) section.style.display = 'block';
 
-    // 1. Inizializzazione Mappa
-    if (!isMapInitialized) {
-        map = L.map('map', { attributionControl: false }).setView([data.latitude, data.longitude], 19);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
-        isMapInitialized = true;
-        
-        // Marker personalizzato pulsante
-        var pulseIcon = L.divIcon({
-            className: 'custom-div-icon', 
-            html: "<div class='pulsating-marker'></div>", 
-            iconSize: [24, 24], 
-            iconAnchor: [12, 12] 
-        });
-        
-        currentMapPos = { lat: data.latitude, lng: data.longitude };
-        mapMarker = L.marker([data.latitude, data.longitude], {icon: pulseIcon}).addTo(map);
+    map = L.map('map', { attributionControl: false }).setView([lat, lng], 19);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
 
-        // CREAZIONE LINEA VERDE
-        routePath = L.polyline([], {
-            color: SENSORIA_GREEN,
-            weight: 5,
-            opacity: 0.8,
-            lineJoin: 'round'
-        }).addTo(map);
-        
-        // Mostra controlli replay
-        var replayDiv = document.getElementById('replay-controls');
-        if(replayDiv) replayDiv.style.display = 'flex';
-
-        setTimeout(() => map.invalidateSize(), 100);
-    }
-
-    // 2. Registra punto nello storico
-    var timestamp = Date.now();
-    // Se il dato ha un timestamp suo, usalo, altrimenti usa ora corrente
-    if(data.timestamp) timestamp = new Date(data.timestamp).getTime();
+    // Marker Custom
+    var pulseIcon = L.divIcon({
+        className: 'custom-div-icon', 
+        html: "<div class='pulsating-marker'></div>", 
+        iconSize: [24, 24], 
+        iconAnchor: [12, 12] 
+    });
     
+    mapMarker = L.marker([lat, lng], {icon: pulseIcon}).addTo(map);
+
+    // CREAZIONE PERCORSO (Inizialmente vuoto)
+    routePath = L.polyline([], {
+        color: SENSORIA_GREEN,
+        weight: 5,
+        opacity: 0.8,
+        lineJoin: 'round'
+    }).addTo(map);
+
+    // SETUP CONTROLLI REPLAY (Funzione separata per pulizia)
+    createReplayControlsHTML();
+
+    isMapInitialized = true;
+    setTimeout(() => map.invalidateSize(), 100);
+}
+
+function updateMapUI(data) {
+    // 1. Assicurati che la mappa esista
+    ensureMapInitialized(data.latitude, data.longitude);
+    
+    // 2. Mostra sezione mappa se nascosta
+    document.getElementById('map-section').style.display = 'block';
+    
+    // 3. Aggiungi punto allo storico
+    var timestamp = data.timestamp ? new Date(data.timestamp).getTime() : Date.now();
     var newPoint = { lat: data.latitude, lng: data.longitude, t: timestamp };
     routeHistory.push(newPoint);
 
-    // 3. Aggiorna percorso e UI (solo se non siamo in replay manuale)
-    if (!isReplayMode && routePath) {
-        routePath.addLatLng([data.latitude, data.longitude]);
-        updateReplaySliderMax(); // Allunga lo slider man mano che arrivano dati
+    // 4. Aggiorna UI se NON siamo in replay
+    if (!isReplayMode) {
+        // Aggiungi punto alla linea verde
+        if(routePath) {
+            routePath.addLatLng([data.latitude, data.longitude]);
+        }
         
-        // Animazione Marker Fluida verso il nuovo punto
+        // Aggiorna lo slider del replay (il max aumenta)
+        updateReplaySliderUI();
+
+        // Mostra controlli replay se abbiamo almeno 2 punti
+        if(routeHistory.length > 1) {
+            document.getElementById('replay-controls').style.display = 'flex';
+        }
+
+        // Animazione Marker
+        if(!currentMapPos) currentMapPos = { lat: data.latitude, lng: data.longitude };
         targetMapPos = { lat: data.latitude, lng: data.longitude };
-        startMapPos = currentMapPos ? { ...currentMapPos } : { ...targetMapPos };
+        startMapPos = { ...currentMapPos };
         animationStartTime = performance.now();
+        
         if (!animationFrameId) animateMarkerLoop();
 
-        // Aggiorna accuratezza
+        // Accuratezza
         var accEl = document.getElementById('gps-accuracy');
         if(accEl) accEl.textContent = Math.round(data.accuracy);
+        
+        mapMarker.setOpacity(1); // Assicurati che sia visibile
     }
 }
 
-// Loop animazione fluida (Live Mode)
 function animateMarkerLoop() {
     if (!startMapPos || !targetMapPos || !mapMarker || isReplayMode) {
         animationFrameId = null;
@@ -249,58 +259,57 @@ function animateMarkerLoop() {
     }
 }
 
-// --- SETUP CONTROLLI REPLAY ---
-function setupReplayControls() {
-    // Crea HTML dello slider se non esiste
-    var mapContainer = document.getElementById('map-section');
-    if(!document.getElementById('replay-controls')) {
-        var controlsDiv = document.createElement('div');
-        controlsDiv.id = 'replay-controls';
-        // Stile scuro integrato
-        controlsDiv.style.cssText = 'display:none; margin-top:10px; align-items:center; background:#1a1a1a; padding:10px; border-radius:10px; border:1px solid #333;';
-        
-        controlsDiv.innerHTML = `
-            <span style="color:${SENSORIA_GREEN}; font-weight:bold; font-size:12px; margin-right:10px;">REPLAY</span>
-            <input type="range" id="replay-slider" min="0" max="0" value="0" style="flex-grow:1; cursor:pointer; accent-color:${SENSORIA_GREEN};">
-            <span id="replay-time" style="color:#fff; font-family:monospace; font-size:12px; margin-left:10px; min-width:50px; text-align:right;">LIVE</span>
-        `;
-        mapContainer.appendChild(controlsDiv);
-        
-        var slider = document.getElementById('replay-slider');
-        
-        // Evento: Trascinamento slider
-        slider.addEventListener('input', function(e) {
-            isReplayMode = true; // Entra in modalità replay
-            cancelAnimationFrame(animationFrameId); // Ferma animazione live
-            
-            var index = parseInt(e.target.value);
-            if (index >= 0 && index < routeHistory.length) {
-                var pt = routeHistory[index];
-                // Teletrasporta marker al punto storico
-                mapMarker.setLatLng([pt.lat, pt.lng]);
-                document.getElementById('replay-time').textContent = formatReplayTime(index);
-            }
-        });
+// --- REPLAY CONTROLS ---
 
-        // Evento: Rilascio slider
-        slider.addEventListener('change', function(e) {
-            // Se arriviamo alla fine, torniamo in LIVE
-            if (parseInt(e.target.value) >= routeHistory.length - 1) {
-                isReplayMode = false;
-                document.getElementById('replay-time').textContent = "LIVE";
-                // Riaggancia ultimo punto live
-                if(targetMapPos) mapMarker.setLatLng([targetMapPos.lat, targetMapPos.lng]);
-            }
-        });
-    }
+function createReplayControlsHTML() {
+    var mapContainer = document.getElementById('map-section');
+    if(document.getElementById('replay-controls')) return;
+
+    var controlsDiv = document.createElement('div');
+    controlsDiv.id = 'replay-controls';
+    controlsDiv.style.cssText = 'display:none; margin-top:10px; align-items:center; background:#1a1a1a; padding:10px; border-radius:10px; border:1px solid #333;';
+    
+    controlsDiv.innerHTML = `
+        <span style="color:${SENSORIA_GREEN}; font-weight:bold; font-size:12px; margin-right:10px;">REPLAY</span>
+        <input type="range" id="replay-slider" min="0" max="0" value="0" style="flex-grow:1; cursor:pointer; accent-color:${SENSORIA_GREEN};">
+        <span id="replay-time" style="color:#fff; font-family:monospace; font-size:12px; margin-left:10px; min-width:50px; text-align:right;">LIVE</span>
+    `;
+    mapContainer.appendChild(controlsDiv);
+    
+    var slider = document.getElementById('replay-slider');
+    
+    // INPUT: Mentre trascini
+    slider.addEventListener('input', function(e) {
+        isReplayMode = true; 
+        cancelAnimationFrame(animationFrameId); 
+        
+        var index = parseInt(e.target.value);
+        if (index >= 0 && index < routeHistory.length) {
+            var pt = routeHistory[index];
+            mapMarker.setLatLng([pt.lat, pt.lng]);
+            document.getElementById('replay-time').textContent = formatReplayTime(index);
+        }
+    });
+
+    // CHANGE: Quando rilasci
+    slider.addEventListener('change', function(e) {
+        // Se rilasci alla fine (o vicino), torna LIVE
+        if (parseInt(e.target.value) >= routeHistory.length - 1) {
+            isReplayMode = false;
+            document.getElementById('replay-time').textContent = "LIVE";
+            // Riaggancia all'ultimo punto reale
+            if(targetMapPos) mapMarker.setLatLng([targetMapPos.lat, targetMapPos.lng]);
+        }
+    });
 }
 
-function updateReplaySliderMax() {
+function updateReplaySliderUI() {
     var slider = document.getElementById('replay-slider');
     if (slider) {
         var len = routeHistory.length;
-        slider.max = len - 1;
-        // Se siamo in LIVE, il cursore deve stare alla fine
+        if(len > 0) slider.max = len - 1;
+        
+        // Se siamo in LIVE, il cursore deve stare alla fine automaticamente
         if (!isReplayMode) {
             slider.value = len - 1;
         }
@@ -311,7 +320,6 @@ function formatReplayTime(index) {
     if(routeHistory.length === 0) return "00:00";
     var startT = routeHistory[0].t;
     var currT = routeHistory[index].t;
-    // Calcola tempo relativo in MM:SS
     var diffSec = Math.floor((currT - startT) / 1000);
     if(diffSec < 0) diffSec = 0;
     
@@ -320,9 +328,8 @@ function formatReplayTime(index) {
     return `${m}:${s}`;
 }
 
-
 // ==========================================
-// FUNZIONI STANDARD (GRAFICI, UI SENSORI)
+// SENSORI (CORRETTO VISUALIZZAZIONE)
 // ==========================================
 function renderSensorsGrid() {
     var grid = document.getElementById('sensors-grid');
@@ -341,7 +348,14 @@ function renderSensorsGrid() {
 }
 
 function createSensorCard(name, data) {
-    if (data.accel_x === undefined && data.pressure_0 === undefined) return;
+    // FIX: Creiamo la card se c'è ALMENO UN dato utile
+    var hasAccel = data.accel_x !== undefined;
+    var hasGyro = data.gyro_x !== undefined;
+    var hasMag = data.mag_x !== undefined;
+    var hasPressure = data.pressure_0 !== undefined;
+
+    if (!hasAccel && !hasGyro && !hasMag && !hasPressure) return;
+
     var grid = document.getElementById('sensors-grid');
     var existing = document.querySelector(`[data-sensor="${name}"]`);
     if(existing) return; 
@@ -357,13 +371,29 @@ function createSensorCard(name, data) {
 
     var html = `<div class="sensor-header"><span>${emoji} ${name}</span><div class="status-indicator active"></div></div>`;
     
-    if (data.accel_x !== undefined) {
+    // FIX: Blocchi condizionali per ogni tipo di sensore
+    if (hasAccel) {
         html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Accelerometro</div>
                  <div class="sensor-data-row"><span class="sensor-data-label">AX</span> <span class="sensor-value" data-key="accel_x">0</span></div>
                  <div class="sensor-data-row"><span class="sensor-data-label">AY</span> <span class="sensor-value" data-key="accel_y">0</span></div>
                  <div class="sensor-data-row"><span class="sensor-data-label">AZ</span> <span class="sensor-value" data-key="accel_z">0</span></div></div>`;
     }
-    if (data.pressure_0 !== undefined) {
+
+    if (hasGyro) {
+        html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Giroscopio</div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">GX</span> <span class="sensor-value" data-key="gyro_x">0</span></div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">GY</span> <span class="sensor-value" data-key="gyro_y">0</span></div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">GZ</span> <span class="sensor-value" data-key="gyro_z">0</span></div></div>`;
+    }
+
+    if (hasMag) {
+        html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Magnetometro</div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">MX</span> <span class="sensor-value" data-key="mag_x">0</span></div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">MY</span> <span class="sensor-value" data-key="mag_y">0</span></div>
+                 <div class="sensor-data-row"><span class="sensor-data-label">MZ</span> <span class="sensor-value" data-key="mag_z">0</span></div></div>`;
+    }
+
+    if (hasPressure) {
          html += `<div class="sensor-data-section" style="border:none;"><div class="sensor-data-section-title">Pressioni</div>
                   <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_0">0</span></div>
                   <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_1">0</span></div></div>`;
@@ -375,11 +405,17 @@ function createSensorCard(name, data) {
 function updateSensorCardUI(name, data) {
     var card = document.querySelector(`[data-sensor="${name}"]`);
     if (!card) { createSensorCard(name, data); updateSelector(); return; }
+    
+    // Aggiorna tutti i campi trovati
     Object.keys(data).forEach(k => {
         var el = card.querySelector(`[data-key="${k}"]`);
         if (el) el.textContent = Math.round(data[k]);
     });
 }
+
+// ==========================================
+// FUNZIONI STANDARD (GRAFICI, UTILS)
+// ==========================================
 
 function updateSelector() {
     var sel = document.getElementById('chart-sensor-select');
@@ -408,13 +444,8 @@ function updateProfileUI(data) {
 
 function updateBpmUI(val) {
     var div = document.getElementById('bpm-display');
-    var mapSection = document.getElementById('map-section');
     val = parseInt(val);
     if (val > 0) {
-        if(mapSection && mapSection.style.display === 'none') {
-             mapSection.style.display = 'block';
-             if(!isMapInitialized) initMap(); // Init ritardato se arriva prima il BPM del GPS
-        }
         if(div) {
             div.style.display = 'flex';
             document.getElementById('bpm-value').textContent = val;
@@ -424,9 +455,6 @@ function updateBpmUI(val) {
     }
 }
 
-// ==========================================
-// LOGICA GRAFICI
-// ==========================================
 function updateChartsUI(sensorName, data) {
     if (selectedSensor !== sensorName || !chartsInitialized) return;
     var timestamp = Date.now() / 1000;
