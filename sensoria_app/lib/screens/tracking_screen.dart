@@ -6,7 +6,7 @@ import 'package:apple_maps_flutter/apple_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-import '../streaming_manager.dart';
+import '../streaming_manager.dart'; // Contiene l'enum GpsSignalQuality
 import '../providers/connected_devices_provider.dart';
 import '../providers/profile_provider.dart';
 
@@ -17,21 +17,14 @@ class TrackingScreen extends StatefulWidget {
   State<TrackingScreen> createState() => _TrackingScreenState();
 }
 
-class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStateMixin {
+class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProviderStateMixin {
   Timer? _durationTimer;
   Duration _sessionDuration = Duration.zero;
   Position? _lastKnownPosition;
 
   AppleMapController? _mapController;
-  StreamSubscription<Position>? _positionStream;
-  
-  // === VARIABILI PER L'INTERPOLAZIONE ===
-  LatLng? _currentAnimatedPosition; // La posizione fluida che vediamo
-  LatLng? _targetPosition;          // L'ultima posizione GPS reale ricevuta
-  late AnimationController _cameraMoveController;
-  late Animation<double> _latAnimation;
-  late Animation<double> _lngAnimation;
-  // ======================================
+  // Stream dedicato per l'aggiornamento ultra-rapido della mappa locale
+  StreamSubscription<Position>? _localMapStream;
   
   CameraPosition _cameraPosition = const CameraPosition(
     target: LatLng(0, 0),
@@ -41,6 +34,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   bool _hasRealPosition = false; 
   String _gpsStatus = "In attesa GPS...";
   
+  // Marker pulsante (animazione solo estetica)
   late AnimationController _markerAnimController;
   late Animation<double> _markerAnimation;
 
@@ -48,29 +42,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   void initState() {
     super.initState();
     _startTimer();
-    
-    // Inizializza controller per l'interpolazione (durata 1s per matchare l'update GPS)
-    _cameraMoveController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000), // Fluidità tra un punto e l'altro
-    );
-    
-    // Listener per aggiornare la mappa ad ogni frame dell'animazione
-    _cameraMoveController.addListener(() {
-      if (_mapController != null && _latAnimation.value != 0 && _lngAnimation.value != 0) {
-        // Aggiorna la variabile che renderizza il marker fluido
-        setState(() {
-          _currentAnimatedPosition = LatLng(_latAnimation.value, _lngAnimation.value);
-        });
-        
-        // Sposta la camera in modo fluido
-        _mapController!.moveCamera(
-          CameraUpdate.newLatLng(_currentAnimatedPosition!),
-        );
-      }
-    });
-
-    _initLocationTracking();
+    _initHighPrecisionMap(); // Logica Coospo: Stream diretto alla mappa
 
     _markerAnimController = AnimationController(
       vsync: this,
@@ -82,47 +54,9 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     );
   }
 
-  // Funzione per avviare l'animazione verso la nuova coordinata
-  void _animateToPosition(LatLng newPos) {
-    if (_currentAnimatedPosition == null) {
-      // Primo punto: nessun movimento, set diretto
-      _currentAnimatedPosition = newPos;
-      return;
-    }
-
-    // Configura i Tween dalla posizione attuale (animata) a quella nuova (target)
-    _latAnimation = Tween<double>(
-      begin: _currentAnimatedPosition!.latitude,
-      end: newPos.latitude,
-    ).animate(CurvedAnimation(parent: _cameraMoveController, curve: Curves.linear));
-
-    _lngAnimation = Tween<double>(
-      begin: _currentAnimatedPosition!.longitude,
-      end: newPos.longitude,
-    ).animate(CurvedAnimation(parent: _cameraMoveController, curve: Curves.linear));
-
-    // Resetta e avvia l'animazione verso il nuovo punto
-    _cameraMoveController.reset();
-    _cameraMoveController.forward();
-  }
-
-  void _startTimer() {
-    _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _sessionDuration += const Duration(seconds: 1);
-      });
-
-      if (_lastKnownPosition != null) {
-        Provider.of<StreamingManager>(context, listen: false).sendGpsData(
-          _lastKnownPosition!.latitude, 
-          _lastKnownPosition!.longitude, 
-          _lastKnownPosition!.accuracy
-        );
-      }
-    });
-  }
-
-  Future<void> _initLocationTracking() async {
+  // LOGICA COOSPO: Stream Diretto e Aggressivo per la Mappa
+  Future<void> _initHighPrecisionMap() async {
+    // 1. Permessi
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return;
 
@@ -132,28 +66,27 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
       if (permission == LocationPermission.denied) return;
     }
 
+    // 2. Posizione Iniziale (Flash)
     try {
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high, 
-        timeLimit: const Duration(seconds: 10)
+        desiredAccuracy: LocationAccuracy.bestForNavigation, 
+        timeLimit: const Duration(seconds: 5)
       );
 
       if (mounted) {
         setState(() {
           _cameraPosition = CameraPosition(
             target: LatLng(position.latitude, position.longitude),
-            zoom: 19.0,
+            zoom: 18.0, 
           );
           _hasRealPosition = true;
           _gpsStatus = "GPS Attivo";
           _lastKnownPosition = position; 
-          
-          // Setta il punto iniziale per l'interpolazione
-          _currentAnimatedPosition = LatLng(position.latitude, position.longitude);
         });
         
+        // Centra subito
         if (_mapController != null) {
-          _mapController!.moveCamera( // Usa moveCamera invece di animateCamera per scatto istantaneo iniziale
+          _mapController!.animateCamera(
             CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
           );
         }
@@ -162,35 +95,49 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
       debugPrint("⚠️ Errore GPS iniziale: $e");
     }
 
+    // 3. STREAM "RAW" -> MAPPA
     const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation, // Aumentata precisione per interpolazione migliore
-      distanceFilter: 0, // Filtro 0 per catturare ogni micro-movimento
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 0, // Zero filtro = Massima fluidità reale
     );
     
-    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+    _localMapStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
       (Position position) {
         if (position.latitude == 0 && position.longitude == 0) return;
 
         if (mounted) {
           _lastKnownPosition = position; 
-          
-          // Nuova posizione target reale
-          LatLng newTarget = LatLng(position.latitude, position.longitude);
 
           if (!_hasRealPosition) {
              setState(() {
                _hasRealPosition = true;
                _gpsStatus = "GPS Agganciato";
-               _currentAnimatedPosition = newTarget; // Primo fix, niente animazione
              });
-          } else {
-             // AVVIA INTERPOLAZIONE VERSO IL NUOVO PUNTO
-             _animateToPosition(newTarget);
+          }
+          
+          // MUOVE LA MAPPA DIRETTAMENTE
+          if (_mapController != null) {
+            _mapController!.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(position.latitude, position.longitude),
+                  zoom: 18.0,
+                ),
+              ),
+            );
           }
         }
       },
-      onError: (error) => debugPrint("❌ Errore stream: $error"),
+      onError: (error) => debugPrint("❌ Errore stream mappa: $error"),
     );
+  }
+
+  void _startTimer() {
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _sessionDuration += const Duration(seconds: 1);
+      });
+    });
   }
 
   Future<void> _handleStopTracking() async {
@@ -217,9 +164,8 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
   @override
   void dispose() {
     _durationTimer?.cancel();
-    _positionStream?.cancel();
+    _localMapStream?.cancel();
     _markerAnimController.dispose();
-    _cameraMoveController.dispose(); // Importante disporre il controller interpolazione
     super.dispose();
   }
 
@@ -230,13 +176,61 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
     final seconds = twoDigits(duration.inSeconds.remainder(60));
     return "$hours:$minutes:$seconds";
   }
+  
+  // Helper per colore qualità segnale
+  Color _getQualityColor(GpsSignalQuality q) {
+    switch(q) {
+      case GpsSignalQuality.excellent: return const Color(0xFF00C853); 
+      case GpsSignalQuality.good: return Colors.green;
+      case GpsSignalQuality.moderate: return Colors.yellow;
+      case GpsSignalQuality.weak: return Colors.orange;
+      default: return Colors.red;
+    }
+  }
+
+  // --- NUOVO WIDGET BARRE SEGNALE ---
+  Widget _buildSignalBars(GpsSignalQuality quality) {
+    // Determina quante tacche accendere (da 0 a 4)
+    int barsLit = 0;
+    switch (quality) {
+      case GpsSignalQuality.excellent: barsLit = 4; break;
+      case GpsSignalQuality.good:      barsLit = 3; break;
+      case GpsSignalQuality.moderate:  barsLit = 2; break;
+      case GpsSignalQuality.weak:      barsLit = 1; break;
+      default:                         barsLit = 0; break;
+    }
+    
+    Color activeColor = _getQualityColor(quality);
+    Color inactiveColor = Colors.white24; 
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(4, (index) {
+        // Altezza scalare: 6, 9, 12, 15
+        double height = 6.0 + (index * 3.0);
+        bool isLit = index < barsLit;
+        
+        return Container(
+          margin: const EdgeInsets.only(left: 2), 
+          width: 4,
+          height: height,
+          decoration: BoxDecoration(
+            color: isLit ? activeColor : inactiveColor,
+            borderRadius: BorderRadius.circular(1),
+          ),
+        );
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final streamingManager = Provider.of<StreamingManager>(context);
     final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
     final activeProfile = Provider.of<ProfileProvider>(context).activeProfile;
-
+    
+    final gpsQuality = streamingManager.currentGpsQuality;
     final bpm = streamingManager.currentHeartRate;
     final hrmName = streamingManager.hrmDeviceName ?? "Heart Rate Monitor";
     
@@ -348,7 +342,7 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                   ),
                 ),
 
-                // 3. MINIMAPPA (MODIFICATA PER INTERPOLAZIONE)
+                // 3. MINIMAPPA
                 Expanded(
                   flex: 3,
                   child: Container(
@@ -378,6 +372,29 @@ class _TrackingScreenState extends State<TrackingScreen> with TickerProviderStat
                           ),
                           
                           if (_hasRealPosition) _buildAnimatedMarker(),
+
+                          // NUOVO: INDICATORE QUALITÀ GPS A BARRE
+                          if (_hasRealPosition)
+                             Positioned(
+                              top: 8, left: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(0.7),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.white12, width: 1)
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    const Icon(Icons.gps_fixed, color: Colors.white70, size: 10),
+                                    const SizedBox(width: 6),
+                                    _buildSignalBars(gpsQuality),
+                                  ],
+                                ),
+                              ),
+                             ),
 
                           if (!_hasRealPosition)
                             Container(
