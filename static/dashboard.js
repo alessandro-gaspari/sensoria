@@ -11,6 +11,13 @@ var sensors = {};
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
+var currentMapPos = null; // Posizione attuale (animata)
+var targetMapPos = null;  // Posizione target (reale dal GPS)
+var animationStartTime = null;
+var startMapPos = null;   // Punto di partenza dell'animazione corrente
+var animationFrameId = null;
+const ANIMATION_DURATION = 1000; 
+
 
 var charts = { accel: null, gyro: null, mag: null, pressure: null };
 var chartData = { 
@@ -339,37 +346,86 @@ function updateMapUI(data) {
     var section = document.getElementById('map-section');
     if(section) section.style.display = 'block';
 
+    // 1. Inizializzazione Mappa (se non esiste)
     if (!isMapInitialized) {
-        // Anche qui aggiungiamo attributionControl: false per sicurezza
-        map = L.map('map', { attributionControl: false }).setView([data.latitude, data.longitude], 15);
+        map = L.map('map', { attributionControl: false }).setView([data.latitude, data.longitude], 19);
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             maxZoom: 20
         }).addTo(map);
         isMapInitialized = true;
+        
+        // Creazione Marker Custom
+        var pulseIcon = L.divIcon({
+            className: 'custom-div-icon', 
+            html: "<div class='pulsating-marker'></div>", 
+            iconSize: [24, 24], 
+            iconAnchor: [12, 12] 
+        });
+        
+        // Posizioniamo il marker inizialmente
+        currentMapPos = { lat: data.latitude, lng: data.longitude };
+        mapMarker = L.marker([data.latitude, data.longitude], {icon: pulseIcon}).addTo(map);
+        
         setTimeout(() => map.invalidateSize(), 100);
+        return; // Al primo frame non animiamo, piazziamo e basta
     }
 
-    var latlng = [data.latitude, data.longitude];
+    // 2. Setup Animazione
+    // Il nuovo dato GPS è il nostro "Target"
+    targetMapPos = { lat: data.latitude, lng: data.longitude };
+    
+    // Il punto di partenza è dove si trova il marker ORA (anche se stava ancora viaggiando)
+    // Se currentMapPos è null, usiamo il target
+    startMapPos = currentMapPos ? { ...currentMapPos } : { ...targetMapPos };
+    
+    animationStartTime = performance.now();
+    
+    // Se c'è un loop di animazione attivo, non serve riavviarlo, 
+    // aggiornerà automaticamente la traiettoria nel prossimo frame grazie alle var globali.
+    // Ma per sicurezza, se l'animazione si era fermata, la riavviamo.
+    if (!animationFrameId) {
+        animateMarkerLoop();
+    }
+    
+    // Opzionale: Aggiorna testo accuratezza
     var accEl = document.getElementById('gps-accuracy');
     if(accEl) accEl.textContent = Math.round(data.accuracy);
+}
 
-    // LOGICA PER IL NUOVO MARKER PULSANTE
-    if (!mapMarker) {
-        // Creiamo un'icona DIV personalizzata invece dell'immagine standard
-        var pulseIcon = L.divIcon({
-            className: 'custom-div-icon', // Classe vuota per non avere stili default brutti
-            html: "<div class='pulsating-marker'></div>", // Il nostro div animato
-            iconSize: [24, 24], // Dimensione del contenitore
-            iconAnchor: [12, 12] // Centro esatto
-        });
+// Funzione di Loop per l'animazione (60fps)
+function animateMarkerLoop() {
+    if (!startMapPos || !targetMapPos || !mapMarker) {
+        animationFrameId = null;
+        return;
+    }
 
-        mapMarker = L.marker(latlng, {icon: pulseIcon}).addTo(map);
-        map.panTo(latlng);
+    var now = performance.now();
+    var elapsed = now - animationStartTime;
+    var progress = elapsed / ANIMATION_DURATION;
+
+    if (progress > 1) progress = 1; // Clamp a 100%
+
+    // Interpolazione Lineare (Lerp)
+    var lat = startMapPos.lat + (targetMapPos.lat - startMapPos.lat) * progress;
+    var lng = startMapPos.lng + (targetMapPos.lng - startMapPos.lng) * progress;
+
+    currentMapPos = { lat: lat, lng: lng };
+    
+    // Muove visivamente il marker
+    mapMarker.setLatLng([lat, lng]);
+
+    // Opzionale: La mappa segue il marker fluidamente
+    // map.panTo([lat, lng], { animate: false }); 
+
+    if (progress < 1) {
+        // Continua animazione
+        animationFrameId = requestAnimationFrame(animateMarkerLoop);
     } else {
-        mapMarker.setLatLng(latlng);
-        // map.panTo(latlng); // Decommenta se vuoi che la mappa segua sempre il punto
+        // Animazione finita (siamo arrivati al target)
+        animationFrameId = null;
     }
 }
+
 
 // ==========================================
 // LOGICA GRAFICI (uPlot)

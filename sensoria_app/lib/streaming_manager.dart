@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // Per defaultTargetPlatform
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'package:geolocator/geolocator.dart'; // NECESSARIO PER IL GPS
 import 'dart:async';
 import '../utils/tcp_client.dart';
 
@@ -14,12 +16,18 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, String> _deviceProtocols = {};
 
+  // ==================== SENSOR FUSION DATA SYNC VARIABLES ====================
+  double? _lastLat;
+  double? _lastLon;
+  double? _lastAccuracy;
+  DateTime? _lastGpsNativeTimestamp; 
+
   // ==================== HRM VARIABLES ====================
   int? _currentHeartRate;
   int? get currentHeartRate => _currentHeartRate;
   
   String? _hrmDeviceId;
-  String? _hrmDeviceName; // Nuova variabile per il nome
+  String? _hrmDeviceName;
   String? get hrmDeviceName => _hrmDeviceName;
 
   bool get isSshConnected => _tcpSender?.isConnected ?? false;
@@ -29,6 +37,8 @@ class StreamingManager extends ChangeNotifier {
 
   TCPDataSender? _tcpSender;
   bool _isTrackingActive = false;
+  
+  StreamSubscription<Position>? _gpsSubscription;
 
   bool get isStreaming => _activeStreams.isNotEmpty;
   bool isStreamingDevice(String deviceId) => _activeStreams.containsKey(deviceId);
@@ -75,7 +85,6 @@ class StreamingManager extends ChangeNotifier {
 
   // ==================== HRM LOGIC ====================
   
-  // Aggiornato per prendere anche il nome
   void setHrmConnection(String deviceId, String deviceName, int bpm) {
     _hrmDeviceId = deviceId;
     _hrmDeviceName = deviceName;
@@ -85,17 +94,15 @@ class StreamingManager extends ChangeNotifier {
   void updateHeartRate(int bpm) {
     _currentHeartRate = bpm;
     notifyListeners();
-
     if (_isTrackingActive && _tcpSender != null && _tcpSender!.isConnected) {
       final timestamp = DateTime.now().toUtc().toIso8601String();
       _tcpSender!.sendData("HRM", {
         "timestamp": timestamp,
-        "heart_rate": bpm,  // ← CAMBIA DA "bpm" A "heart_rate"
+        "heart_rate": bpm, 
         "sensor_name": _hrmDeviceName ?? "COOSPO"
       });
     }
   }
-
 
   void clearHrmConnection() {
     _hrmDeviceId = null;
@@ -104,25 +111,31 @@ class StreamingManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ==================== TRACKING LOGIC ====================
+  // ==================== TRACKING & DATA PIPELINE ====================
 
   void startTracking() {
-    if (_isTrackingActive) {
-      debugPrint('⚠️ Tracking già attivo');
-      return;
-    }
+    if (_isTrackingActive) return;
     
     _isTrackingActive = true;
     _tcpSender = TCPDataSender();
     _tcpSender?.connect();
-    debugPrint('📍 Tracking avviato - dati salvati su server SSH');
+    
+    _lastLat = null;
+    _lastLon = null;
+    _lastAccuracy = null;
+    _lastGpsNativeTimestamp = null;
+
+    _initGpsStream();
+    
+    debugPrint('📍 Tracking avviato - Data Pipeline Attiva');
     notifyListeners();
   }
 
   void stopTracking() {
-    if (!_isTrackingActive) {
-      return;
-    }
+    if (!_isTrackingActive) return;
+    
+    _gpsSubscription?.cancel();
+    _gpsSubscription = null;
     
     _isTrackingActive = false;
     _tcpSender?.disconnect();
@@ -130,65 +143,91 @@ class StreamingManager extends ChangeNotifier {
     debugPrint('⏹️ Tracking fermato');
     notifyListeners();
   }
+  
+  Future<void> _initGpsStream() async {
+      debugPrint("🛰️ Avvio inizializzazione GPS...");
+      
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+            debugPrint("❌ Permesso GPS negato");
+            return;
+        }
+      }
 
-  // ==================== WEBSOCKET & SENSORIA LOGIC ====================
+      late LocationSettings locationSettings;
+
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        locationSettings = AndroidSettings(
+          accuracy: LocationAccuracy.bestForNavigation, 
+          distanceFilter: 0, 
+          forceLocationManager: true,
+          intervalDuration: const Duration(seconds: 1), // Forza aggiornamento ogni 1s
+          foregroundNotificationConfig: const ForegroundNotificationConfig(
+            notificationTitle: "Sensoria Tracking",
+            notificationText: "Acquisizione GPS attiva",
+            enableWakeLock: true,
+          ),
+        );
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        locationSettings = AppleSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          // CAMBIATO DA .fitness A .otherNavigation PER ESSERE PIÙ AGGRESSIVO
+          activityType: ActivityType.otherNavigation, 
+          distanceFilter: 0, // 0 metri = notifica ogni minimo spostamento
+          pauseLocationUpdatesAutomatically: false,
+          showBackgroundLocationIndicator: true, 
+        );
+      } else {
+        locationSettings = const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+        );
+      }
+
+      _gpsSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+        (Position? position) {
+          if (position != null) {
+            // LOG DI VERITÀ: Se non vedi questo print, è colpa di iOS/Segnale
+            debugPrint("📍 GPS EVENT RAW: ${position.latitude}, ${position.longitude} | Acc: ${position.accuracy}");
+            
+            _lastLat = position.latitude;
+            _lastLon = position.longitude;
+            _lastAccuracy = position.accuracy;
+            _lastGpsNativeTimestamp = position.timestamp; 
+            
+            // Invio al TCP (per debug UI)
+            sendGpsData(position.latitude, position.longitude, position.accuracy, position.timestamp);
+          }
+        },
+        onError: (e) => debugPrint("❌ Errore stream GPS: $e"),
+      );
+      debugPrint("🛰️ Stream GPS richiesto al sistema operativo.");
+  }
+
+
+  // ==================== WEBSOCKET & BLE LOGIC ====================
 
   void _connectWebSocket() {
-    if (_socket != null && _isSocketConnected) {
-      debugPrint('✅ WebSocket già connesso');
-      return;
-    }
-
-    debugPrint('🔌 Connessione WebSocket a $SERVER_URL...');
+    if (_socket != null && _isSocketConnected) return;
+    
     _socket = IO.io(SERVER_URL, IO.OptionBuilder()
         .setTransports(['websocket'])
         .enableAutoConnect()
-        .setReconnectionDelay(1000)
-        .setReconnectionAttempts(5)
         .build());
 
-    _socket!.onConnect((_) {
-      debugPrint('✅ WebSocket CONNESSO');
-      _isSocketConnected = true;
-    });
-
-    _socket!.onDisconnect((_) {
-      debugPrint('❌ WebSocket DISCONNESSO');
-      _isSocketConnected = false;
-    });
-
-    _socket!.onConnectError((error) {
-      debugPrint('❌ WebSocket errore connessione: $error');
-      _isSocketConnected = false;
-    });
-
-    _socket!.onError((error) {
-      debugPrint('❌ WebSocket errore: $error');
-    });
+    _socket!.onConnect((_) => _isSocketConnected = true);
+    _socket!.onDisconnect((_) => _isSocketConnected = false);
   }
 
   String _getProtocolForDevice(String deviceName, int packetLength) {
     final name = deviceName.toLowerCase();
-    
-    debugPrint('🔍 AUTO-DETECT PROTOCOLLO:');
-    debugPrint('   Nome: "$deviceName"');
-    debugPrint('   Lunghezza pacchetto: $packetLength byte');
-    
     if (name.contains('ginocchio') || name.contains('core') || name.contains('knee')) {
-      if (packetLength != 20) {
-        debugPrint('   ⚠️ CORE dovrebbe avere 20 byte!');
-      }
-      debugPrint('   ✅ CORE → F20 (NO pressioni, IMU completo con mag)');
       return 'F20';
     }
-    
-    if (packetLength == 32) {
-      debugPrint('   ✅ CALZINO → L32 (8 pressioni + IMU completo)');
-      return 'L32';
-    } else {
-      debugPrint('   ✅ CALZINO → H20 (4 pressioni + IMU completo)');
-      return 'H20';
-    }
+    if (packetLength == 32) return 'L32';
+    return 'H20';
   }
 
   Future<void> startStreaming(BluetoothDevice device, String deviceName) async {
@@ -201,28 +240,17 @@ class StreamingManager extends ChangeNotifier {
   Future<void> sendProfileData(String name, int age, String gender, double weight) async {
     if (_tcpSender != null && _tcpSender!.isConnected) {
       final timestamp = DateTime.now().toUtc().toIso8601String();
-      
       _tcpSender!.sendData("PROFILE_INFO", {
         "timestamp": timestamp,
-        "name": name,
-        "age": age,
-        "gender": gender,
-        "weight": weight,
+        "name": name, "age": age, "gender": gender, "weight": weight,
       });
-      
-      debugPrint("👤 [PROFILE] Dati profilo inviati al server: $name");
     }
   }
-
 
   Future<void> startAllStreaming(
       Map<String, BluetoothDevice> connectedDevices,
       Map<String, String> deviceNames) async {
     if (connectedDevices.isEmpty) return;
-
-    debugPrint('\n🚀 INIZIO STREAMING @${TARGET_HZ}Hz');
-    debugPrint('📊 Dispositivi: ${connectedDevices.length}');
-    debugPrint('🎯 Protocolli: F20 (Core) | H20/L32 (Calzini)');
 
     if (!_isSocketConnected) {
       _connectWebSocket();
@@ -234,47 +262,26 @@ class StreamingManager extends ChangeNotifier {
       final device = entry.value;
       final deviceName = deviceNames[deviceId] ?? 'Unknown';
 
-      if (_activeStreams.containsKey(deviceId)) {
-        debugPrint('⚠️ [$deviceName] Già in streaming, skip\n');
-        continue;
-      }
+      if (_activeStreams.containsKey(deviceId)) continue;
 
       try {
         final connectionState = await device.connectionState.first;
-        if (connectionState != BluetoothConnectionState.connected) {
-          debugPrint('❌ [$deviceName] Non connesso, skip\n');
-          continue;
-        }
+        if (connectionState != BluetoothConnectionState.connected) continue;
 
-        debugPrint('🔍 [$deviceName] Discovery servizi...');
         final services = await device.discoverServices();
-
         BluetoothCharacteristic? rxChar;
         for (var service in services) {
           for (var characteristic in service.characteristics) {
-            final uuid = characteristic.uuid.toString().toLowerCase();
-
-            if (uuid == '1cac0003-656e-696c-4b5f-6e6572726157' &&
+            if (characteristic.uuid.toString().toLowerCase() == '1cac0003-656e-696c-4b5f-6e6572726157' &&
                 characteristic.properties.notify) {
               rxChar = characteristic;
-              debugPrint('   ✅ TROVATO: 1cac0003 (Channel 0)');
               break;
             }
           }
           if (rxChar != null) break;
         }
 
-        if (rxChar == null) {
-          debugPrint('   ❌ Characteristic non trovata, skip\n');
-          continue;
-        }
-
-        try {
-          final mtu = await device.requestMtu(512);
-          debugPrint('📶 [$deviceName] MTU: $mtu bytes');
-        } catch (e) {
-          debugPrint('⚠️ MTU request failed: $e');
-        }
+        if (rxChar == null) continue;
 
         await _setupStreaming(
           deviceId: deviceId,
@@ -286,9 +293,6 @@ class StreamingManager extends ChangeNotifier {
         debugPrint('❌ [$deviceName] Errore: $e\n');
       }
     }
-
-    debugPrint('🎉 Streaming attivo: ${_activeStreams.length}/${connectedDevices.length}');
-    debugPrint('📊 Sensori tracciati: ${_latestData.keys.toList()}\n');
     notifyListeners();
   }
 
@@ -298,10 +302,7 @@ class StreamingManager extends ChangeNotifier {
     required BluetoothCharacteristic rxChar,
     required BluetoothDevice device,
   }) async {
-    await rxChar.setNotifyValue(false);
-    await Future.delayed(const Duration(milliseconds: 200));
     await rxChar.setNotifyValue(true);
-    await Future.delayed(const Duration(milliseconds: 200));
 
     _packetCounts[deviceId] = 0;
     _latestData[deviceId] = {
@@ -309,100 +310,63 @@ class StreamingManager extends ChangeNotifier {
       'sensor_name': deviceName
     };
     _lastSendTime[deviceId] = DateTime.now();
-
-    bool protocolDetected = false;
     
+    _deviceProtocols.remove(deviceId);
+
     final subscription = rxChar.lastValueStream.listen(
       (value) {
         if (value.isEmpty) return;
-
-        if (!protocolDetected) {
-          final protocol = _getProtocolForDevice(deviceName, value.length);
-          _deviceProtocols[deviceId] = protocol;
-          protocolDetected = true;
-          
-          debugPrint('\n📡 [$deviceName] PROTOCOLLO FINALE: $protocol');
-          debugPrint('   Lunghezza: ${value.length} byte');
-          debugPrint('   Tipo: ${protocol == "F20" ? "CORE" : (protocol == "L32" ? "CALZINO (L32)" : "CALZINO (H20)")}');
-          debugPrint('   Streaming attivo!\n');
+        
+        if (!_deviceProtocols.containsKey(deviceId)) {
+           _deviceProtocols[deviceId] = _getProtocolForDevice(deviceName, value.length);
         }
-
         final protocol = _deviceProtocols[deviceId]!;
-
-        final expectedLength = protocol == 'L32' ? 32 : 20;
-        if (value.length != expectedLength) {
-          if (_packetCounts[deviceId]! % 50 == 0) {
-            debugPrint('⚠️ [$deviceName] Pacchetto invalido: ${value.length} byte '
-                '(atteso: $expectedLength per $protocol)');
-          }
-          return;
-        }
 
         final parsed = parseSensoriaPacket(value, protocol: protocol);
         if (parsed.isEmpty) return;
         
         _packetCounts[deviceId] = (_packetCounts[deviceId] ?? 0) + 1;
-
-        final isCoreDevice = protocol == 'F20';
-
+        
+        final imuArrivalTimestamp = DateTime.now();
+        final timestampStr = imuArrivalTimestamp.toUtc().toIso8601String();
+        
         Map<String, dynamic> dataToSend = {
-          'timestamp': DateTime.now().toUtc().toIso8601String(),
+          'timestamp': timestampStr,
           'sensor_name': deviceName,
-          'accel_x': parsed['accel_x'],
-          'accel_y': parsed['accel_y'],
-          'accel_z': parsed['accel_z'],
-          'gyro_x': parsed['gyro_x'],
-          'gyro_y': parsed['gyro_y'],
-          'gyro_z': parsed['gyro_z'],
-          'mag_x': parsed['mag_x'],
-          'mag_y': parsed['mag_y'],
-          'mag_z': parsed['mag_z'],
+          'accel_x': parsed['accel_x'], 'accel_y': parsed['accel_y'], 'accel_z': parsed['accel_z'],
+          'gyro_x': parsed['gyro_x'], 'gyro_y': parsed['gyro_y'], 'gyro_z': parsed['gyro_z'],
+          'mag_x': parsed['mag_x'], 'mag_y': parsed['mag_y'], 'mag_z': parsed['mag_z'],
         };
+        
+        parsed.forEach((k, v) {
+            if (k.startsWith('pressure_')) dataToSend[k] = v;
+        });
 
-        if (!isCoreDevice) {
-          for (int i = 0; i <= 7; i++) {
-            final key = 'pressure_$i';
-            if (parsed.containsKey(key)) {
-              final value = parsed[key];
-              if (value != null && value != 0.0) {
-                dataToSend[key] = value;
-              }
+        if (_lastLat != null && _lastLon != null) {
+            dataToSend['latitude'] = _lastLat;
+            dataToSend['longitude'] = _lastLon;
+            dataToSend['gps_accuracy'] = _lastAccuracy;
+            
+            if (_lastGpsNativeTimestamp != null) {
+                final gpsAge = imuArrivalTimestamp.difference(_lastGpsNativeTimestamp!).inMilliseconds;
+                dataToSend['gps_age_ms'] = gpsAge;
+                dataToSend['gps_native_ts'] = _lastGpsNativeTimestamp!.toIso8601String();
             }
-          }
         }
 
         _latestData[deviceId] = dataToSend;
-        _lastSendTime[deviceId] = DateTime.now();
-
+        
         if (_packetCounts[deviceId]! % 100 == 0) {
-          final pressureCount = dataToSend.keys.where((k) => k.startsWith('pressure_')).length;
-          if (isCoreDevice) {
-            debugPrint('   #${_packetCounts[deviceId]} [CORE-$protocol] | '
-                'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
-                'GX=${parsed['gyro_x']?.toStringAsFixed(0)} '
-                'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
-          } else {
-            debugPrint('   #${_packetCounts[deviceId]} [SOCK-$protocol] | '
-                'Pressioni: $pressureCount | '
-                'P0=${parsed['pressure_0']?.toStringAsFixed(0)} '
-                'AX=${parsed['accel_x']?.toStringAsFixed(0)} '
-                'MX=${parsed['mag_x']?.toStringAsFixed(0)}');
-          }
+            final gpsStatus = _lastLat != null ? "GPS: OK (${dataToSend['gps_age_ms']}ms old)" : "GPS: NO";
+            debugPrint("📡 #$deviceId | $gpsStatus");
         }
 
         _sendData(deviceId, deviceName, dataToSend);
+        
         notifyListeners();
       },
-      onError: (error) {
-        debugPrint('❌ [$deviceName] Stream error: $error');
-        _cleanupStreaming(deviceId);
-        notifyListeners();
-      },
-      onDone: () {
-        debugPrint('⚠️ [$deviceName] Stream done');
-        _cleanupStreaming(deviceId);
-        notifyListeners();
-      },
+      onError: (e) => _cleanupStreaming(deviceId),
+      onDone: () => _cleanupStreaming(deviceId),
     );
     _activeStreams[deviceId] = subscription;
   }
@@ -417,7 +381,6 @@ class StreamingManager extends ChangeNotifier {
     _activeStreams.remove(deviceId);
     _packetCounts.remove(deviceId);
     _latestData.remove(deviceId);
-    _lastSendTime.remove(deviceId);
     _deviceProtocols.remove(deviceId);
   }
 
@@ -434,69 +397,37 @@ class StreamingManager extends ChangeNotifier {
   }
 
   Future<void> stopAll() async {
-    debugPrint('\n🛑 STOP ALL STREAMS');
-    for (var deviceId in _activeStreams.keys.toList()) {
-      try {
-        await _activeStreams[deviceId]?.cancel();
-      } catch (e) {
-        debugPrint('❌ Errore disabling notify per $deviceId: $e');
-      }
-    }
-    _activeStreams.clear();
-    _packetCounts.clear();
-    _latestData.clear();
-    _lastSendTime.clear();
-    _deviceProtocols.clear();
-    debugPrint('✅ ALL STREAMS STOPPED\n');
+    for (var s in _activeStreams.values) await s.cancel();
+    _cleanupStreaming("ALL");
     notifyListeners();
   }
 
-    // ==================== GPS LOGIC ====================
-  
-  /// Invia le coordinate GPS al server SSH
-  void sendGpsData(double latitude, double longitude, double accuracy) {
-    debugPrint("🌍 [GPS] sendGpsData chiamato: lat=$latitude, lon=$longitude, acc=$accuracy");
-    
-    // Verifica prerequisiti
-    if (!_isTrackingActive) {
-      debugPrint("⚠️ [GPS] Tracking non attivo, GPS non inviato");
-      return;
-    }
-    
-    if (_tcpSender == null) {
-      debugPrint("⚠️ [GPS] _tcpSender è null");
-      return;
-    }
-    
-    if (!_tcpSender!.isConnected) {
-      debugPrint("⚠️ [GPS] _tcpSender non è connesso al server");
-      return;
-    }
+  // ==================== METODO CORRETTO CON NAMED PARAMETER ====================
+  // Usando { } rendiamo nativeTs opzionale ma con nome.
+  // La vecchia chiamata con 3 parametri FUNZIONA ANCORA perché nativeTs è opzionale.
+  void sendGpsData(double latitude, double longitude, double accuracy, [DateTime? nativeTs]) {
+    if (!_isTrackingActive || _tcpSender == null || !_tcpSender!.isConnected) return;
     
     final timestamp = DateTime.now().toUtc().toIso8601String();
     
     try {
-      _tcpSender!.sendData("GPS", {
+      _tcpSender!.sendData("GPS_RAW", {
         "timestamp": timestamp,
-        "sensor_name": "GPS Telefono",
+        "sensor_name": "GPS_RAW",
         "latitude": latitude,
         "longitude": longitude,
-        "accuracy": accuracy
+        "accuracy": accuracy,
+        "gps_native_ts": nativeTs?.toIso8601String() ?? timestamp
       });
-      
-      debugPrint("✅ [GPS] Dati GPS inviati al server");
     } catch (e) {
       debugPrint("❌ [GPS] Errore invio: $e");
     }
   }
-
 }
 
-// ... parseSensoriaPacket rimane identico (omesso per brevità se non richiesto, ma includilo se copia-incolli tutto)
+// Parsing helper invariato
 Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
-  // (Incolla qui la funzione parseSensoriaPacket dal file precedente per completezza)
   int b(int i) => data[i] & 0xFF;
-  // ... (codice parsing invariato)
    if (protocol == "F20") {
     if (data.length != 20) return {};
     return {

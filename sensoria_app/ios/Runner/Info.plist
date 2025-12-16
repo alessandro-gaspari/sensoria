@@ -26,6 +26,22 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>L'app necessita del GPS in background per inviare i dati di tracking durante l'attività fisica anche a schermo spento.</string>
+
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>L'app necessita del GPS in background per il tracking continuo.</string>
+
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>L'app necessita della tua posizione per il tracking.</string>
+
 	<!-- PERMESSI BLUETOOTH (Sensori) -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Questa app necessita del Bluetooth per scansionare e connettersi ai dispositivi Sensoria.</string>
