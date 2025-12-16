@@ -1,617 +1,889 @@
 // ==========================================
 // CONFIGURAZIONE GLOBALE
 // ==========================================
-var socket = io({ 
-    transports: ['websocket'], 
-    reconnection: true, 
-    reconnectionDelay: 500 
+var socket = io({
+  transports: ['websocket'],
+  reconnection: true,
+  reconnectionDelay: 500
 });
 
+const SENSORIA_GREEN = '#97c93e';
+
+// --- SENSORI ---
 var sensors = {};
 
-// --- MAPPA & REPLAY ---
+// --- MAPPA ---
 var map = null;
 var mapMarker = null;
-var routePath = null;           // Linea verde
-var routeHistory = [];          // Storico punti
 var isMapInitialized = false;
-var isReplayMode = false;       
 
-const SENSORIA_GREEN = '#97c93e'; 
+// Route layers
+var fullRoute = null;      // cresce sempre con i GPS ricevuti
+var progressRoute = null;  // mostra la progressione fino al tempo selezionato (o live)
 
-// --- INTERPOLAZIONE MARKER ---
-var currentMapPos = null; 
-var targetMapPos = null;  
+// --- TIMELINE (time-based) ---
+var sessionStartTimeMs = null;  // set al primo evento (gps/bpm)
+var sessionEndTimeMs = null;    // opzionale: si setta quando finisce l’attività (se arriva evento)
+var isReplayMode = false;
+
+// campioni
+var gpsSamples = []; // { t, lat, lng, acc }
+var bpmSamples = []; // { t, bpm }
+
+// cache per UI
+var lastLiveBpm = "--";
+
+// --- ANIMAZIONE MARKER LIVE ---
+var currentMapPos = null;
+var targetMapPos = null;
 var animationStartTime = null;
-var startMapPos = null;   
+var startMapPos = null;
 var animationFrameId = null;
-const ANIMATION_DURATION = 1000; 
+const ANIMATION_DURATION = 700;
 
 // --- GRAFICI ---
 var charts = { accel: null, gyro: null, mag: null, pressure: null };
-var chartData = { 
-    accel: [[],[],[],[]], 
-    gyro: [[],[],[],[]], 
-    mag: [[],[],[],[]], 
-    pressure: [[],[],[],[]] 
+var chartData = {
+  accel: [[], [], [], []],
+  gyro: [[], [], [], []],
+  mag: [[], [], [], []],
+  pressure: [[], [], [], []]
 };
 var selectedSensor = null;
 var chartsInitialized = false;
-var isUserInteracting = false; 
+var isUserInteracting = false;
 var MIN_ZOOM_RANGE = 0.5;
 
 // ==========================================
 // INIZIALIZZAZIONE
 // ==========================================
-document.addEventListener('DOMContentLoaded', function() {
-    initSocket();
-    
-    var sel = document.getElementById('chart-sensor-select');
-    if(sel) {
-        sel.addEventListener('change', function(e) {
-            selectedSensor = e.target.value || null;
-            resetChartData();
-            var container = document.getElementById('charts-container');
-            if (selectedSensor) {
-                container.style.display = 'block';
-                if(!chartsInitialized) {
-                    initCharts();
-                    chartsInitialized = true;
-                }
-            } else {
-                container.style.display = 'none';
-            }
-        });
-    }
+document.addEventListener('DOMContentLoaded', function () {
+  initSocket();
+  ensureMapDomOverlay();
+  ensureBpmOnTop();
+
+  var sel = document.getElementById('chart-sensor-select');
+  if (sel) {
+    sel.addEventListener('change', function (e) {
+      selectedSensor = e.target.value || null;
+      resetChartData();
+
+      var container = document.getElementById('charts-container');
+      if (selectedSensor) {
+        container.style.display = 'block';
+        if (!chartsInitialized) {
+          initCharts();
+          chartsInitialized = true;
+        }
+      } else {
+        container.style.display = 'none';
+      }
+    });
+  }
 });
 
 function initSocket() {
-    socket.on('connect', () => {
-        var el = document.getElementById('connection-status');
-        if(el) { el.className = ''; el.innerHTML = '<span class="dot"></span> Connesso'; }
-    });
-    
-    socket.on('disconnect', () => {
-        var el = document.getElementById('connection-status');
-        if(el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
-    });
+  socket.on('connect', () => {
+    var el = document.getElementById('connection-status');
+    if (el) { el.className = ''; el.innerHTML = '<span class="dot"></span> Connesso'; }
+  });
 
-    socket.on('sensor_update', (data) => processIncomingData(data));
-    socket.on('bpm_update', (val) => updateBpmUI(val));
-    socket.on('profile_update', (data) => updateProfileUI(data));
-    socket.on('gps_update', (data) => updateMapUI(data));
+  socket.on('disconnect', () => {
+    var el = document.getElementById('connection-status');
+    if (el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
+  });
 
-    socket.on('data_cleared', () => { resetAll(); });
-}
+  // Dati sensori (robusto)
+  socket.on('sensor_update', (data) => processIncomingData(data));
 
-function resetAll() {
-    sensors = {};
-    routeHistory = []; 
-    
-    document.getElementById('sensors-grid').innerHTML = '';
-    var empty = document.getElementById('empty-state');
-    if(empty) empty.style.display = 'block';
-    
-    document.getElementById('charts-container').style.display = 'none';
-    document.getElementById('user-profile-display').style.display = 'none';
-    document.getElementById('bpm-display').style.display = 'none';
-    
-    // Reset Mappa
-    if(routePath) routePath.setLatLngs([]); 
-    if(mapMarker) mapMarker.setOpacity(0); 
-    
-    // Reset Replay
-    isReplayMode = false;
-    var slider = document.getElementById('replay-slider');
-    if(slider) { slider.value = 0; slider.max = 0; }
-    
-    var replayDiv = document.getElementById('replay-overlay');
-    if(replayDiv) replayDiv.style.display = 'none';
-    
-    resetChartData();
-    chartsInitialized = false;
-    selectedSensor = null;
+  // BPM (live)
+  socket.on('bpm_update', (val) => onBpmUpdate(val));
+
+  socket.on('profile_update', (data) => updateProfileUI(data));
+
+  // GPS (live)
+  socket.on('gps_update', (data) => onGpsUpdate(data));
+
+  // Se il backend manda "data_cleared" quando termina l’attività:
+  // - NON cancelliamo (tu vuoi che rimanga fino a refresh)
+  // - mettiamo solo un "end time" per fissare la durata.
+  socket.on('data_cleared', () => {
+    if (sessionStartTimeMs != null) {
+      sessionEndTimeMs = getNowMs();
+      // Non resetto route/bpm: restano per replay.
+      // Se vuoi proprio resettare da bottone, usa clearAllData().
+      updateReplayUiBounds(); // fissa max slider (se era ancora in live)
+      showReplayOverlayIfReady();
+    }
+  });
 }
 
 // ==========================================
-// PARSING DATI
+// TIME HELPERS
 // ==========================================
-function processIncomingData(data) {
-    var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
-    var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
-    if (bpmMatch && bpmMatch[1]) {
-        var val = parseInt(bpmMatch[1]);
-        if (!isNaN(val) && val > 0) { updateBpmUI(val); return; }
-    }
+function getNowMs() {
+  return Date.now();
+}
 
-    var payload = null;
-    if (typeof data === 'object') {
-        payload = data.data || data;
-    } else {
-        var jsonStart = str.indexOf('{');
-        var jsonEnd = str.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
-            try { payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1)); } catch (e) {}
-        }
-    }
+function ensureSessionStart(tMs) {
+  if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
+}
 
-    if (payload && payload.sensor_name) {
-        var name = payload.sensor_name;
-        if (name.includes("COOSPO") || name === "HRM") return; 
-        if (name === 'PROFILE_INFO') { updateProfileUI(payload); return; }
+function getSessionEndMs() {
+  // Se sessionEndTimeMs esiste, replay max è quello.
+  // Altrimenti il max è l'ultimo sample disponibile.
+  var last = sessionStartTimeMs || getNowMs();
+  if (gpsSamples.length) last = Math.max(last, gpsSamples[gpsSamples.length - 1].t);
+  if (bpmSamples.length) last = Math.max(last, bpmSamples[bpmSamples.length - 1].t);
+  if (sessionEndTimeMs != null) last = Math.max(last, sessionEndTimeMs);
+  return last;
+}
 
-        sensors[name] = payload;
-        var empty = document.getElementById('empty-state');
-        if (empty) empty.style.display = 'none';
+function getDurationSec() {
+  if (sessionStartTimeMs == null) return 0;
+  var end = getSessionEndMs();
+  return Math.max(0, Math.floor((end - sessionStartTimeMs) / 1000));
+}
 
-        updateSensorCardUI(name, payload);
-        updateChartsUI(name, payload);
-    }
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
 }
 
 // ==========================================
-// MAPPA, PERCORSO & REPLAY (OVERLAY FIX)
+// BPM (LIVE + TIMELINE)
 // ==========================================
+function onBpmUpdate(val) {
+  // normalizza
+  var bpmInt = parseInt(val);
+  if (isNaN(bpmInt) || bpmInt <= 0) return;
+
+  // timestamp locale: se il server non manda timestamp, questa è la soluzione minima
+  var tMs = getNowMs();
+  ensureSessionStart(tMs);
+
+  lastLiveBpm = bpmInt;
+
+  // salva timeline bpm (sempre, anche se l’utente è in replay)
+  bpmSamples.push({ t: tMs, bpm: bpmInt });
+
+  // UI: se non in replay, aggiorna
+  if (!isReplayMode) {
+    updateBpmBox(bpmInt, false);
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
+  }
+}
+
+// ==========================================
+// GPS (LIVE + TIMELINE + MAP)
+// ==========================================
+function onGpsUpdate(data) {
+  if (!data) return;
+  var lat = Number(data.latitude);
+  var lng = Number(data.longitude);
+  if (!isFinite(lat) || !isFinite(lng)) return;
+  if (lat === 0 && lng === 0) return;
+
+  var acc = (data.accuracy != null) ? Number(data.accuracy) : null;
+  var tMs = data.timestamp ? new Date(data.timestamp).getTime() : getNowMs();
+
+  ensureSessionStart(tMs);
+
+  // salva timeline gps (sempre, anche se in replay)
+  gpsSamples.push({ t: tMs, lat: lat, lng: lng, acc: acc });
+
+  // init mappa al primo fix
+  ensureMapInitialized(lat, lng);
+
+  // aggiorna route completa sempre
+  if (fullRoute) {
+    fullRoute.addLatLng([lat, lng]);
+  }
+
+  // Se non siamo in replay, aggiorna marker/progress route
+  if (!isReplayMode) {
+    // progress route = tutta la route
+    updateProgressRouteToTime(getSessionEndMs());
+
+    // marker animato verso nuovo target
+    if (!currentMapPos) currentMapPos = { lat: lat, lng: lng };
+    targetMapPos = { lat: lat, lng: lng };
+    startMapPos = { ...currentMapPos };
+    animationStartTime = performance.now();
+    if (!animationFrameId) animateMarkerLoop();
+
+    // accuratezza
+    var accEl = document.getElementById('gps-accuracy');
+    if (accEl && acc != null && isFinite(acc)) accEl.textContent = Math.round(acc);
+
+    // slider segue live
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
+  }
+}
+
+// ==========================================
+// MAP INIT + PANES + OVERLAYS
+// ==========================================
+function ensureMapDomOverlay() {
+  // serve per creare overlay sopra la mappa anche prima del primo fix
+  var mapDiv = document.getElementById('map');
+  if (!mapDiv) return;
+  mapDiv.style.position = 'relative';
+}
+
+function ensureBpmOnTop() {
+  var bpmBox = document.getElementById('bpm-display');
+  if (!bpmBox) return;
+  bpmBox.style.zIndex = '20000';
+  // IMPORTANTISSIMO: se il CSS originale lo mette "static", z-index può non funzionare
+  // Se già posizionato assoluto dal tuo CSS, non cambia nulla.
+  if (!bpmBox.style.position) bpmBox.style.position = 'absolute';
+}
 
 function ensureMapInitialized(lat, lng) {
-    if (isMapInitialized) return;
+  if (isMapInitialized) return;
 
-    var section = document.getElementById('map-section');
-    if(section) section.style.display = 'block';
+  var section = document.getElementById('map-section');
+  if (section) section.style.display = 'block';
 
-    // Assicuriamoci che il container #map abbia position: relative per ospitare l'overlay
-    var mapContainer = document.getElementById('map');
-    if(mapContainer) {
-        mapContainer.style.position = 'relative'; // Cruciale per l'overlay
-    }
+  ensureMapDomOverlay();
 
-    map = L.map('map', { attributionControl: false, zoomControl: false }).setView([lat, lng], 19);
-    L.control.zoom({ position: 'topleft' }).addTo(map);
+  map = L.map('map', { attributionControl: false, zoomControl: true }).setView([lat, lng], 19);
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20
+  }).addTo(map);
 
-    // Marker
-    var pulseIcon = L.divIcon({
-        className: 'custom-div-icon', 
-        html: "<div class='pulsating-marker'></div>", 
-        iconSize: [24, 24], 
-        iconAnchor: [12, 12] 
-    });
-    mapMarker = L.marker([lat, lng], {icon: pulseIcon}).addTo(map);
+  // PANE ROUTE sotto marker (ma sopra tile)
+  map.createPane('routePane');
+  map.getPane('routePane').style.zIndex = 450;
 
-    // Percorso Verde
-    routePath = L.polyline([], {
-        color: SENSORIA_GREEN,
-        weight: 6,           // Leggermente più spesso
-        opacity: 0.9,
-        lineJoin: 'round',
-        lineCap: 'round'
-    }).addTo(map);
+  // PANE MARKER
+  map.createPane('markerPane');
+  map.getPane('markerPane').style.zIndex = 650;
 
-    // Creiamo i controlli OVERLAY (sopra la mappa)
-    createReplayOverlay();
+  // marker custom
+  var pulseIcon = L.divIcon({
+    className: 'custom-div-icon',
+    html: "<div class='pulsating-marker'></div>",
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  });
 
-    isMapInitialized = true;
-    setTimeout(() => map.invalidateSize(), 100);
+  mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: 'markerPane' }).addTo(map);
+
+  // route layers
+  fullRoute = L.polyline([], {
+    pane: 'routePane',
+    color: SENSORIA_GREEN,
+    weight: 4,
+    opacity: 0.45,
+    lineJoin: 'round',
+    lineCap: 'round'
+  }).addTo(map);
+
+  progressRoute = L.polyline([], {
+    pane: 'routePane',
+    color: SENSORIA_GREEN,
+    weight: 7,
+    opacity: 0.95,
+    lineJoin: 'round',
+    lineCap: 'round'
+  }).addTo(map);
+
+  createReplayOverlayControls(); // overlay slider + LIVE
+
+  isMapInitialized = true;
+  setTimeout(() => map.invalidateSize(), 120);
 }
 
-function updateMapUI(data) {
-    ensureMapInitialized(data.latitude, data.longitude);
-    document.getElementById('map-section').style.display = 'block';
-    
-    var timestamp = data.timestamp ? new Date(data.timestamp).getTime() : Date.now();
-    var newPoint = { lat: data.latitude, lng: data.longitude, t: timestamp };
-    routeHistory.push(newPoint);
-
-    // Aggiorna slider e percorso SE siamo in Live Mode
-    if (!isReplayMode) {
-        // Aggiungi alla linea (anche se statico, il punto viene aggiunto)
-        if(routePath) {
-            routePath.addLatLng([data.latitude, data.longitude]);
-        }
-        
-        updateReplaySliderUI(); // Allunga la barra
-
-        // Mostra overlay replay se abbiamo dati
-        var overlay = document.getElementById('replay-overlay');
-        if(overlay && routeHistory.length > 1) {
-            overlay.style.display = 'flex';
-        }
-
-        // Animazione Marker
-        if(!currentMapPos) currentMapPos = { lat: data.latitude, lng: data.longitude };
-        targetMapPos = { lat: data.latitude, lng: data.longitude };
-        startMapPos = { ...currentMapPos };
-        animationStartTime = performance.now();
-        
-        if (!animationFrameId) animateMarkerLoop();
-
-        var accEl = document.getElementById('gps-accuracy');
-        if(accEl) accEl.textContent = Math.round(data.accuracy);
-        
-        mapMarker.setOpacity(1);
-    }
-}
-
+// ==========================================
+// MARKER ANIMATION LOOP (LIVE)
+// ==========================================
 function animateMarkerLoop() {
-    if (!startMapPos || !targetMapPos || !mapMarker || isReplayMode) {
-        animationFrameId = null;
-        return;
-    }
-    var now = performance.now();
-    var elapsed = now - animationStartTime;
-    var progress = elapsed / ANIMATION_DURATION;
-    if (progress > 1) progress = 1;
+  if (!startMapPos || !targetMapPos || !mapMarker || isReplayMode) {
+    animationFrameId = null;
+    return;
+  }
 
-    var lat = startMapPos.lat + (targetMapPos.lat - startMapPos.lat) * progress;
-    var lng = startMapPos.lng + (targetMapPos.lng - startMapPos.lng) * progress;
+  var now = performance.now();
+  var elapsed = now - animationStartTime;
+  var progress = elapsed / ANIMATION_DURATION;
+  if (progress > 1) progress = 1;
 
-    currentMapPos = { lat: lat, lng: lng };
-    mapMarker.setLatLng([lat, lng]);
+  var lat = startMapPos.lat + (targetMapPos.lat - startMapPos.lat) * progress;
+  var lng = startMapPos.lng + (targetMapPos.lng - startMapPos.lng) * progress;
 
-    if (progress < 1) animationFrameId = requestAnimationFrame(animateMarkerLoop);
-    else animationFrameId = null;
-}
+  currentMapPos = { lat: lat, lng: lng };
+  mapMarker.setLatLng([lat, lng]);
 
-// --- REPLAY OVERLAY SYSTEM ---
-
-function createReplayOverlay() {
-    // Inseriamo l'overlay DENTRO il div #map, ma con z-index alto
-    var mapContainer = document.getElementById('map');
-    if(!mapContainer || document.getElementById('replay-overlay')) return;
-
-    var overlay = document.createElement('div');
-    overlay.id = 'replay-overlay';
-    
-    // STILE OVERLAY: Fluttua sopra la mappa in basso
-    overlay.style.cssText = `
-        position: absolute;
-        bottom: 20px;
-        left: 20px;
-        right: 20px;
-        z-index: 9999; /* Sopra a Leaflet */
-        background: rgba(20, 20, 20, 0.9);
-        backdrop-filter: blur(5px);
-        padding: 10px 15px;
-        border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        display: none; /* Nascondi finché non ci sono dati */
-        align-items: center;
-        gap: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-    `;
-    
-    overlay.innerHTML = `
-        <div style="display:flex; flex-direction:column; align-items:flex-start;">
-            <span style="color:#888; font-size:10px; font-weight:bold; letter-spacing:1px;">TIMELINE</span>
-            <span id="replay-current-time" style="color:#fff; font-family:monospace; font-size:14px; font-weight:bold;">00:00</span>
-        </div>
-        
-        <input type="range" id="replay-slider" min="0" max="0" value="0" 
-               style="flex-grow:1; cursor:pointer; accent-color:${SENSORIA_GREEN}; height:4px; border-radius:2px;">
-        
-        <button id="btn-go-live" style="
-            background: rgba(151, 201, 62, 0.2);
-            color: ${SENSORIA_GREEN};
-            border: 1px solid ${SENSORIA_GREEN};
-            padding: 5px 12px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s;
-            text-transform: uppercase;
-        ">LIVE</button>
-    `;
-
-    mapContainer.appendChild(overlay);
-    
-    // LOGICA EVENTI
-    var slider = document.getElementById('replay-slider');
-    var btnLive = document.getElementById('btn-go-live');
-
-    // 1. Tasto LIVE: Torna subito alla fine
-    btnLive.addEventListener('click', function() {
-        goBackToLive();
-    });
-
-    // 2. Slider Input: Mentre trascini -> Replay
-    slider.addEventListener('input', function(e) {
-        enterReplayMode(parseInt(e.target.value));
-    });
-
-    // 3. Slider Change: Se rilasci alla fine -> Live
-    slider.addEventListener('change', function(e) {
-        if (parseInt(e.target.value) >= routeHistory.length - 1) {
-            goBackToLive();
-        }
-    });
-}
-
-function enterReplayMode(index) {
-    isReplayMode = true;
-    cancelAnimationFrame(animationFrameId); // Stop animazione live
-    
-    // Aggiorna stile bottone LIVE (spento)
-    var btn = document.getElementById('btn-go-live');
-    if(btn) {
-        btn.style.background = 'transparent';
-        btn.style.color = '#666';
-        btn.style.border = '1px solid #444';
-    }
-
-    if (index >= 0 && index < routeHistory.length) {
-        var pt = routeHistory[index];
-        mapMarker.setLatLng([pt.lat, pt.lng]);
-        
-        // Opzionale: Centra mappa sul punto replay
-        // map.panTo([pt.lat, pt.lng]); 
-        
-        document.getElementById('replay-current-time').textContent = formatReplayTime(index);
-    }
-}
-
-function goBackToLive() {
-    isReplayMode = false;
-    
-    // Riaccendi bottone LIVE
-    var btn = document.getElementById('btn-go-live');
-    if(btn) {
-        btn.style.background = 'rgba(151, 201, 62, 0.2)';
-        btn.style.color = SENSORIA_GREEN;
-        btn.style.border = `1px solid ${SENSORIA_GREEN}`;
-    }
-
-    // Porta slider alla fine
-    var slider = document.getElementById('replay-slider');
-    if(slider && routeHistory.length > 0) {
-        slider.value = routeHistory.length - 1;
-        document.getElementById('replay-current-time').textContent = formatReplayTime(routeHistory.length - 1);
-    }
-
-    // Riaggancia marker all'ultimo target noto
-    if(targetMapPos) {
-        mapMarker.setLatLng([targetMapPos.lat, targetMapPos.lng]);
-    }
-}
-
-function updateReplaySliderUI() {
-    var slider = document.getElementById('replay-slider');
-    if (slider) {
-        var len = routeHistory.length;
-        if(len > 0) slider.max = len - 1;
-        
-        if (!isReplayMode) {
-            slider.value = len - 1;
-            document.getElementById('replay-current-time').textContent = formatReplayTime(len - 1);
-        }
-    }
-}
-
-function formatReplayTime(index) {
-    if(routeHistory.length === 0) return "00:00";
-    var startT = routeHistory[0].t;
-    var currT = routeHistory[index].t;
-    var diffSec = Math.floor((currT - startT) / 1000);
-    if(diffSec < 0) diffSec = 0;
-    
-    var m = Math.floor(diffSec / 60).toString().padStart(2, '0');
-    var s = (diffSec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+  if (progress < 1) {
+    animationFrameId = requestAnimationFrame(animateMarkerLoop);
+  } else {
+    animationFrameId = null;
+  }
 }
 
 // ==========================================
-// FUNZIONI STANDARD (SENSORI & GRAFICI)
+// REPLAY OVERLAY (time-based)
 // ==========================================
-function renderSensorsGrid() { /* ... (invariato) ... */ } 
-// Per brevità, le funzioni di render card sono identiche alla versione precedente 
-// che avevi confermato funzionare per "tutti i dati".
-// Le riporto qui per completezza del copia-incolla:
+function createReplayOverlayControls() {
+  var mapDiv = document.getElementById('map');
+  if (!mapDiv) return;
+  if (document.getElementById('replay-overlay')) return;
 
+  var overlay = document.createElement('div');
+  overlay.id = 'replay-overlay';
+  overlay.style.cssText = `
+    position:absolute;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 30000;
+    display:none;
+    align-items:center;
+    gap:12px;
+    padding:10px 12px;
+    border-radius:12px;
+    background: rgba(10,10,10,0.85);
+    border: 1px solid rgba(255,255,255,0.10);
+    backdrop-filter: blur(6px);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+  `;
+
+  overlay.innerHTML = `
+    <div style="min-width:64px; display:flex; flex-direction:column; gap:2px;">
+      <div style="font-size:10px; letter-spacing:1px; color:#9aa; font-weight:700;">TIME</div>
+      <div id="replay-time-label" style="font-family:monospace; font-size:13px; color:#fff; font-weight:700;">00:00</div>
+    </div>
+
+    <input id="replay-slider" type="range" min="0" max="0" value="0"
+      style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer;" />
+
+    <button id="btn-live" type="button"
+      style="
+        padding:6px 12px;
+        border-radius:8px;
+        border: 1px solid ${SENSORIA_GREEN};
+        background: rgba(151,201,62,0.18);
+        color: ${SENSORIA_GREEN};
+        font-weight:800;
+        font-size:11px;
+        letter-spacing:1px;
+        cursor:pointer;
+      ">LIVE</button>
+  `;
+
+  mapDiv.appendChild(overlay);
+
+  var slider = document.getElementById('replay-slider');
+  var btnLive = document.getElementById('btn-live');
+
+  slider.addEventListener('input', function (e) {
+    var sec = parseInt(e.target.value || "0");
+    enterReplayAtSecond(sec);
+  });
+
+  btnLive.addEventListener('click', function () {
+    goLive();
+  });
+}
+
+function showReplayOverlayIfReady() {
+  var overlay = document.getElementById('replay-overlay');
+  if (!overlay) return;
+
+  // Mostra overlay quando c'è qualcosa da scorrere (durata > 0 e almeno 2 gps oppure bpm)
+  if (getDurationSec() > 0 && (gpsSamples.length > 1 || bpmSamples.length > 1)) {
+    overlay.style.display = 'flex';
+  }
+}
+
+function updateReplayUiBounds() {
+  var slider = document.getElementById('replay-slider');
+  if (!slider) return;
+
+  var maxSec = getDurationSec();
+  slider.max = String(maxSec);
+
+  // Se in live, lo slider segue sempre il max
+  if (!isReplayMode) {
+    slider.value = String(maxSec);
+    updateReplayTimeLabel(maxSec);
+  }
+}
+
+function updateReplayTimeLabel(sec) {
+  var lab = document.getElementById('replay-time-label');
+  if (!lab) return;
+  var m = Math.floor(sec / 60).toString().padStart(2, '0');
+  var s = (sec % 60).toString().padStart(2, '0');
+  lab.textContent = `${m}:${s}`;
+}
+
+function enterReplayAtSecond(sec) {
+  if (sessionStartTimeMs == null) return;
+
+  isReplayMode = true;
+  cancelAnimationFrame(animationFrameId);
+  animationFrameId = null;
+
+  var maxSec = getDurationSec();
+  var clampedSec = clamp(sec, 0, maxSec);
+  updateReplayTimeLabel(clampedSec);
+
+  var tMs = sessionStartTimeMs + clampedSec * 1000;
+
+  // GPS: posizione interpolata
+  var pos = getInterpolatedGpsAtTime(tMs);
+  if (pos && mapMarker) {
+    mapMarker.setLatLng([pos.lat, pos.lng]);
+    currentMapPos = { lat: pos.lat, lng: pos.lng };
+  }
+
+  // Route progress fino al tempo scelto
+  updateProgressRouteToTime(tMs);
+
+  // BPM: ultimo bpm <= tempo scelto
+  var bpm = getBpmAtTime(tMs);
+  if (bpm != null) updateBpmBox(bpm, true);
+}
+
+function goLive() {
+  isReplayMode = false;
+
+  // porta slider alla fine
+  updateReplayUiBounds();
+
+  // marker all’ultimo GPS (se esiste)
+  if (gpsSamples.length && mapMarker) {
+    var last = gpsSamples[gpsSamples.length - 1];
+    mapMarker.setLatLng([last.lat, last.lng]);
+    currentMapPos = { lat: last.lat, lng: last.lng };
+    targetMapPos = { lat: last.lat, lng: last.lng };
+  }
+
+  // progress route = tutto
+  updateProgressRouteToTime(getSessionEndMs());
+
+  // bpm torna live
+  if (lastLiveBpm !== "--") updateBpmBox(lastLiveBpm, false);
+}
+
+// ==========================================
+// GPS/BPM LOOKUP (binary search)
+// ==========================================
+function upperBoundByTime(arr, tMs) {
+  // primo indice > tMs
+  var lo = 0, hi = arr.length;
+  while (lo < hi) {
+    var mid = (lo + hi) >> 1;
+    if (arr[mid].t <= tMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function getInterpolatedGpsAtTime(tMs) {
+  if (!gpsSamples.length) return null;
+  if (gpsSamples.length === 1) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
+
+  var idx = upperBoundByTime(gpsSamples, tMs); // first > t
+  if (idx <= 0) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
+  if (idx >= gpsSamples.length) {
+    var last = gpsSamples[gpsSamples.length - 1];
+    return { lat: last.lat, lng: last.lng };
+  }
+
+  var a = gpsSamples[idx - 1];
+  var b = gpsSamples[idx];
+  if (b.t === a.t) return { lat: b.lat, lng: b.lng };
+
+  var alpha = (tMs - a.t) / (b.t - a.t);
+  alpha = clamp(alpha, 0, 1);
+
+  return {
+    lat: a.lat + (b.lat - a.lat) * alpha,
+    lng: a.lng + (b.lng - a.lng) * alpha
+  };
+}
+
+function getBpmAtTime(tMs) {
+  if (!bpmSamples.length) return null;
+  var idx = upperBoundByTime(bpmSamples, tMs); // first > t
+  if (idx <= 0) return bpmSamples[0].bpm;
+  return bpmSamples[idx - 1].bpm;
+}
+
+function updateProgressRouteToTime(tMs) {
+  if (!progressRoute) return;
+  if (!gpsSamples.length) { progressRoute.setLatLngs([]); return; }
+
+  var idx = upperBoundByTime(gpsSamples, tMs); // first > t
+  idx = clamp(idx, 0, gpsSamples.length);
+
+  // Prendiamo i punti <= t
+  var pts = [];
+  for (var i = 0; i < idx; i++) {
+    pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
+  }
+
+  // Se siamo tra due punti, aggiungi il punto interpolato come “testa”
+  if (idx > 0 && idx < gpsSamples.length) {
+    var interp = getInterpolatedGpsAtTime(tMs);
+    if (interp) pts.push([interp.lat, interp.lng]);
+  }
+
+  progressRoute.setLatLngs(pts);
+}
+
+// ==========================================
+// BPM BOX UI (sempre sopra mappa)
+// ==========================================
+function updateBpmBox(val, isReplay) {
+  var div = document.getElementById('bpm-display');
+  if (!div) return;
+
+  div.style.display = 'flex';
+  ensureBpmOnTop();
+
+  var vEl = document.getElementById('bpm-value');
+  if (vEl) vEl.textContent = String(val);
+
+  // Animazione cuore solo in live (opzionale)
+  var icon = div.querySelector('.heart-icon');
+  var bpmInt = parseInt(val);
+
+  if (icon) {
+    if (!isReplay && !isNaN(bpmInt) && bpmInt > 0) {
+      var d = 60 / bpmInt;
+      if (d < 0.3) d = 0.3;
+      icon.style.animationDuration = d + 's';
+    } else {
+      icon.style.animationDuration = '0s';
+    }
+  }
+}
+
+// ==========================================
+// PARSING SENSOR UPDATE (robusto)
+// ==========================================
+function processIncomingData(data) {
+  var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
+
+  // se dentro "sensor_update" arriva bpm sporco, intercettalo
+  var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
+  if (bpmMatch && bpmMatch[1]) {
+    var val = parseInt(bpmMatch[1]);
+    if (!isNaN(val) && val > 0) {
+      onBpmUpdate(val);
+      return;
+    }
+  }
+
+  var payload = null;
+  if (typeof data === 'object') {
+    payload = data.data || data;
+  } else {
+    var jsonStart = str.indexOf('{');
+    var jsonEnd = str.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      try { payload = JSON.parse(str.substring(jsonStart, jsonEnd + 1)); } catch (e) {}
+    }
+  }
+
+  if (payload && payload.sensor_name) {
+    var name = payload.sensor_name;
+
+    if (name.includes("COOSPO") || name === "HRM") return;
+    if (name === 'PROFILE_INFO') { updateProfileUI(payload); return; }
+
+    sensors[name] = payload;
+
+    var empty = document.getElementById('empty-state');
+    if (empty) empty.style.display = 'none';
+
+    updateSensorCardUI(name, payload);
+    updateChartsUI(name, payload);
+  }
+}
+
+// ==========================================
+// UI: SENSOR CARDS
+// ==========================================
 function createSensorCard(name, data) {
-    var hasAccel = data.accel_x !== undefined;
-    var hasGyro = data.gyro_x !== undefined;
-    var hasMag = data.mag_x !== undefined;
-    var hasPressure = data.pressure_0 !== undefined;
+  var hasAccel = data.accel_x !== undefined;
+  var hasGyro = data.gyro_x !== undefined;
+  var hasMag = data.mag_x !== undefined;
+  var hasPressure = data.pressure_0 !== undefined;
+  if (!hasAccel && !hasGyro && !hasMag && !hasPressure) return;
 
-    if (!hasAccel && !hasGyro && !hasMag && !hasPressure) return;
+  var grid = document.getElementById('sensors-grid');
+  if (!grid) return;
 
-    var grid = document.getElementById('sensors-grid');
-    var existing = document.querySelector(`[data-sensor="${name}"]`);
-    if(existing) return; 
+  var existing = document.querySelector(`[data-sensor="${name}"]`);
+  if (existing) return;
 
-    var div = document.createElement('div');
-    div.className = 'sensor-card sensor-col connected'; 
-    div.setAttribute('data-sensor', name);
-    
-    var emoji = '📱';
-    var n = name.toLowerCase();
-    if(n.includes('knee') || n.includes('ginocchio')) emoji = '🦿';
-    if(n.includes('foot') || n.includes('sock') || n.includes('calzino')) emoji = '🧦';
+  var div = document.createElement('div');
+  div.className = 'sensor-card sensor-col connected';
+  div.setAttribute('data-sensor', name);
 
-    var html = `<div class="sensor-header"><span>${emoji} ${name}</span><div class="status-indicator active"></div></div>`;
-    
-    if (hasAccel) {
-        html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Accelerometro</div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">AX</span> <span class="sensor-value" data-key="accel_x">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">AY</span> <span class="sensor-value" data-key="accel_y">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">AZ</span> <span class="sensor-value" data-key="accel_z">0</span></div></div>`;
-    }
-    if (hasGyro) {
-        html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Giroscopio</div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">GX</span> <span class="sensor-value" data-key="gyro_x">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">GY</span> <span class="sensor-value" data-key="gyro_y">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">GZ</span> <span class="sensor-value" data-key="gyro_z">0</span></div></div>`;
-    }
-    if (hasMag) {
-        html += `<div class="sensor-data-section"><div class="sensor-data-section-title">Magnetometro</div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">MX</span> <span class="sensor-value" data-key="mag_x">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">MY</span> <span class="sensor-value" data-key="mag_y">0</span></div>
-                 <div class="sensor-data-row"><span class="sensor-data-label">MZ</span> <span class="sensor-value" data-key="mag_z">0</span></div></div>`;
-    }
-    if (hasPressure) {
-         html += `<div class="sensor-data-section" style="border:none;"><div class="sensor-data-section-title">Pressioni</div>
-                  <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_0">0</span></div>
-                  <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_1">0</span></div></div>`;
-    }
-    div.innerHTML = html;
-    grid.appendChild(div);
+  var emoji = '📱';
+  var n = String(name).toLowerCase();
+  if (n.includes('knee') || n.includes('ginocchio')) emoji = '🦿';
+  if (n.includes('foot') || n.includes('sock') || n.includes('calzino')) emoji = '🧦';
+
+  var html = `<div class="sensor-header">
+    <span>${emoji} ${name}</span>
+    <div class="status-indicator active"></div>
+  </div>`;
+
+  if (hasAccel) {
+    html += `<div class="sensor-data-section">
+      <div class="sensor-data-section-title">Accelerometro</div>
+      <div class="sensor-data-row"><span class="sensor-data-label">AX</span> <span class="sensor-value" data-key="accel_x">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">AY</span> <span class="sensor-value" data-key="accel_y">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">AZ</span> <span class="sensor-value" data-key="accel_z">0</span></div>
+    </div>`;
+  }
+
+  if (hasGyro) {
+    html += `<div class="sensor-data-section">
+      <div class="sensor-data-section-title">Giroscopio</div>
+      <div class="sensor-data-row"><span class="sensor-data-label">GX</span> <span class="sensor-value" data-key="gyro_x">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">GY</span> <span class="sensor-value" data-key="gyro_y">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">GZ</span> <span class="sensor-value" data-key="gyro_z">0</span></div>
+    </div>`;
+  }
+
+  if (hasMag) {
+    html += `<div class="sensor-data-section">
+      <div class="sensor-data-section-title">Magnetometro</div>
+      <div class="sensor-data-row"><span class="sensor-data-label">MX</span> <span class="sensor-value" data-key="mag_x">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">MY</span> <span class="sensor-value" data-key="mag_y">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">MZ</span> <span class="sensor-value" data-key="mag_z">0</span></div>
+    </div>`;
+  }
+
+  if (hasPressure) {
+    html += `<div class="sensor-data-section" style="border:none;">
+      <div class="sensor-data-section-title">Pressioni</div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P0</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_0">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P1</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_1">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P2</span> <span class="sensor-value" style="color:#ffce56;" data-key="pressure_2">0</span></div>
+    </div>`;
+  }
+
+  div.innerHTML = html;
+  grid.appendChild(div);
 }
 
 function updateSensorCardUI(name, data) {
-    var card = document.querySelector(`[data-sensor="${name}"]`);
-    if (!card) { createSensorCard(name, data); updateSelector(); return; }
-    Object.keys(data).forEach(k => {
-        var el = card.querySelector(`[data-key="${k}"]`);
-        if (el) el.textContent = Math.round(data[k]);
-    });
+  var card = document.querySelector(`[data-sensor="${name}"]`);
+  if (!card) { createSensorCard(name, data); updateSelector(); return; }
+
+  Object.keys(data).forEach(k => {
+    var el = card.querySelector(`[data-key="${k}"]`);
+    if (el) el.textContent = Math.round(data[k]);
+  });
 }
 
 function updateSelector() {
-    var sel = document.getElementById('chart-sensor-select');
-    var container = document.getElementById('selector-container');
-    if (!sel || !container) return;
-    var current = sel.value; 
-    var names = Object.keys(sensors);
-    sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
-    names.forEach(n => { var opt = document.createElement('option'); opt.value = n; opt.textContent = n; sel.appendChild(opt); });
-    
-    if (names.length === 0) { container.style.display = 'none'; return; }
-    container.style.display = 'block';
-    if (current && sensors[current]) sel.value = current;
-    else if (!selectedSensor && names.length > 0) { sel.value = names[0]; var event = new Event('change'); sel.dispatchEvent(event); }
+  var sel = document.getElementById('chart-sensor-select');
+  var container = document.getElementById('selector-container');
+  if (!sel || !container) return;
+
+  var current = sel.value;
+  var names = Object.keys(sensors);
+
+  sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
+  names.forEach(n => {
+    var opt = document.createElement('option');
+    opt.value = n; opt.textContent = n;
+    sel.appendChild(opt);
+  });
+
+  if (names.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  container.style.display = 'block';
+  if (current && sensors[current]) sel.value = current;
+  else if (!selectedSensor && names.length > 0) {
+    sel.value = names[0];
+    sel.dispatchEvent(new Event('change'));
+  }
 }
 
+// ==========================================
+// UI: PROFILO
+// ==========================================
 function updateProfileUI(data) {
-    var div = document.getElementById('user-profile-display');
-    if (!data.name || !div) return;
-    div.style.display = 'flex';
-    document.getElementById('profile-name').textContent = data.name.toUpperCase();
-    document.getElementById('profile-avatar').textContent = data.avatar || "👤";
-    var gender = data.gender === 'M' ? '♂' : (data.gender === 'F' ? '♀' : '');
-    document.getElementById('profile-details').textContent = `${data.age} anni | ${data.weight} kg | ${gender}`;
+  var div = document.getElementById('user-profile-display');
+  if (!data || !data.name || !div) return;
+
+  div.style.display = 'flex';
+  var nameEl = document.getElementById('profile-name');
+  var avEl = document.getElementById('profile-avatar');
+  var detEl = document.getElementById('profile-details');
+
+  if (nameEl) nameEl.textContent = String(data.name).toUpperCase();
+  if (avEl) avEl.textContent = data.avatar || "👤";
+
+  var gender = data.gender === 'M' ? '♂' : (data.gender === 'F' ? '♀' : '');
+  if (detEl) detEl.textContent = `${data.age} anni | ${data.weight} kg | ${gender}`;
 }
 
-function updateBpmUI(val) {
-    var div = document.getElementById('bpm-display');
-    val = parseInt(val);
-    if (val > 0) {
-        if(div) {
-            div.style.display = 'flex';
-            document.getElementById('bpm-value').textContent = val;
-            var icon = div.querySelector('.heart-icon');
-            if (icon) { var d = 60/val; if(d<0.3) d=0.3; icon.style.animationDuration = d+'s'; }
-        }
-    }
-}
-
+// ==========================================
+// GRAFICI (uPlot) - invariato
+// ==========================================
 function updateChartsUI(sensorName, data) {
-    if (selectedSensor !== sensorName || !chartsInitialized) return;
-    var timestamp = Date.now() / 1000;
-    var cCont = document.getElementById('charts-container');
-    if(cCont && cCont.style.display === 'none') cCont.style.display = 'block';
+  if (selectedSensor !== sensorName || !chartsInitialized) return;
 
-    const push = (arr, vals) => {
-        arr[0].push(timestamp);
-        vals.forEach((v, i) => arr[i+1].push(v || 0));
-        if(arr[0].length > 1000) arr.forEach(s => s.shift());
-    };
+  var timestamp = Date.now() / 1000;
+  var cCont = document.getElementById('charts-container');
+  if (cCont && cCont.style.display === 'none') cCont.style.display = 'block';
 
-    if (data.accel_x !== undefined && charts.accel) {
-        push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]);
-        charts.accel.setData(chartData.accel);
-        autoScroll(charts.accel, chartData.accel);
-    }
-    if (data.gyro_x !== undefined && charts.gyro) {
-        push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]);
-        charts.gyro.setData(chartData.gyro);
-        autoScroll(charts.gyro, chartData.gyro);
-    }
-    if (data.mag_x !== undefined && charts.mag) {
-        push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]);
-        charts.mag.setData(chartData.mag);
-        autoScroll(charts.mag, chartData.mag);
-    }
-    if (data.pressure_0 !== undefined && charts.pressure) {
-        push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]);
-        charts.pressure.setData(chartData.pressure);
-        autoScroll(charts.pressure, chartData.pressure);
-        document.getElementById('pressure-chart-container').style.display = 'block';
-    } else {
-        document.getElementById('pressure-chart-container').style.display = 'none';
-    }
+  const push = (arr, vals) => {
+    arr[0].push(timestamp);
+    vals.forEach((v, i) => arr[i + 1].push(v || 0));
+    if (arr[0].length > 1000) arr.forEach(s => s.shift());
+  };
+
+  if (data.accel_x !== undefined && charts.accel) {
+    push(chartData.accel, [data.accel_x, data.accel_y, data.accel_z]);
+    charts.accel.setData(chartData.accel);
+    autoScroll(charts.accel, chartData.accel);
+  }
+  if (data.gyro_x !== undefined && charts.gyro) {
+    push(chartData.gyro, [data.gyro_x, data.gyro_y, data.gyro_z]);
+    charts.gyro.setData(chartData.gyro);
+    autoScroll(charts.gyro, chartData.gyro);
+  }
+  if (data.mag_x !== undefined && charts.mag) {
+    push(chartData.mag, [data.mag_x, data.mag_y, data.mag_z]);
+    charts.mag.setData(chartData.mag);
+    autoScroll(charts.mag, chartData.mag);
+  }
+  if (data.pressure_0 !== undefined && charts.pressure) {
+    push(chartData.pressure, [data.pressure_0, data.pressure_1, data.pressure_2]);
+    charts.pressure.setData(chartData.pressure);
+    autoScroll(charts.pressure, chartData.pressure);
+
+    var pc = document.getElementById('pressure-chart-container');
+    if (pc) pc.style.display = 'block';
+  } else {
+    var pc2 = document.getElementById('pressure-chart-container');
+    if (pc2) pc2.style.display = 'none';
+  }
 }
 
 function autoScroll(u, data) {
-    if (!isUserInteracting) {
-        var xData = data[0];
-        if (xData.length < 2) return;
-        var lastTime = xData[xData.length - 1];
-        var minX = lastTime - 10;
-        if (xData[0] > minX) minX = xData[0];
-        u.setScale('x', { min: minX, max: lastTime });
-    }
+  if (!isUserInteracting) {
+    var xData = data[0];
+    if (xData.length < 2) return;
+    var lastTime = xData[xData.length - 1];
+    var minX = lastTime - 10;
+    if (xData[0] > minX) minX = xData[0];
+    u.setScale('x', { min: minX, max: lastTime });
+  }
 }
 
 function resetChartData() {
-    isUserInteracting = false;
-    chartData = { accel: [[],[],[],[]], gyro: [[],[],[],[]], mag: [[],[],[],[]], pressure: [[],[],[],[]] };
-    if(!chartsInitialized) return;
-    if(charts.accel) charts.accel.setData(chartData.accel);
-    if(charts.gyro) charts.gyro.setData(chartData.gyro);
-    if(charts.mag) charts.mag.setData(chartData.mag);
-    if(charts.pressure) charts.pressure.setData(chartData.pressure);
+  isUserInteracting = false;
+  chartData = {
+    accel: [[], [], [], []],
+    gyro: [[], [], [], []],
+    mag: [[], [], [], []],
+    pressure: [[], [], [], []]
+  };
+
+  if (!chartsInitialized) return;
+  if (charts.accel) charts.accel.setData(chartData.accel);
+  if (charts.gyro) charts.gyro.setData(chartData.gyro);
+  if (charts.mag) charts.mag.setData(chartData.mag);
+  if (charts.pressure) charts.pressure.setData(chartData.pressure);
 }
 
 function initCharts() {
-    var accelDiv = document.getElementById('accel-chart');
-    var gyroDiv = document.getElementById('gyro-chart');
-    var magDiv = document.getElementById('mag-chart');
-    var pressureDiv = document.getElementById('pressure-chart');
-    if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
-    
-    accelDiv.innerHTML = ''; gyroDiv.innerHTML = ''; magDiv.innerHTML = ''; pressureDiv.innerHTML = '';
+  var accelDiv = document.getElementById('accel-chart');
+  var gyroDiv = document.getElementById('gyro-chart');
+  var magDiv = document.getElementById('mag-chart');
+  var pressureDiv = document.getElementById('pressure-chart');
+  if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
 
-    var commonOpts = () => ({
-        width: accelDiv.offsetWidth, height: 200,
-        cursor: { show: true, drag: { x: true, y: false } },
-        scales: { x: { time: true }, y: { auto: true } },
-        axes: [ { stroke: '#97c93e', grid: { stroke: '#333' }, values: (u, vals) => vals.map(v => new Date(v*1000).toLocaleTimeString()) }, { stroke: '#97c93e', grid: { stroke: '#333' }, size: 50 } ],
-        plugins: [wheelZoomPlugin()]
-    });
+  accelDiv.innerHTML = ''; gyroDiv.innerHTML = ''; magDiv.innerHTML = ''; pressureDiv.innerHTML = '';
 
-    var opts1 = commonOpts(); opts1.series = [{}, {label:'X', stroke:'#ff6384', width:2}, {label:'Y', stroke:'#36a2eb', width:2}, {label:'Z', stroke:'#4bc0c0', width:2}];
-    charts.accel = new uPlot(opts1, chartData.accel, accelDiv); addInteraction(charts.accel);
+  var commonOpts = () => ({
+    width: accelDiv.offsetWidth,
+    height: 200,
+    cursor: { show: true, drag: { x: true, y: false } },
+    scales: { x: { time: true }, y: { auto: true } },
+    axes: [
+      { stroke: SENSORIA_GREEN, grid: { stroke: '#333' }, values: (u, vals) => vals.map(v => new Date(v * 1000).toLocaleTimeString()) },
+      { stroke: SENSORIA_GREEN, grid: { stroke: '#333' }, size: 50 }
+    ],
+    plugins: [wheelZoomPlugin()]
+  });
 
-    var opts2 = commonOpts(); opts2.series = [{}, {label:'X', stroke:'#ff9f40', width:2}, {label:'Y', stroke:'#9966ff', width:2}, {label:'Z', stroke:'#ffcd56', width:2}];
-    charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv); addInteraction(charts.gyro);
+  var opts1 = commonOpts();
+  opts1.series = [{}, { label: 'X', stroke: '#ff6384', width: 2 }, { label: 'Y', stroke: '#36a2eb', width: 2 }, { label: 'Z', stroke: '#4bc0c0', width: 2 }];
+  charts.accel = new uPlot(opts1, chartData.accel, accelDiv);
+  addInteraction(charts.accel);
 
-    var opts3 = commonOpts(); opts3.series = [{}, {label:'X', stroke:'#c9cbcf', width:2}, {label:'Y', stroke:'#4bc0c0', width:2}, {label:'Z', stroke:'#ff6384', width:2}];
-    charts.mag = new uPlot(opts3, chartData.mag, magDiv); addInteraction(charts.mag);
+  var opts2 = commonOpts();
+  opts2.series = [{}, { label: 'X', stroke: '#ff9f40', width: 2 }, { label: 'Y', stroke: '#9966ff', width: 2 }, { label: 'Z', stroke: '#ffcd56', width: 2 }];
+  charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv);
+  addInteraction(charts.gyro);
 
-    var opts4 = commonOpts(); opts4.height = 250; opts4.scales.y = { auto: false, range: [0, 1024] };
-    opts4.series = [{}, {label:'P0', stroke:'#ff6384', width:3}, {label:'P1', stroke:'#36a2eb', width:3}, {label:'P2', stroke:'#ffce56', width:3}];
-    charts.pressure = new uPlot(opts4, chartData.pressure, pressureDiv); addInteraction(charts.pressure);
+  var opts3 = commonOpts();
+  opts3.series = [{}, { label: 'X', stroke: '#c9cbcf', width: 2 }, { label: 'Y', stroke: '#4bc0c0', width: 2 }, { label: 'Z', stroke: '#ff6384', width: 2 }];
+  charts.mag = new uPlot(opts3, chartData.mag, magDiv);
+  addInteraction(charts.mag);
+
+  var opts4 = commonOpts();
+  opts4.height = 250;
+  opts4.scales.y = { auto: false, range: [0, 1024] };
+  opts4.series = [{}, { label: 'P0', stroke: '#ff6384', width: 3 }, { label: 'P1', stroke: '#36a2eb', width: 3 }, { label: 'P2', stroke: '#ffce56', width: 3 }];
+  charts.pressure = new uPlot(opts4, chartData.pressure, pressureDiv);
+  addInteraction(charts.pressure);
 }
 
 function wheelZoomPlugin() {
-    return {
-        hooks: {
-            init: (u) => {
-                u.over.addEventListener("wheel", e => {
-                    e.preventDefault();
-                    var {min, max} = u.scales.x;
-                    var range = max - min;
-                    var factor = e.deltaY < 0 ? 0.9 : 1.1;
-                    var newRange = range * factor;
-                    if(newRange < MIN_ZOOM_RANGE) newRange = MIN_ZOOM_RANGE;
-                    var center = min + range/2;
-                    u.setScale('x', {min: center - newRange/2, max: center + newRange/2});
-                });
-                u.over.addEventListener("dblclick", () => { isUserInteracting = false; });
-            }
-        }
-    };
+  return {
+    hooks: {
+      init: (u) => {
+        u.over.addEventListener("wheel", e => {
+          e.preventDefault();
+          var { min, max } = u.scales.x;
+          var range = max - min;
+          var factor = e.deltaY < 0 ? 0.9 : 1.1;
+          var newRange = range * factor;
+          if (newRange < MIN_ZOOM_RANGE) newRange = MIN_ZOOM_RANGE;
+          var center = min + range / 2;
+          u.setScale('x', { min: center - newRange / 2, max: center + newRange / 2 });
+        });
+        u.over.addEventListener("dblclick", () => { isUserInteracting = false; });
+      }
+    }
+  };
 }
-function addInteraction(u) { u.over.addEventListener('mousedown', () => isUserInteracting = true); u.over.addEventListener('wheel', () => isUserInteracting = true); }
-function clearAllData() { if(confirm('Pulire tutto?')) fetch('/api/clear', {method:'POST'}); }
+
+function addInteraction(u) {
+  u.over.addEventListener('mousedown', () => isUserInteracting = true);
+  u.over.addEventListener('wheel', () => isUserInteracting = true);
+}
+
+// ==========================================
+// OPTIONAL: se hai un bottone "Clear" che chiama /api/clear
+// (ATTENZIONE: tu avevi detto che vuoi resettare solo con refresh)
+// ==========================================
+function clearAllData() {
+  if (confirm('Pulire tutto?')) {
+    fetch('/api/clear', { method: 'POST' });
+    // NOTA: non resettiamo qui, perché tu vuoi che resti fino a refresh.
+    // Se vuoi reset immediato anche su clear, dimmelo e riattivo reset.
+  }
+}
