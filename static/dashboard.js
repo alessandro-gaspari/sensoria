@@ -19,18 +19,18 @@ var isMapInitialized = false;
 
 // Route layers
 var fullRoute = null;      // cresce sempre con i GPS ricevuti
-var progressRoute = null;  // mostra la progressione fino al tempo selezionato (o live)
+var progressRoute = null;  // mostra progressione fino al tempo selezionato (o live)
 
 // --- TIMELINE (time-based) ---
 var sessionStartTimeMs = null;  // set al primo evento (gps/bpm)
-var sessionEndTimeMs = null;    // opzionale: si setta quando finisce l’attività (se arriva evento)
+var sessionEndTimeMs = null;    // se arriva "data_cleared"
 var isReplayMode = false;
 
 // campioni
-var gpsSamples = []; // { t, lat, lng, acc }
+var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
 
-// cache per UI
+// cache UI live
 var lastLiveBpm = "--";
 
 // --- ANIMAZIONE MARKER LIVE ---
@@ -61,6 +61,7 @@ document.addEventListener('DOMContentLoaded', function () {
   initSocket();
   ensureMapDomOverlay();
   ensureBpmOnTop();
+  ensureBpmExtrasUI();
 
   var sel = document.getElementById('chart-sensor-select');
   if (sel) {
@@ -93,27 +94,18 @@ function initSocket() {
     if (el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
   });
 
-  // Dati sensori (robusto)
   socket.on('sensor_update', (data) => processIncomingData(data));
-
-  // BPM (live)
   socket.on('bpm_update', (val) => onBpmUpdate(val));
-
   socket.on('profile_update', (data) => updateProfileUI(data));
-
-  // GPS (live)
   socket.on('gps_update', (data) => onGpsUpdate(data));
 
-  // Se il backend manda "data_cleared" quando termina l’attività:
-  // - NON cancelliamo (tu vuoi che rimanga fino a refresh)
-  // - mettiamo solo un "end time" per fissare la durata.
+  // Fine attività: NON cancelliamo (tu vuoi che rimanga fino a refresh)
   socket.on('data_cleared', () => {
     if (sessionStartTimeMs != null) {
       sessionEndTimeMs = getNowMs();
-      // Non resetto route/bpm: restano per replay.
-      // Se vuoi proprio resettare da bottone, usa clearAllData().
-      updateReplayUiBounds(); // fissa max slider (se era ancora in live)
+      updateReplayUiBounds();
       showReplayOverlayIfReady();
+      // rimane in live se non stai scrub-bando
     }
   });
 }
@@ -130,8 +122,6 @@ function ensureSessionStart(tMs) {
 }
 
 function getSessionEndMs() {
-  // Se sessionEndTimeMs esiste, replay max è quello.
-  // Altrimenti il max è l'ultimo sample disponibile.
   var last = sessionStartTimeMs || getNowMs();
   if (gpsSamples.length) last = Math.max(last, gpsSamples[gpsSamples.length - 1].t);
   if (bpmSamples.length) last = Math.max(last, bpmSamples[bpmSamples.length - 1].t);
@@ -150,23 +140,113 @@ function clamp(n, a, b) {
 }
 
 // ==========================================
+// DISTANCE + SPEED (HAVERSINE)
+// ==========================================
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371e3;
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function formatKmh(v) {
+  if (v == null || !isFinite(v)) return "--";
+  return (Math.max(0, v)).toFixed(1);
+}
+
+function formatKmFromMeters(m) {
+  if (m == null || !isFinite(m)) return "--";
+  return (Math.max(0, m) / 1000).toFixed(2);
+}
+
+// ==========================================
+// BPM UI (BPM + SPEED + DIST)
+// ==========================================
+function ensureBpmOnTop() {
+  var bpmBox = document.getElementById('bpm-display');
+  if (!bpmBox) return;
+  bpmBox.style.zIndex = '20000';
+  if (!bpmBox.style.position) bpmBox.style.position = 'absolute';
+}
+
+function ensureBpmExtrasUI() {
+  const box = document.getElementById('bpm-display');
+  if (!box) return;
+
+  ensureBpmOnTop();
+
+  if (!document.getElementById('speed-value')) {
+    const extra = document.createElement('div');
+    extra.id = 'bpm-extra';
+    extra.style.cssText = 'margin-top:8px; display:flex; flex-direction:column; gap:6px; width:100%;';
+
+    extra.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:#9aa; font-size:11px; font-weight:700; letter-spacing:1px;">SPEED</span>
+        <span id="speed-value" style="color:#fff; font-weight:800; font-family:monospace;">-- km/h</span>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="color:#9aa; font-size:11px; font-weight:700; letter-spacing:1px;">DIST</span>
+        <span id="distance-value" style="color:#fff; font-weight:800; font-family:monospace;">-- km</span>
+      </div>
+    `;
+    box.appendChild(extra);
+  }
+}
+
+function updateSpeedDistanceUI(speedKmh, distMeters) {
+  const sEl = document.getElementById('speed-value');
+  const dEl = document.getElementById('distance-value');
+  if (sEl) sEl.textContent = `${formatKmh(speedKmh)} km/h`;
+  if (dEl) dEl.textContent = `${formatKmFromMeters(distMeters)} km`;
+}
+
+function updateBpmBox(val, isReplay) {
+  var div = document.getElementById('bpm-display');
+  if (!div) return;
+
+  div.style.display = 'flex';
+  ensureBpmOnTop();
+  ensureBpmExtrasUI();
+
+  var vEl = document.getElementById('bpm-value');
+  if (vEl) vEl.textContent = String(val);
+
+  var icon = div.querySelector('.heart-icon');
+  var bpmInt = parseInt(val);
+
+  if (icon) {
+    if (!isReplay && !isNaN(bpmInt) && bpmInt > 0) {
+      var d = 60 / bpmInt;
+      if (d < 0.3) d = 0.3;
+      icon.style.animationDuration = d + 's';
+    } else {
+      icon.style.animationDuration = '0s';
+    }
+  }
+}
+
+// ==========================================
 // BPM (LIVE + TIMELINE)
 // ==========================================
 function onBpmUpdate(val) {
-  // normalizza
   var bpmInt = parseInt(val);
   if (isNaN(bpmInt) || bpmInt <= 0) return;
 
-  // timestamp locale: se il server non manda timestamp, questa è la soluzione minima
   var tMs = getNowMs();
   ensureSessionStart(tMs);
 
   lastLiveBpm = bpmInt;
-
-  // salva timeline bpm (sempre, anche se l’utente è in replay)
   bpmSamples.push({ t: tMs, bpm: bpmInt });
 
-  // UI: se non in replay, aggiorna
   if (!isReplayMode) {
     updateBpmBox(bpmInt, false);
     updateReplayUiBounds();
@@ -186,59 +266,62 @@ function onGpsUpdate(data) {
 
   var acc = (data.accuracy != null) ? Number(data.accuracy) : null;
   var tMs = data.timestamp ? new Date(data.timestamp).getTime() : getNowMs();
-
   ensureSessionStart(tMs);
 
-  // salva timeline gps (sempre, anche se in replay)
-  gpsSamples.push({ t: tMs, lat: lat, lng: lng, acc: acc });
+  // --- calcolo distanza e velocità (cumulativa + km/h) ---
+  let cumDistM = 0;
+  let speedKmh = 0;
 
-  // init mappa al primo fix
+  if (gpsSamples.length > 0) {
+    const prev = gpsSamples[gpsSamples.length - 1];
+    const dtS = Math.max(0, (tMs - prev.t) / 1000);
+
+    let dM = haversineMeters(prev.lat, prev.lng, lat, lng);
+    if (!isFinite(dM) || dM < 0.5) dM = 0; // jitter minimo
+
+    cumDistM = (prev.cumDistM || 0) + dM;
+
+    // velocità (istantanea) km/h
+    if (dtS >= 0.3 && dM >= 1.0) speedKmh = (dM / dtS) * 3.6;
+    else speedKmh = prev.speedKmh || 0;
+  }
+
+  gpsSamples.push({ t: tMs, lat: lat, lng: lng, acc: acc, cumDistM: cumDistM, speedKmh: speedKmh });
+
   ensureMapInitialized(lat, lng);
 
   // aggiorna route completa sempre
-  if (fullRoute) {
-    fullRoute.addLatLng([lat, lng]);
-  }
+  if (fullRoute) fullRoute.addLatLng([lat, lng]);
 
-  // Se non siamo in replay, aggiorna marker/progress route
   if (!isReplayMode) {
-    // progress route = tutta la route
     updateProgressRouteToTime(getSessionEndMs());
 
-    // marker animato verso nuovo target
+    // marker animato
     if (!currentMapPos) currentMapPos = { lat: lat, lng: lng };
     targetMapPos = { lat: lat, lng: lng };
     startMapPos = { ...currentMapPos };
     animationStartTime = performance.now();
     if (!animationFrameId) animateMarkerLoop();
 
-    // accuratezza
     var accEl = document.getElementById('gps-accuracy');
     if (accEl && acc != null && isFinite(acc)) accEl.textContent = Math.round(acc);
 
-    // slider segue live
+    // aggiorna speed+dist live
+    const last = gpsSamples[gpsSamples.length - 1];
+    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+
     updateReplayUiBounds();
     showReplayOverlayIfReady();
   }
 }
 
 // ==========================================
-// MAP INIT + PANES + OVERLAYS
+// MAP INIT + PANES + OVERLAY
 // ==========================================
 function ensureMapDomOverlay() {
-  // serve per creare overlay sopra la mappa anche prima del primo fix
   var mapDiv = document.getElementById('map');
   if (!mapDiv) return;
   mapDiv.style.position = 'relative';
-}
-
-function ensureBpmOnTop() {
-  var bpmBox = document.getElementById('bpm-display');
-  if (!bpmBox) return;
-  bpmBox.style.zIndex = '20000';
-  // IMPORTANTISSIMO: se il CSS originale lo mette "static", z-index può non funzionare
-  // Se già posizionato assoluto dal tuo CSS, non cambia nulla.
-  if (!bpmBox.style.position) bpmBox.style.position = 'absolute';
 }
 
 function ensureMapInitialized(lat, lng) {
@@ -248,6 +331,8 @@ function ensureMapInitialized(lat, lng) {
   if (section) section.style.display = 'block';
 
   ensureMapDomOverlay();
+  ensureBpmOnTop();
+  ensureBpmExtrasUI();
 
   map = L.map('map', { attributionControl: false, zoomControl: true }).setView([lat, lng], 19);
 
@@ -255,15 +340,13 @@ function ensureMapInitialized(lat, lng) {
     maxZoom: 20
   }).addTo(map);
 
-  // PANE ROUTE sotto marker (ma sopra tile)
+  // PANE route + marker (ordine stabile) [web:21][web:29]
   map.createPane('routePane');
   map.getPane('routePane').style.zIndex = 450;
 
-  // PANE MARKER
   map.createPane('markerPane');
   map.getPane('markerPane').style.zIndex = 650;
 
-  // marker custom
   var pulseIcon = L.divIcon({
     className: 'custom-div-icon',
     html: "<div class='pulsating-marker'></div>",
@@ -273,7 +356,6 @@ function ensureMapInitialized(lat, lng) {
 
   mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: 'markerPane' }).addTo(map);
 
-  // route layers
   fullRoute = L.polyline([], {
     pane: 'routePane',
     color: SENSORIA_GREEN,
@@ -292,7 +374,7 @@ function ensureMapInitialized(lat, lng) {
     lineCap: 'round'
   }).addTo(map);
 
-  createReplayOverlayControls(); // overlay slider + LIVE
+  createReplayOverlayControls();
 
   isMapInitialized = true;
   setTimeout(() => map.invalidateSize(), 120);
@@ -318,11 +400,8 @@ function animateMarkerLoop() {
   currentMapPos = { lat: lat, lng: lng };
   mapMarker.setLatLng([lat, lng]);
 
-  if (progress < 1) {
-    animationFrameId = requestAnimationFrame(animateMarkerLoop);
-  } else {
-    animationFrameId = null;
-  }
+  if (progress < 1) animationFrameId = requestAnimationFrame(animateMarkerLoop);
+  else animationFrameId = null;
 }
 
 // ==========================================
@@ -394,7 +473,6 @@ function showReplayOverlayIfReady() {
   var overlay = document.getElementById('replay-overlay');
   if (!overlay) return;
 
-  // Mostra overlay quando c'è qualcosa da scorrere (durata > 0 e almeno 2 gps oppure bpm)
   if (getDurationSec() > 0 && (gpsSamples.length > 1 || bpmSamples.length > 1)) {
     overlay.style.display = 'flex';
   }
@@ -407,7 +485,6 @@ function updateReplayUiBounds() {
   var maxSec = getDurationSec();
   slider.max = String(maxSec);
 
-  // Se in live, lo slider segue sempre il max
   if (!isReplayMode) {
     slider.value = String(maxSec);
     updateReplayTimeLabel(maxSec);
@@ -435,28 +512,31 @@ function enterReplayAtSecond(sec) {
 
   var tMs = sessionStartTimeMs + clampedSec * 1000;
 
-  // GPS: posizione interpolata
+  // GPS: pos interpolata
   var pos = getInterpolatedGpsAtTime(tMs);
   if (pos && mapMarker) {
     mapMarker.setLatLng([pos.lat, pos.lng]);
     currentMapPos = { lat: pos.lat, lng: pos.lng };
   }
 
-  // Route progress fino al tempo scelto
+  // route progress fino al tempo
   updateProgressRouteToTime(tMs);
 
-  // BPM: ultimo bpm <= tempo scelto
+  // BPM storico
   var bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmBox(bpm, true);
+
+  // Speed + Distance storiche (interpolate)
+  var distM = getDistanceAtTime(tMs);
+  var spd = getSpeedAtTime(tMs);
+  updateSpeedDistanceUI(spd, distM);
 }
 
 function goLive() {
   isReplayMode = false;
 
-  // porta slider alla fine
   updateReplayUiBounds();
 
-  // marker all’ultimo GPS (se esiste)
   if (gpsSamples.length && mapMarker) {
     var last = gpsSamples[gpsSamples.length - 1];
     mapMarker.setLatLng([last.lat, last.lng]);
@@ -464,18 +544,20 @@ function goLive() {
     targetMapPos = { lat: last.lat, lng: last.lng };
   }
 
-  // progress route = tutto
   updateProgressRouteToTime(getSessionEndMs());
 
-  // bpm torna live
   if (lastLiveBpm !== "--") updateBpmBox(lastLiveBpm, false);
+
+  if (gpsSamples.length) {
+    var lastG = gpsSamples[gpsSamples.length - 1];
+    updateSpeedDistanceUI(lastG.speedKmh, lastG.cumDistM);
+  }
 }
 
 // ==========================================
-// GPS/BPM LOOKUP (binary search)
+// LOOKUP (binary search)
 // ==========================================
 function upperBoundByTime(arr, tMs) {
-  // primo indice > tMs
   var lo = 0, hi = arr.length;
   while (lo < hi) {
     var mid = (lo + hi) >> 1;
@@ -489,7 +571,7 @@ function getInterpolatedGpsAtTime(tMs) {
   if (!gpsSamples.length) return null;
   if (gpsSamples.length === 1) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
 
-  var idx = upperBoundByTime(gpsSamples, tMs); // first > t
+  var idx = upperBoundByTime(gpsSamples, tMs);
   if (idx <= 0) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
   if (idx >= gpsSamples.length) {
     var last = gpsSamples[gpsSamples.length - 1];
@@ -511,25 +593,55 @@ function getInterpolatedGpsAtTime(tMs) {
 
 function getBpmAtTime(tMs) {
   if (!bpmSamples.length) return null;
-  var idx = upperBoundByTime(bpmSamples, tMs); // first > t
+  var idx = upperBoundByTime(bpmSamples, tMs);
   if (idx <= 0) return bpmSamples[0].bpm;
   return bpmSamples[idx - 1].bpm;
+}
+
+function getDistanceAtTime(tMs) {
+  if (!gpsSamples.length) return null;
+  if (gpsSamples.length === 1) return gpsSamples[0].cumDistM || 0;
+
+  var idx = upperBoundByTime(gpsSamples, tMs);
+  if (idx <= 0) return gpsSamples[0].cumDistM || 0;
+  if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].cumDistM || 0;
+
+  var a = gpsSamples[idx - 1];
+  var b = gpsSamples[idx];
+  var alpha = clamp((tMs - a.t) / Math.max(1, (b.t - a.t)), 0, 1);
+
+  var da = a.cumDistM || 0;
+  var db = b.cumDistM || da;
+  return da + (db - da) * alpha;
+}
+
+function getSpeedAtTime(tMs) {
+  if (!gpsSamples.length) return null;
+  if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
+
+  var idx = upperBoundByTime(gpsSamples, tMs);
+  if (idx <= 0) return gpsSamples[0].speedKmh || 0;
+  if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].speedKmh || 0;
+
+  var a = gpsSamples[idx - 1];
+  var b = gpsSamples[idx];
+  var alpha = clamp((tMs - a.t) / Math.max(1, (b.t - a.t)), 0, 1);
+
+  var sa = a.speedKmh || 0;
+  var sb = b.speedKmh || sa;
+  return sa + (sb - sa) * alpha;
 }
 
 function updateProgressRouteToTime(tMs) {
   if (!progressRoute) return;
   if (!gpsSamples.length) { progressRoute.setLatLngs([]); return; }
 
-  var idx = upperBoundByTime(gpsSamples, tMs); // first > t
+  var idx = upperBoundByTime(gpsSamples, tMs);
   idx = clamp(idx, 0, gpsSamples.length);
 
-  // Prendiamo i punti <= t
   var pts = [];
-  for (var i = 0; i < idx; i++) {
-    pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
-  }
+  for (var i = 0; i < idx; i++) pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
 
-  // Se siamo tra due punti, aggiungi il punto interpolato come “testa”
   if (idx > 0 && idx < gpsSamples.length) {
     var interp = getInterpolatedGpsAtTime(tMs);
     if (interp) pts.push([interp.lat, interp.lng]);
@@ -539,45 +651,17 @@ function updateProgressRouteToTime(tMs) {
 }
 
 // ==========================================
-// BPM BOX UI (sempre sopra mappa)
-// ==========================================
-function updateBpmBox(val, isReplay) {
-  var div = document.getElementById('bpm-display');
-  if (!div) return;
-
-  div.style.display = 'flex';
-  ensureBpmOnTop();
-
-  var vEl = document.getElementById('bpm-value');
-  if (vEl) vEl.textContent = String(val);
-
-  // Animazione cuore solo in live (opzionale)
-  var icon = div.querySelector('.heart-icon');
-  var bpmInt = parseInt(val);
-
-  if (icon) {
-    if (!isReplay && !isNaN(bpmInt) && bpmInt > 0) {
-      var d = 60 / bpmInt;
-      if (d < 0.3) d = 0.3;
-      icon.style.animationDuration = d + 's';
-    } else {
-      icon.style.animationDuration = '0s';
-    }
-  }
-}
-
-// ==========================================
 // PARSING SENSOR UPDATE (robusto)
 // ==========================================
 function processIncomingData(data) {
   var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
 
-  // se dentro "sensor_update" arriva bpm sporco, intercettalo
+  // BPM sporco dentro sensor_update
   var bpmMatch = str.match(/"bpm"\s*:\s*(\d+)/);
   if (bpmMatch && bpmMatch[1]) {
-    var val = parseInt(bpmMatch[1]);
-    if (!isNaN(val) && val > 0) {
-      onBpmUpdate(val);
+    var v = parseInt(bpmMatch[1]);
+    if (!isNaN(v) && v > 0) {
+      onBpmUpdate(v);
       return;
     }
   }
@@ -595,7 +679,6 @@ function processIncomingData(data) {
 
   if (payload && payload.sensor_name) {
     var name = payload.sensor_name;
-
     if (name.includes("COOSPO") || name === "HRM") return;
     if (name === 'PROFILE_INFO') { updateProfileUI(payload); return; }
 
@@ -737,7 +820,7 @@ function updateProfileUI(data) {
 }
 
 // ==========================================
-// GRAFICI (uPlot) - invariato
+// GRAFICI (uPlot)
 // ==========================================
 function updateChartsUI(sensorName, data) {
   if (selectedSensor !== sensorName || !chartsInitialized) return;
@@ -877,13 +960,8 @@ function addInteraction(u) {
 }
 
 // ==========================================
-// OPTIONAL: se hai un bottone "Clear" che chiama /api/clear
-// (ATTENZIONE: tu avevi detto che vuoi resettare solo con refresh)
+// OPTIONAL: clear (ma tu vuoi reset solo su refresh)
 // ==========================================
 function clearAllData() {
-  if (confirm('Pulire tutto?')) {
-    fetch('/api/clear', { method: 'POST' });
-    // NOTA: non resettiamo qui, perché tu vuoi che resti fino a refresh.
-    // Se vuoi reset immediato anche su clear, dimmelo e riattivo reset.
-  }
+  if (confirm('Pulire tutto?')) fetch('/api/clear', { method: 'POST' });
 }
