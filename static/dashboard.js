@@ -33,10 +33,9 @@ var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
 
-var fullRoute = null;      // cresce sempre
-var progressRoute = null;  // fino al tempo (replay/live)
+var fullRoute = null;      // polilinea intera
+var progressRoute = null;  // polilinea fino al tempo (replay/live)
 
-// marker animation in LIVE
 var currentMapPos = null;
 var targetMapPos = null;
 var startMapPos = null;
@@ -74,7 +73,8 @@ var MIN_ZOOM_RANGE = 0.5;
 document.addEventListener('DOMContentLoaded', function () {
   initSocket();
   ensureMapDomOverlay();
-  ensureMetricsCardsUI(); // crea stack se possibile (se non c'è map ancora, va su body)
+  ensureMetricsCardsUI();
+  initPastActivityLoader();
 
   var sel = document.getElementById('chart-sensor-select');
   if (sel) {
@@ -102,12 +102,18 @@ document.addEventListener('DOMContentLoaded', function () {
 function initSocket() {
   socket.on('connect', () => {
     var el = document.getElementById('connection-status');
-    if (el) { el.className = ''; el.innerHTML = '<span class="dot"></span> Connesso'; }
+    if (el) {
+      el.className = '';
+      el.innerHTML = '<span class="dot"></span> Connesso';
+    }
   });
 
   socket.on('disconnect', () => {
     var el = document.getElementById('connection-status');
-    if (el) { el.className = 'disconnected'; el.innerHTML = '<span class="dot"></span> Disconnesso'; }
+    if (el) {
+      el.className = 'disconnected';
+      el.innerHTML = '<span class="dot"></span> Disconnesso';
+    }
   });
 
   socket.on('sensor_update', (data) => processIncomingData(data));
@@ -125,7 +131,7 @@ function initSocket() {
 }
 
 // ==========================================
-// TIME HELPERS
+// TIME + UTILS
 // ==========================================
 function getNowMs() { return Date.now(); }
 
@@ -180,7 +186,7 @@ function formatKmFromMeters(m) {
 // METRIC CARDS UI (3 card identiche)
 // ==========================================
 function ensureMetricsCardsUI() {
-  // Nascondi vecchio #bpm-display (se esiste) e non usarlo più
+  // Nascondi vecchio #bpm-display (se presente nell'HTML originale)
   var oldBpm = document.getElementById('bpm-display');
   if (oldBpm) oldBpm.style.display = 'none';
 
@@ -203,7 +209,6 @@ function ensureMetricsCardsUI() {
     const mapDiv = document.getElementById('map');
     (mapDiv || document.body).appendChild(wrap);
   } else {
-    // se prima era nel body e ora la mappa esiste, spostalo dentro la mappa
     const mapDiv = document.getElementById('map');
     if (mapDiv && wrap.parentElement !== mapDiv) mapDiv.appendChild(wrap);
   }
@@ -216,7 +221,7 @@ function ensureMetricsCardsUI() {
       labelColor: 'rgba(255, 65, 54, 0.95)',
       borderColor: 'rgba(255, 65, 54, 0.70)',
       valueId: 'bpm-value',
-      unitText: '' // niente unità
+      unitText: ''
     }));
   }
 
@@ -279,7 +284,6 @@ function buildMetricCard({ id, emoji, label, labelColor, borderColor, valueId, u
     </div>
   `;
 
-  // init con unità
   if (unitText) {
     const valueEl = card.querySelector(`#${valueId}`);
     if (valueEl) valueEl.textContent = `-- ${unitText}`;
@@ -338,7 +342,6 @@ function onGpsUpdate(data) {
   var tMs = data.timestamp ? new Date(data.timestamp).getTime() : getNowMs();
   ensureSessionStart(tMs);
 
-  // calcolo distanza/velocità
   let cumDistM = 0;
   let speedKmh = 0;
 
@@ -364,18 +367,15 @@ function onGpsUpdate(data) {
   if (!isReplayMode) {
     updateProgressRouteToTime(getSessionEndMs());
 
-    // marker animato
     if (!currentMapPos) currentMapPos = { lat: lat, lng: lng };
     targetMapPos = { lat: lat, lng: lng };
     startMapPos = { ...currentMapPos };
     animationStartTime = performance.now();
     if (!animationFrameId) animateMarkerLoop();
 
-    // precision
     var accEl = document.getElementById('gps-accuracy');
     if (accEl && acc != null && isFinite(acc)) accEl.textContent = Math.round(acc);
 
-    // metriche live
     const last = gpsSamples[gpsSamples.length - 1];
     updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
 
@@ -401,11 +401,16 @@ function ensureMapInitialized(lat, lng) {
 
   ensureMapDomOverlay();
 
-  map = L.map('map', { attributionControl: false, zoomControl: true }).setView([lat, lng], 19);
+  map = L.map('map', {
+    attributionControl: false,
+    zoomControl: true
+  }).setView([lat, lng], 19);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 20
+  }).addTo(map);
 
-  // panes per ordine layer
+  // panes per ordine layer [web:29]
   map.createPane('routePane');
   map.getPane('routePane').style.zIndex = 450;
 
@@ -419,7 +424,10 @@ function ensureMapInitialized(lat, lng) {
     iconAnchor: [12, 12]
   });
 
-  mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: 'markerPane' }).addTo(map);
+  mapMarker = L.marker([lat, lng], {
+    icon: pulseIcon,
+    pane: 'markerPane'
+  }).addTo(map);
 
   fullRoute = L.polyline([], {
     pane: 'routePane',
@@ -513,7 +521,6 @@ function createRotateControl() {
 function applyMapRotation(deg) {
   if (!map) return;
 
-  // Ruota SOLO i panes (contenuto mappa), lasciando UI/overlay fermi
   const container = map.getContainer();
   const mapPane = container.querySelector('.leaflet-map-pane');
   if (!mapPane) return;
@@ -522,7 +529,6 @@ function applyMapRotation(deg) {
   mapPane.style.transition = 'transform 0.25s ease-out';
   mapPane.style.transform = `rotate(${deg}deg)`;
 
-  // marker/route restano nei panes, quindi ruotano insieme
   setTimeout(() => map.invalidateSize(), 300);
 }
 
@@ -581,10 +587,85 @@ function createReplayOverlayControls() {
   var slider = document.getElementById('replay-slider');
   var btnLive = document.getElementById('btn-live');
 
-  slider.addEventListener('input', function (e) {
-    var sec = parseInt(e.target.value || "0");
+  // blocca propagazione verso Leaflet (click/scroll) [web:103]
+  if (window.L && L.DomEvent) {
+    L.DomEvent.disableClickPropagation(overlay);
+    L.DomEvent.disableScrollPropagation(overlay);
+  }
+
+  let scrubbing = false;
+
+  function lockMapInteractions(lock) {
+    if (!map) return;
+    if (lock) {
+      map.dragging && map.dragging.disable();
+      map.scrollWheelZoom && map.scrollWheelZoom.disable();
+      map.doubleClickZoom && map.doubleClickZoom.disable();
+      map.touchZoom && map.touchZoom.disable();
+      map.boxZoom && map.boxZoom.disable();
+      map.keyboard && map.keyboard.disable();
+    } else {
+      map.dragging && map.dragging.enable();
+      map.scrollWheelZoom && map.scrollWheelZoom.enable();
+      map.doubleClickZoom && map.doubleClickZoom.enable();
+      map.touchZoom && map.touchZoom.enable();
+      map.boxZoom && map.boxZoom.enable();
+      map.keyboard && map.keyboard.enable();
+    }
+  }
+
+  function seekToSliderValue() {
+    const sec = parseInt(slider.value || "0");
     enterReplayAtSecond(sec);
+  }
+
+  function setSliderFromClientX(clientX) {
+    const rect = slider.getBoundingClientRect(); // [web:120]
+    const x = clamp(clientX - rect.left, 0, rect.width);
+    const pct = rect.width > 0 ? (x / rect.width) : 0;
+    const min = parseInt(slider.min || "0");
+    const max = parseInt(slider.max || "0");
+    const val = Math.round(min + pct * (max - min));
+    slider.value = String(val);
+    seekToSliderValue();
+  }
+
+  // aggiorna in continuo mentre trascini il thumb
+  slider.addEventListener('input', () => {
+    if (!scrubbing) seekToSliderValue();
   });
+
+  // click + drag ovunque sulla barra (stile YouTube) [web:126]
+  slider.addEventListener('pointerdown', (e) => {
+    scrubbing = true;
+    slider.setPointerCapture(e.pointerId);
+    lockMapInteractions(true);
+
+    setSliderFromClientX(e.clientX);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  slider.addEventListener('pointermove', (e) => {
+    if (!scrubbing) return;
+    setSliderFromClientX(e.clientX);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  function endScrub(e) {
+    if (!scrubbing) return;
+    scrubbing = false;
+    lockMapInteractions(false);
+    if (e) e.stopPropagation();
+  }
+
+  slider.addEventListener('pointerup', endScrub);
+  slider.addEventListener('pointercancel', endScrub);
+
+  // fallback anti-pan
+  slider.addEventListener('mousedown', (e) => e.stopPropagation());
+  slider.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
 
   btnLive.addEventListener('click', function () {
     goLive();
@@ -730,21 +811,17 @@ function enterReplayAtSecond(sec) {
 
   var tMs = sessionStartTimeMs + clampedSec * 1000;
 
-  // posizione
   var pos = getInterpolatedGpsAtTime(tMs);
   if (pos && mapMarker) {
     mapMarker.setLatLng([pos.lat, pos.lng]);
     currentMapPos = { lat: pos.lat, lng: pos.lng };
   }
 
-  // route
   updateProgressRouteToTime(tMs);
 
-  // bpm
   var bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
 
-  // speed/dist
   var distM = getDistanceAtTime(tMs);
   var spd = getSpeedAtTime(tMs);
   updateSpeedDistanceUI(spd, distM);
@@ -773,7 +850,7 @@ function goLive() {
 }
 
 // ==========================================
-// PARSING SENSOR_UPDATE (robusto)
+// PARSING sensor_update (robusto)
 // ==========================================
 function processIncomingData(data) {
   var str = (typeof data === 'object') ? JSON.stringify(data) : String(data);
@@ -886,7 +963,11 @@ function createSensorCard(name, data) {
 
 function updateSensorCardUI(name, data) {
   var card = document.querySelector(`[data-sensor="${name}"]`);
-  if (!card) { createSensorCard(name, data); updateSelector(); return; }
+  if (!card) {
+    createSensorCard(name, data);
+    updateSelector();
+    return;
+  }
 
   Object.keys(data).forEach(k => {
     var el = card.querySelector(`[data-key="${k}"]`);
@@ -905,7 +986,8 @@ function updateSelector() {
   sel.innerHTML = '<option value="">-- Seleziona sensore --</option>';
   names.forEach(n => {
     var opt = document.createElement('option');
-    opt.value = n; opt.textContent = n;
+    opt.value = n;
+    opt.textContent = n;
     sel.appendChild(opt);
   });
 
@@ -1030,31 +1112,55 @@ function initCharts() {
     cursor: { show: true, drag: { x: true, y: false } },
     scales: { x: { time: true }, y: { auto: true } },
     axes: [
-      { stroke: SENSORIA_GREEN, grid: { stroke: '#333' }, values: (u, vals) => vals.map(v => new Date(v * 1000).toLocaleTimeString()) },
+      {
+        stroke: SENSORIA_GREEN,
+        grid: { stroke: '#333' },
+        values: (u, vals) => vals.map(v => new Date(v * 1000).toLocaleTimeString())
+      },
       { stroke: SENSORIA_GREEN, grid: { stroke: '#333' }, size: 50 }
     ],
     plugins: [wheelZoomPlugin()]
   });
 
   var opts1 = commonOpts();
-  opts1.series = [{}, { label: 'X', stroke: '#ff6384', width: 2 }, { label: 'Y', stroke: '#36a2eb', width: 2 }, { label: 'Z', stroke: '#4bc0c0', width: 2 }];
+  opts1.series = [
+    {},
+    { label: 'X', stroke: '#ff6384', width: 2 },
+    { label: 'Y', stroke: '#36a2eb', width: 2 },
+    { label: 'Z', stroke: '#4bc0c0', width: 2 }
+  ];
   charts.accel = new uPlot(opts1, chartData.accel, accelDiv);
   addInteraction(charts.accel);
 
   var opts2 = commonOpts();
-  opts2.series = [{}, { label: 'X', stroke: '#ff9f40', width: 2 }, { label: 'Y', stroke: '#9966ff', width: 2 }, { label: 'Z', stroke: '#ffcd56', width: 2 }];
+  opts2.series = [
+    {},
+    { label: 'X', stroke: '#ff9f40', width: 2 },
+    { label: 'Y', stroke: '#9966ff', width: 2 },
+    { label: 'Z', stroke: '#ffcd56', width: 2 }
+  ];
   charts.gyro = new uPlot(opts2, chartData.gyro, gyroDiv);
   addInteraction(charts.gyro);
 
   var opts3 = commonOpts();
-  opts3.series = [{}, { label: 'X', stroke: '#c9cbcf', width: 2 }, { label: 'Y', stroke: '#4bc0c0', width: 2 }, { label: 'Z', stroke: '#ff6384', width: 2 }];
+  opts3.series = [
+    {},
+    { label: 'X', stroke: '#c9cbcf', width: 2 },
+    { label: 'Y', stroke: '#4bc0c0', width: 2 },
+    { label: 'Z', stroke: '#ff6384', width: 2 }
+  ];
   charts.mag = new uPlot(opts3, chartData.mag, magDiv);
   addInteraction(charts.mag);
 
   var opts4 = commonOpts();
   opts4.height = 250;
   opts4.scales.y = { auto: false, range: [0, 1024] };
-  opts4.series = [{}, { label: 'P0', stroke: '#ff6384', width: 3 }, { label: 'P1', stroke: '#36a2eb', width: 3 }, { label: 'P2', stroke: '#ffce56', width: 3 }];
+  opts4.series = [
+    {},
+    { label: 'P0', stroke: '#ff6384', width: 3 },
+    { label: 'P1', stroke: '#36a2eb', width: 3 },
+    { label: 'P2', stroke: '#ffce56', width: 3 }
+  ];
   charts.pressure = new uPlot(opts4, chartData.pressure, pressureDiv);
   addInteraction(charts.pressure);
 }
@@ -1085,7 +1191,208 @@ function addInteraction(u) {
 }
 
 // ==========================================
-// OPTIONAL: CLEAR (non reset UI per tua scelta)
+// PAST ACTIVITY LOADER (frontend)
+// ==========================================
+function initPastActivityLoader() {
+  const header = document.querySelector('.dashboard-info') ||
+                 document.querySelector('.dashboard-header') ||
+                 document.body;
+
+  if (document.getElementById('btn-load-activity')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'btn-load-activity';
+  btn.type = 'button';
+  btn.textContent = 'Carica attività passata';
+  btn.style.cssText = `
+    padding:8px 12px;
+    border-radius:10px;
+    border:1px solid rgba(151,201,62,0.8);
+    background: rgba(151,201,62,0.12);
+    color: ${SENSORIA_GREEN};
+    font-weight:800;
+    cursor:pointer;
+    white-space:nowrap;
+  `;
+
+  btn.addEventListener('click', openLogsModal);
+  header.appendChild(btn);
+}
+
+async function openLogsModal() {
+  const old = document.getElementById('logs-modal');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'logs-modal';
+  modal.style.cssText = `
+    position:fixed; inset:0; z-index:99999;
+    background: rgba(0,0,0,0.65);
+    display:flex; align-items:center; justify-content:center;
+    padding: 18px;
+  `;
+
+  modal.innerHTML = `
+    <div style="
+      width:min(620px, 96vw);
+      background:#111;
+      border:1px solid #333;
+      border-radius:14px;
+      box-shadow: 0 18px 48px rgba(0,0,0,0.65);
+      overflow:hidden;
+    ">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid #222;">
+        <div style="font-weight:900; color:#fff;">Carica attività passata</div>
+        <button id="logs-close" style="background:transparent; color:#fff; border:0; font-size:18px; cursor:pointer;">✕</button>
+      </div>
+
+      <div style="padding:14px 16px;">
+        <div id="logs-status" style="color:#aaa; font-size:12px; margin-bottom:10px;">Caricamento lista...</div>
+        <div id="logs-list" style="display:flex; flex-direction:column; gap:8px; max-height:55vh; overflow:auto;"></div>
+      </div>
+    </div>
+  `;
+
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+
+  const closeBtn = document.getElementById('logs-close');
+  closeBtn.onclick = () => modal.remove();
+
+  const status = document.getElementById('logs-status');
+  const list = document.getElementById('logs-list');
+
+  try {
+    const resp = await fetch('/api/logs');
+    const json = await resp.json();
+    const logs = (json && json.logs) ? json.logs : [];
+
+    status.textContent = logs.length ? 'Seleziona un log:' : 'Nessun log trovato.';
+    list.innerHTML = '';
+
+    logs.forEach(item => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.style.cssText = `
+        text-align:left;
+        padding:10px 12px;
+        border-radius:10px;
+        border:1px solid #2a2a2a;
+        background:#161616;
+        color:#fff;
+        cursor:pointer;
+      `;
+      const dt = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : '';
+      const kb = item.size != null ? Math.round(item.size / 1024) : '--';
+      row.innerHTML = `<div style="font-weight:800;">${item.name}</div>
+                       <div style="font-size:12px; color:#999; margin-top:2px;">${dt} • ${kb} KB</div>`;
+
+      row.onclick = async () => {
+        status.textContent = `Caricamento: ${item.name}...`;
+        await loadPastActivity(item.name);
+        modal.remove();
+      };
+
+      list.appendChild(row);
+    });
+  } catch (e) {
+    status.textContent = 'Errore nel caricamento lista log.';
+  }
+}
+
+async function loadPastActivity(logName) {
+  const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
+  const data = await resp.json();
+
+  gpsSamples = [];
+  bpmSamples = [];
+  sessionStartTimeMs = null;
+  sessionEndTimeMs = null;
+  isReplayMode = false;
+
+  const gps = Array.isArray(data.gps) ? data.gps : [];
+  gps.sort((a, b) => (a.t || a.timestamp || 0) - (b.t || b.timestamp || 0));
+
+  for (let i = 0; i < gps.length; i++) {
+    const lat = Number(gps[i].lat ?? gps[i].latitude);
+    const lng = Number(gps[i].lng ?? gps[i].longitude);
+    if (!isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) continue;
+
+    const tMs = gps[i].t != null ? Number(gps[i].t)
+              : (gps[i].timestamp ? new Date(gps[i].timestamp).getTime() : null);
+
+    if (tMs == null || !isFinite(tMs)) continue;
+    ensureSessionStart(tMs);
+
+    const acc = (gps[i].acc ?? gps[i].accuracy);
+    let cumDistM = 0;
+    let speedKmh = 0;
+
+    if (gpsSamples.length > 0) {
+      const prev = gpsSamples[gpsSamples.length - 1];
+      const dtS = Math.max(0, (tMs - prev.t) / 1000);
+
+      let dM = haversineMeters(prev.lat, prev.lng, lat, lng);
+      if (!isFinite(dM) || dM < 0.5) dM = 0;
+
+      cumDistM = (prev.cumDistM || 0) + dM;
+      if (dtS >= 0.3 && dM >= 1.0) speedKmh = (dM / dtS) * 3.6;
+      else speedKmh = prev.speedKmh || 0;
+    }
+
+    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
+  }
+
+  const bpm = Array.isArray(data.bpm) ? data.bpm : [];
+  bpm.sort((a, b) => (a.t || a.timestamp || 0) - (b.t || b.timestamp || 0));
+
+  for (let i = 0; i < bpm.length; i++) {
+    const bpmVal = parseInt(bpm[i].bpm ?? bpm[i].value ?? bpm[i]);
+    if (isNaN(bpmVal) || bpmVal <= 0) continue;
+
+    const tMs = bpm[i].t != null ? Number(bpm[i].t)
+              : (bpm[i].timestamp ? new Date(bpm[i].timestamp).getTime() : null);
+
+    if (tMs == null || !isFinite(tMs)) continue;
+    ensureSessionStart(tMs);
+
+    bpmSamples.push({ t: tMs, bpm: bpmVal });
+    lastLiveBpm = bpmVal;
+  }
+
+  if (sessionStartTimeMs != null) {
+    sessionEndTimeMs = getSessionEndMs();
+  }
+
+  if (gpsSamples.length) {
+    ensureMapInitialized(gpsSamples[0].lat, gpsSamples[0].lng);
+
+    const pts = gpsSamples.map(p => [p.lat, p.lng]);
+    fullRoute && fullRoute.setLatLngs(pts);
+    progressRoute && progressRoute.setLatLngs(pts);
+
+    const last = gpsSamples[gpsSamples.length - 1];
+    mapMarker && mapMarker.setLatLng([last.lat, last.lng]);
+    currentMapPos = { lat: last.lat, lng: last.lng };
+
+    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+  } else {
+    updateSpeedDistanceUI(null, null);
+  }
+
+  if (bpmSamples.length) {
+    updateBpmValue(bpmSamples[bpmSamples.length - 1].bpm);
+  } else {
+    updateBpmValue('--');
+  }
+
+  updateReplayUiBounds();
+  showReplayOverlayIfReady();
+  goLive();
+}
+
+// ==========================================
+// OPTIONAL: CLEAR API CLIENT
 // ==========================================
 function clearAllData() {
   if (confirm('Pulire tutto?')) fetch('/api/clear', { method: 'POST' });
