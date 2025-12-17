@@ -182,10 +182,9 @@ function ensureBpmExtrasUI() {
   const bpmBox = document.getElementById('bpm-display');
   if (!bpmBox) return;
 
-  // Assicura overlay sopra Leaflet
   ensureBpmOnTop();
 
-  // Wrapper colonna a destra (NON colorato)
+  // Wrapper colonna a destra (trasparente)
   let wrap = document.getElementById('metrics-stack');
   if (!wrap) {
     wrap = document.createElement('div');
@@ -199,88 +198,87 @@ function ensureBpmExtrasUI() {
       flex-direction:column;
       gap:10px;
       align-items:flex-end;
-      pointer-events:none; /* non blocca gesture sulla mappa */
+      pointer-events:none;
     `;
-
-    // Inseriscilo nel contenitore della mappa se esiste, altrimenti nel body
     const mapDiv = document.getElementById('map');
     (mapDiv || document.body).appendChild(wrap);
   }
 
-  // Sposta SOLO bpmBox dentro wrap (senza spostare i suoi figli)
+  // Aggancia BPM box al wrapper (senza modificarne i figli)
   if (bpmBox.parentElement !== wrap) {
     bpmBox.style.position = 'relative';
-    bpmBox.style.top = '';
-    bpmBox.style.right = '';
     bpmBox.style.margin = '0';
-    bpmBox.style.pointerEvents = 'auto'; // click/hover sul box bpm
-    bpmBox.style.width = '170px';
+    bpmBox.style.pointerEvents = 'auto';
+    bpmBox.style.width = '190px';
     bpmBox.style.minHeight = '64px';
     wrap.appendChild(bpmBox);
   }
 
-  // Uniforma stile BPM box (rosso) per match dimensioni
-  bpmBox.style.borderRadius = '12px';
-  bpmBox.style.boxSizing = 'border-box';
+  // Crea SPEED/DIST se non esistono
+  if (document.getElementById('speed-card')) return;
 
-  // Crea SPEED/DIST card (stesse dimensioni del bpmBox)
-  if (!document.getElementById('speed-card')) {
-    const cardCss = `
-      width:170px;
-      min-height:64px;
-      box-sizing:border-box;
-      border-radius:12px;
-      padding:10px 12px;
-      display:flex;
-      flex-direction:column;
-      justify-content:center;
-      gap:6px;
-      pointer-events:auto;
-      box-shadow: 0 10px 22px rgba(0,0,0,0.45);
-    `;
+  const cardBase = (borderColor) => `
+    width:190px;
+    min-height:64px;
+    box-sizing:border-box;
+    border-radius:12px;
+    padding:10px 12px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    pointer-events:auto;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid ${borderColor};
+    box-shadow: 0 10px 22px rgba(0,0,0,0.45);
+  `;
 
-    const iconCss = `width:14px;height:14px;display:inline-block;opacity:0.95;`;
+  function buildMetricCard({ id, emoji, label, labelColor, valueId, borderColor, unitText }) {
+    const card = document.createElement('div');
+    card.id = id;
+    card.style.cssText = cardBase(borderColor);
 
-    const speedCard = document.createElement('div');
-    speedCard.id = 'speed-card';
-    speedCard.style.cssText = cardCss + `
-      background: rgba(255, 149, 0, 0.22);
-      border: 1px solid rgba(255, 149, 0, 0.55);
-    `;
-    speedCard.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span style="${iconCss}">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="rgba(255,255,255,0.9)">
-            <path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.09z"/>
-          </svg>
-        </span>
-        <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.8);">VELOCITÀ</span>
+    card.innerHTML = `
+      <div style="font-size:26px; line-height:1; width:34px; text-align:center;">
+        ${emoji}
       </div>
-      <div id="speed-value" style="font-family:monospace; font-size:13px; font-weight:900; color:#fff;">-- km/h</div>
-    `;
 
-    const distCard = document.createElement('div');
-    distCard.id = 'dist-card';
-    distCard.style.cssText = cardCss + `
-      background: rgba(255, 214, 10, 0.18);
-      border: 1px solid rgba(255, 214, 10, 0.55);
-    `;
-    distCard.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span style="${iconCss}">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="rgba(255,255,255,0.9)">
-            <path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7.5A2.5 2.5 0 1 1 8 3.5a2.5 2.5 0 0 1 0 5z"/>
-          </svg>
-        </span>
-        <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.8);">DISTANZA</span>
+      <div style="flex:1; display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+        <div id="${valueId}" style="font-family:monospace; font-size:14px; font-weight:900; color:#fff;">
+          -- ${unitText}
+        </div>
+        <div style="font-size:10px; font-weight:900; letter-spacing:1px; color:${labelColor};">
+          ${label}
+        </div>
       </div>
-      <div id="distance-value" style="font-family:monospace; font-size:13px; font-weight:900; color:#fff;">-- km</div>
     `;
-
-    wrap.appendChild(speedCard);
-    wrap.appendChild(distCard);
+    return card;
   }
+
+  const speedCard = buildMetricCard({
+    id: 'speed-card',
+    emoji: '⚡',
+    label: 'VELOCITÀ',
+    labelColor: 'rgba(255, 149, 0, 0.95)',
+    valueId: 'speed-value',
+    borderColor: 'rgba(255, 149, 0, 0.70)',
+    unitText: 'km/h'
+  });
+
+  const distCard = buildMetricCard({
+    id: 'dist-card',
+    emoji: '📍',
+    label: 'DISTANZA',
+    labelColor: 'rgba(255, 214, 10, 0.95)',
+    valueId: 'distance-value',
+    borderColor: 'rgba(255, 214, 10, 0.70)',
+    unitText: 'km'
+  });
+
+  wrap.appendChild(speedCard);
+  wrap.appendChild(distCard);
 }
+
 
 
 function updateSpeedDistanceUI(speedKmh, distMeters) {
@@ -296,24 +294,17 @@ function updateBpmBox(val, isReplay) {
 
   div.style.display = 'flex';
   ensureBpmOnTop();
-  ensureBpmExtrasUI();
 
   var vEl = document.getElementById('bpm-value');
   if (vEl) vEl.textContent = String(val);
 
   var icon = div.querySelector('.heart-icon');
-  var bpmInt = parseInt(val);
-
   if (icon) {
-    if (!isReplay && !isNaN(bpmInt) && bpmInt > 0) {
-      var d = 60 / bpmInt;
-      if (d < 0.3) d = 0.3;
-      icon.style.animationDuration = d + 's';
-    } else {
-      icon.style.animationDuration = '0s';
-    }
+    icon.style.animation = 'none';
+    icon.style.animationDuration = '0s';
   }
 }
+
 
 // ==========================================
 // BPM (LIVE + TIMELINE)
