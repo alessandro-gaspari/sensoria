@@ -214,6 +214,24 @@ function ensureBpmExtrasUI() {
     wrap.appendChild(bpmBox);
   }
 
+  const CARD_W = '190px';
+  const CARD_H = '64px';
+
+  function forceCardBox(el) {
+    el.style.setProperty('width', CARD_W, 'important');
+    el.style.setProperty('min-height', CARD_H, 'important');
+    el.style.setProperty('height', CARD_H, 'important');
+    el.style.setProperty('box-sizing', 'border-box', 'important');
+    el.style.setProperty('padding', '10px 12px', 'important');
+    el.style.setProperty('display', 'flex', 'important');
+    el.style.setProperty('align-items', 'center', 'important');
+    el.style.setProperty('justify-content', 'space-between', 'important');
+    el.style.setProperty('overflow', 'hidden', 'important');
+  }
+
+  forceCardBox(bpmBox);
+
+
   // Crea SPEED/DIST se non esistono
   if (document.getElementById('speed-card')) return;
 
@@ -243,7 +261,7 @@ function ensureBpmExtrasUI() {
         ${emoji}
       </div>
 
-      <div style="flex:1; display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+      <div style="flex:1; display:flex; flex-direction:column; align-items:flex-start; gap:1px;">
         <div id="${valueId}" style="font-family:monospace; font-size:14px; font-weight:900; color:#fff;">
           -- ${unitText}
         </div>

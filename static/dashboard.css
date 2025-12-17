@@ -340,6 +340,19 @@
     gap: 12px;
 }
 
+/* DISABILITA QUALSIASI ANIMAZIONE NEL BOX BPM */
+#bpm-display .heart-icon,
+#bpm-display .heart-icon * {
+  animation: none !important;
+  transition: none !important;
+}
+
+#bpm-display .heart-icon::before,
+#bpm-display .heart-icon::after {
+  animation: none !important;
+}
+
+
 
 @keyframes pulse-green {
     0% {
