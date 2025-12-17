@@ -327,6 +327,19 @@
     box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
     animation: pulse-green 2s infinite;
 }
+/* Card BPM sul GPS */
+#bpm-display {
+    width: 190px;
+    min-height: 64px;
+    box-sizing: border-box;
+    border-radius: 12px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between; /* valore a destra del cuore */
+    gap: 12px;
+}
+
 
 @keyframes pulse-green {
     0% {
