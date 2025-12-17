@@ -351,6 +351,7 @@
 #bpm-display .heart-icon::after {
   animation: none !important;
 }
+#bpm-display { display: none !important; }
 
 
 
