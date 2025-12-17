@@ -16,6 +16,7 @@ var sensors = {};
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
+var mapRotationDeg = 0;
 
 // Route layers
 var fullRoute = null;      // cresce sempre con i GPS ricevuti
@@ -183,16 +184,39 @@ function ensureBpmExtrasUI() {
 
   ensureBpmOnTop();
 
-  if (document.getElementById('speed-card')) return;
+  // se già creato, esci
+  if (document.getElementById('bpm-stack-wrap')) return;
 
+  // wrapper colonna (BPM + SPEED + DIST)
   const wrap = document.createElement('div');
-  wrap.id = 'bpm-metrics-wrap';
+  wrap.id = 'bpm-stack-wrap';
   wrap.style.cssText = `
-    margin-top:10px;
     display:flex;
-    gap:10px;
-    width:100%;
+    flex-direction:column;
+    gap:8px;
   `;
+
+  // ====== CARD BPM (rossa) ======
+  const bpmCard = document.createElement('div');
+  bpmCard.id = 'bpm-card';
+  bpmCard.style.cssText = `
+    padding:10px 14px;
+    border-radius:12px;
+    background: rgba(255, 65, 54, 0.22);
+    border: 1px solid rgba(255, 65, 54, 0.7);
+    box-shadow: 0 10px 22px rgba(0,0,0,0.45);
+    display:flex;
+    align-items:center;
+    gap:10px;
+  `;
+
+  // Sposto contenuto BPM esistente dentro la card
+  while (box.firstChild) {
+    const child = box.firstChild;
+    // tieni fuori solo il wrapper stesso se già presente (non dovrebbe)
+    bpmCard.appendChild(child);
+  }
+  wrap.appendChild(bpmCard);
 
   const iconCss = `
     width:14px; height:14px;
@@ -202,12 +226,11 @@ function ensureBpmExtrasUI() {
     opacity:0.95;
   `;
 
-  // SPEED CARD (arancione) + icona fulmine
+  // ====== CARD SPEED (arancione) ======
   const speedCard = document.createElement('div');
   speedCard.id = 'speed-card';
   speedCard.style.cssText = `
-    flex:1;
-    padding:10px 12px;
+    padding:8px 12px;
     border-radius:10px;
     background: rgba(255, 149, 0, 0.22);
     border: 1px solid rgba(255, 149, 0, 0.55);
@@ -216,26 +239,25 @@ function ensureBpmExtrasUI() {
   speedCard.innerHTML = `
     <div style="display:flex; align-items:center; gap:6px;">
       <span style="${iconCss}">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="rgba(255,255,255,0.85)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"
+             width="14" height="14" fill="rgba(255,255,255,0.9)">
           <path d="M11.251.068a.5.5 0 0 1 .227.58L9.677 6.5H13a.5.5 0 0 1 .364.843l-8 8.5a.5.5 0 0 1-.842-.49L6.323 9.5H3a.5.5 0 0 1-.364-.843l8-8.5a.5.5 0 0 1 .615-.09z"/>
         </svg>
       </span>
-      <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.75);">
+      <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.8);">
         SPEED
       </span>
     </div>
-
-    <div id="speed-value" style="margin-top:6px; font-family:monospace; font-size:14px; font-weight:900; color:#fff;">
+    <div id="speed-value" style="margin-top:4px; font-family:monospace; font-size:13px; font-weight:900; color:#fff;">
       -- km/h
     </div>
   `;
 
-  // DIST CARD (gialla) + icona pin
+  // ====== CARD DIST (gialla) ======
   const distCard = document.createElement('div');
   distCard.id = 'dist-card';
   distCard.style.cssText = `
-    flex:1;
-    padding:10px 12px;
+    padding:8px 12px;
     border-radius:10px;
     background: rgba(255, 214, 10, 0.18);
     border: 1px solid rgba(255, 214, 10, 0.55);
@@ -244,24 +266,27 @@ function ensureBpmExtrasUI() {
   distCard.innerHTML = `
     <div style="display:flex; align-items:center; gap:6px;">
       <span style="${iconCss}">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="14" height="14" fill="rgba(255,255,255,0.85)">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"
+             width="14" height="14" fill="rgba(255,255,255,0.9)">
           <path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7.5A2.5 2.5 0 1 1 8 3.5a2.5 2.5 0 0 1 0 5z"/>
         </svg>
       </span>
-      <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.75);">
+      <span style="font-size:10px; letter-spacing:1px; font-weight:800; color: rgba(255,255,255,0.8);">
         DIST
       </span>
     </div>
-
-    <div id="distance-value" style="margin-top:6px; font-family:monospace; font-size:14px; font-weight:900; color:#fff;">
+    <div id="distance-value" style="margin-top:4px; font-family:monospace; font-size:13px; font-weight:900; color:#fff;">
       -- km
     </div>
   `;
 
   wrap.appendChild(speedCard);
   wrap.appendChild(distCard);
+
+  // rimonta nel box BPM
   box.appendChild(wrap);
 }
+
 
 
 
@@ -387,6 +412,47 @@ function ensureMapDomOverlay() {
   mapDiv.style.position = 'relative';
 }
 
+function createRotateControl() {
+  const mapDiv = document.getElementById('map');
+  if (!mapDiv) return;
+  if (document.getElementById('rotate-btn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'rotate-btn';
+  btn.innerHTML = '⤾';
+  btn.title = 'Ruota mappa';
+  btn.style.cssText = `
+    position:absolute;
+    top:56px;
+    left:10px;
+    width:28px;
+    height:28px;
+    border-radius:4px;
+    border:none;
+    background: rgba(0,0,0,0.7);
+    color:#fff;
+    font-size:16px;
+    line-height:1;
+    cursor:pointer;
+    z-index: 20000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  `;
+
+  btn.addEventListener('click', () => {
+    // toggle 0° / 90° (puoi cambiare step a 45° o 180°)
+    mapRotationDeg = (mapRotationDeg + 90) % 360;
+    const outer = mapDiv.closest('.map-outer') || mapDiv;
+    outer.style.transformOrigin = '50% 50%';
+    outer.style.transition = 'transform 0.25s ease-out';
+    outer.style.transform = `rotate(${mapRotationDeg}deg)`;
+    setTimeout(() => map.invalidateSize(), 300);
+  });
+
+  mapDiv.appendChild(btn);
+}
+
 function ensureMapInitialized(lat, lng) {
   if (isMapInitialized) return;
 
@@ -402,6 +468,8 @@ function ensureMapInitialized(lat, lng) {
   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 20
   }).addTo(map);
+
+  createRotateControl();
 
   // PANE route + marker (ordine stabile) [web:21][web:29]
   map.createPane('routePane');
