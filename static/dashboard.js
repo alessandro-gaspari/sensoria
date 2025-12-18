@@ -334,8 +334,10 @@ function onBpmUpdate(val) {
 
 // --- Variabili di stato globali (fuori dalla funzione) ---
 var speedWindow = []; 
+const EMA_ALPHA = 0.3;
 var lastSpeedCalcPos = null; // Tempo di ricezione dell'ultimo pacchetto GPS
-const MAX_SPEED_PATTINAGGIO = 70; 
+const MAX_SPEED_PATTINAGGIO = 75; 
+var currentSmoothedSpeed = 0;
 
 function onGpsUpdate(data) {
   if (!data) return;
@@ -354,36 +356,32 @@ function onGpsUpdate(data) {
   if (gpsSamples.length > 0) {
     const prev = gpsSamples[gpsSamples.length - 1];
     
-    // --- CALCOLO DISTANZA (Più sensibile per evitare di "mangiare" metri) ---
+    // --- DISTANZA (Soglia minima bassissima per precisione totale) ---
     let dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-    
-    // Soglia minima bassa (0.5m) per non perdere la distanza reale
-    if (isFinite(dM_step) && dM_step > 0.5 && (acc === null || acc < 30)) {
+    if (isFinite(dM_step) && dM_step > 0.3 && (acc === null || acc < 35)) {
       cumDistM = (prev.cumDistM || 0) + dM_step;
     } else {
       cumDistM = prev.cumDistM || 0;
     }
 
-    // --- CALCOLO VELOCITÀ (Stabilizzata su finestra di 2 secondi) ---
-    if (!lastSpeedCalcPos) {
-      lastSpeedCalcPos = { lat: lat, lng: lng, t: tMs };
+    // --- VELOCITÀ SMOOTH (Logica Strava) ---
+    if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
+    let dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
+
+    if (dtS_win >= 1.2) { // Calcolo ogni 1.2s per stabilità
+      let dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
+      let rawSpeed = (dM_win / dtS_win) * 3.6;
+
+      if (rawSpeed < MAX_SPEED_PATTINAGGIO) {
+        // Auto-pause: se vai a meno di 1km/h, sei fermo
+        let targetSpeed = (rawSpeed < 1.0) ? 0 : rawSpeed;
+        
+        // Esponential Moving Average (EMA)
+        currentSmoothedSpeed = (targetSpeed * EMA_ALPHA) + (currentSmoothedSpeed * (1 - EMA_ALPHA));
+      }
+      lastSpeedCalcPos = { lat, lng, t: tMs };
     }
-
-    let dtS_window = (tMs - lastSpeedCalcPos.t) / 1000;
-
-    if (dtS_window >= 2.0) { // Calcolo serio ogni 2 secondi
-      let dM_window = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
-      let rawSpeed = (dM_window / dtS_window) * 3.6;
-
-      // Filtro di verosimiglianza
-      speedKmh = (rawSpeed < MAX_SPEED_PATTINAGGIO) ? rawSpeed : (prev.speedKmh || 0);
-      
-      // Aggiorna riferimento
-      lastSpeedCalcPos = { lat: lat, lng: lng, t: tMs };
-    } else {
-      // Mantieni l'ultima velocità tra un calcolo e l'altro
-      speedKmh = prev.speedKmh || 0;
-    }
+    speedKmh = currentSmoothedSpeed;
   }
 
   gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
@@ -408,8 +406,6 @@ function onGpsUpdate(data) {
     showReplayOverlayIfReady();
   }
 }
-
-
 
 // ==========================================
 // MAP INIT + PANES
@@ -1356,7 +1352,8 @@ async function loadPastActivity(logName) {
 
   gpsSamples = [];
   bpmSamples = [];
-  lastSpeedCalcPos = null; // Reset riferimento velocità
+  lastSpeedCalcPos = null;
+  currentSmoothedSpeed = 0; // Reset smoothing per il nuovo log
   sessionStartTimeMs = null;
   sessionEndTimeMs = null;
   isReplayMode = false;
@@ -1386,32 +1383,32 @@ async function loadPastActivity(logName) {
     if (gpsSamples.length > 0) {
       const prev = gpsSamples[gpsSamples.length - 1];
       
-      // Distanza (Soglia bassa 0.5m per precisione totale)
+      // Distanza (0.3m per non perdere nulla nei log)
       let dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-      if (dM_step > 0.5 && (acc == null || acc < 30)) {
+      if (dM_step > 0.3 && (acc == null || acc < 35)) {
         cumDistM = (prev.cumDistM || 0) + dM_step;
       } else {
         cumDistM = prev.cumDistM || 0;
       }
 
-      // Velocità (Finestra 2s)
+      // Velocità Smooth (Finestra 1.2s + EMA)
       if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
       let dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
 
-      if (dtS_win >= 2.0) {
+      if (dtS_win >= 1.2) {
         let dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
         let raw = (dM_win / dtS_win) * 3.6;
-        speedKmh = raw < MAX_SPEED_PATTINAGGIO ? raw : (prev.speedKmh || 0);
+        let target = (raw < 1.0 || raw > MAX_SPEED_PATTINAGGIO) ? 0 : raw;
+        currentSmoothedSpeed = (target * EMA_ALPHA) + (currentSmoothedSpeed * (1 - EMA_ALPHA));
         lastSpeedCalcPos = { lat, lng, t: tMs };
-      } else {
-        speedKmh = prev.speedKmh || 0;
       }
+      speedKmh = currentSmoothedSpeed;
     }
 
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
   }
 
-  // --- Elaborazione BPM ---
+  // --- BPM ---
   const bpm = Array.isArray(data.bpm) ? data.bpm : [];
   bpm.forEach(b => {
     const val = parseInt(b.bpm ?? b.value ?? b);
@@ -1419,7 +1416,7 @@ async function loadPastActivity(logName) {
     if (!isNaN(val) && tBpm) bpmSamples.push({ t: tBpm, bpm: val });
   });
 
-  // --- Finalizzazione ---
+  // --- UI Finalize ---
   if (gpsSamples.length) {
     ensureMapInitialized(gpsSamples[0].lat, gpsSamples[0].lng);
     const pts = gpsSamples.map(p => [p.lat, p.lng]);
@@ -1433,6 +1430,7 @@ async function loadPastActivity(logName) {
   showReplayOverlayIfReady();
   goLive();
 }
+
 
 // ==========================================
 // OPTIONAL: CLEAR API CLIENT
