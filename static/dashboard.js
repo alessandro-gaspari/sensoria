@@ -1362,94 +1362,129 @@ async function openLogsModal() {
   }
 }
 
-async function loadPastActivity(filename) {
-  try {
-    const resp = await fetch(`/api/logs/${filename}`);
-    const data = await resp.json();
-    const rows = Array.isArray(data) ? data : (data.rows || []);
+async function loadPastActivity(logName) {
+  // 1. Chiamata API originale mantenuta
+  const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
+  const data = await resp.json();
 
-    // Reset sessione
-    gpsSamples = [];
-    bpmSamples = [];
-    speedWindow = []; // Svuota la finestra dei filtri
-    sessionStartTimeMs = null;
-    sessionEndTimeMs = null;
-    
-    if (fullRoute) fullRoute.setLatLngs([]);
-    if (progressRoute) progressRoute.setLatLngs([]);
+  // Reset variabili e filtri
+  gpsSamples = [];
+  bpmSamples = [];
+  speedWindow = []; // Reset della media mobile
+  sessionStartTimeMs = null;
+  sessionEndTimeMs = null;
+  isReplayMode = false;
 
-    // Ordina per timestamp per sicurezza
-    rows.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  // --- ELABORAZIONE GPS ---
+  const gps = Array.isArray(data.gps) ? data.gps : [];
+  // Ordinamento temporale robusto
+  gps.sort((a, b) => {
+    const ta = a.t ?? (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+    const tb = b.t ?? (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+    return ta - tb;
+  });
 
-    rows.forEach(row => {
-      const tMs = new Date(row.timestamp).getTime();
-      ensureSessionStart(tMs);
+  for (let i = 0; i < gps.length; i++) {
+    const lat = Number(gps[i].lat ?? gps[i].latitude);
+    const lng = Number(gps[i].lng ?? gps[i].longitude);
+    if (!isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) continue;
 
-      // --- Gestione BPM ---
-      if (row.bpm) {
-        bpmSamples.push({ t: tMs, bpm: parseInt(row.bpm) });
-      }
+    const tMs = gps[i].t != null ? Number(gps[i].t)
+              : (gps[i].timestamp ? new Date(gps[i].timestamp).getTime() : null);
 
-      // --- Gestione GPS (con filtro velocità integrato) ---
-      if (row.sensor_name === "GPS Telefono" || (row.latitude && row.longitude)) {
-        const lat = Number(row.latitude);
-        const lng = Number(row.longitude);
-        const acc = Number(row.accuracy || 0);
+    if (tMs == null || !isFinite(tMs)) continue;
+    ensureSessionStart(tMs);
 
-        if (isFinite(lat) && isFinite(lng) && lat !== 0) {
-          let cumDistM = 0;
-          let speedKmh = 0;
+    const acc = (gps[i].acc ?? gps[i].accuracy);
+    let cumDistM = 0;
+    let speedKmh = 0;
 
-          if (gpsSamples.length > 0) {
-            const prev = gpsSamples[gpsSamples.length - 1];
-            const dtS = (tMs - prev.t) / 1000;
-            let dM = haversineMeters(prev.lat, prev.lng, lat, lng);
-
-            // Filtro per dati storici: ignora balzi dovuti a scarsa precisione
-            const isAccurate = acc < 25; 
-            if (dM < 2.0 || !isAccurate) dM = 0;
-
-            cumDistM = (prev.cumDistM || 0) + dM;
-
-            // Calcolo velocità media (finestra di 3 per il replay)
-            if (dtS > 0.4 && dM > 0) {
-              let instantSpeed = (dM / dtS) * 3.6;
-              speedWindow.push(instantSpeed);
-              if (speedWindow.length > 3) speedWindow.shift();
-              
-              let avg = speedWindow.reduce((a, b) => a + b) / speedWindow.length;
-              speedKmh = avg < MAX_SPEED_PATTINAGGIO ? avg : (prev.speedKmh || 0);
-            } else {
-              speedKmh = prev.speedKmh || 0;
-            }
-          }
-
-          gpsSamples.push({ t: tMs, lat: lat, lng: lng, acc: acc, cumDistM: cumDistM, speedKmh: speedKmh });
-          if (fullRoute) fullRoute.addLatLng([lat, lng]);
-        }
-      }
-    });
-
-    // Finalizza UI
     if (gpsSamples.length > 0) {
-      const first = gpsSamples[0];
-      const last = gpsSamples[gpsSamples.length - 1];
+      const prev = gpsSamples[gpsSamples.length - 1];
+      const dtS = Math.max(0, (tMs - prev.t) / 1000);
+
+      let dM = haversineMeters(prev.lat, prev.lng, lat, lng);
       
-      ensureMapInitialized(first.lat, first.lng);
-      map.fitBounds(fullRoute.getBounds(), { padding: [30, 30] });
-      
-      // Imposta replay all'inizio dell'attività
-      enterReplayAtSecond(0);
-      updateReplayUiBounds();
-      showReplayOverlayIfReady();
+      // FILTRO ANTI-RUMORE: ignora micro-movimenti e fix imprecisi
+      const isAccurate = acc == null || acc < 25;
+      if (!isFinite(dM) || dM < 2.0 || !isAccurate) dM = 0;
+
+      cumDistM = (prev.cumDistM || 0) + dM;
+
+      // CALCOLO VELOCITÀ FILTRATA (Media Mobile su 3 campioni)
+      if (dtS >= 0.5 && dM > 0) {
+        let instantSpeed = (dM / dtS) * 3.6;
+        
+        speedWindow.push(instantSpeed);
+        if (speedWindow.length > 3) speedWindow.shift();
+        
+        let avg = speedWindow.reduce((a, b) => a + b) / speedWindow.length;
+        
+        // Cap di sicurezza per pattinaggio (70 km/h)
+        speedKmh = avg < 70 ? avg : (prev.speedKmh || 0);
+      } else {
+        speedKmh = prev.speedKmh || 0;
+      }
     }
 
-    console.log(`Log caricato: ${gpsSamples.length} punti GPS, ${bpmSamples.length} campioni BPM.`);
-
-  } catch (err) {
-    console.error("Errore nel caricamento attività:", err);
-    alert("Impossibile caricare il file log.");
+    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
   }
+
+  // --- ELABORAZIONE BPM ---
+  const bpm = Array.isArray(data.bpm) ? data.bpm : [];
+  bpm.sort((a, b) => {
+    const ta = a.t ?? (a.timestamp ? new Date(a.timestamp).getTime() : 0);
+    const tb = b.t ?? (b.timestamp ? new Date(b.timestamp).getTime() : 0);
+    return ta - tb;
+  });
+
+  for (let i = 0; i < bpm.length; i++) {
+    const bpmVal = parseInt(bpm[i].bpm ?? bpm[i].value ?? bpm[i]);
+    if (isNaN(bpmVal) || bpmVal <= 0) continue;
+
+    const tMs = bpm[i].t != null ? Number(bpm[i].t)
+              : (bpm[i].timestamp ? new Date(bpm[i].timestamp).getTime() : null);
+
+    if (tMs == null || !isFinite(tMs)) continue;
+    ensureSessionStart(tMs);
+
+    bpmSamples.push({ t: tMs, bpm: bpmVal });
+    lastLiveBpm = bpmVal;
+  }
+
+  // --- FINALIZZAZIONE UI ---
+  if (sessionStartTimeMs != null) {
+    sessionEndTimeMs = getSessionEndMs();
+  }
+
+  if (gpsSamples.length) {
+    ensureMapInitialized(gpsSamples[0].lat, gpsSamples[0].lng);
+
+    const pts = gpsSamples.map(p => [p.lat, p.lng]);
+    fullRoute && fullRoute.setLatLngs(pts);
+    progressRoute && progressRoute.setLatLngs(pts);
+
+    const last = gpsSamples[gpsSamples.length - 1];
+    mapMarker && mapMarker.setLatLng([last.lat, last.lng]);
+    currentMapPos = { lat: last.lat, lng: last.lng };
+
+    // Zoom automatico sul percorso caricato
+    if (fullRoute) map.fitBounds(fullRoute.getBounds(), { padding: [40, 40] });
+
+    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+  } else {
+    updateSpeedDistanceUI(null, null);
+  }
+
+  if (bpmSamples.length) {
+    updateBpmValue(bpmSamples[bpmSamples.length - 1].bpm);
+  } else {
+    updateBpmValue('--');
+  }
+
+  updateReplayUiBounds();
+  showReplayOverlayIfReady();
+  goLive();
 }
 
 // ==========================================
