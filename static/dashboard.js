@@ -77,22 +77,39 @@ var sockChartData = {
 
 // Funzione per inizializzare i grafici dei calzini
 function initSockCharts() {
-    const commonOpts = (color) => ({
-        width: document.getElementById('pressure-left-chart').offsetWidth,
-        height: 150,
+    // ID corretti che abbiamo messo nell'ultimo HTML
+    const leftEl = document.getElementById('chart-left-p');
+    const rightEl = document.getElementById('chart-right-p');
+
+    // Se i div non esistono ancora, esci senza rompere il caricamento
+    if (!leftEl || !rightEl) {
+        console.warn("Contenitori grafici calzini non trovati nell'HTML!");
+        return;
+    }
+
+    const commonOpts = (container, color) => ({
+        width: container.offsetWidth || 300, // Fallback se offsetWidth è 0
+        height: 120,
         scales: { x: { time: true }, y: { auto: false, range: [0, 1024] } },
         series: [
             {},
-            { label: 'P0', stroke: color, width: 2 },
-            { label: 'P1', stroke: color, width: 2, dash: [5, 5] },
-            { label: 'P2', stroke: color, width: 2, dash: [2, 2] }
+            { stroke: color, width: 2 },
+            { stroke: color, width: 2, dash: [5, 5] },
+            { stroke: color, width: 2, dash: [2, 2] }
         ],
-        axes: [{ show: false }, { stroke: "#666", size: 30 }]
+        axes: [{ show: false }, { show: false }],
+        cursor: { show: false }
     });
 
-    sockCharts.left = new uPlot(commonOpts('#ff6384'), sockChartData.left, document.getElementById('pressure-left-chart'));
-    sockCharts.right = new uPlot(commonOpts('#36a2eb'), sockChartData.right, document.getElementById('pressure-right-chart'));
+    // Inizializza solo se non sono già stati creati
+    if (!sockCharts.left) {
+        sockCharts.left = new uPlot(commonOpts(leftEl, '#ff6384'), sockChartData.left, leftEl);
+    }
+    if (!sockCharts.right) {
+        sockCharts.right = new uPlot(commonOpts(rightEl, '#36a2eb'), sockChartData.right, rightEl);
+    }
 }
+
 
 // Aggiorna UI Calzini (Chiamala da processIncomingData e enterReplayAtSecond)
 function updateSocksAnalysisUI(side, data, bi) {
