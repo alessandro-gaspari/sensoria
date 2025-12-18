@@ -446,11 +446,28 @@ function onBpmUpdate(val) {
 // --- Variabili di stato per i filtri (mettile fuori dalla funzione) ---
 
 // --- Assicurati che queste siano definite in alto nel file ---
-var lastSpeedCalcPos = null; 
-var currentSmoothedSpeed = 0; 
-const EMA_ALPHA = 0.35;
-const MAX_SPEED_PATTINAGGIO = 75;
+const MIN_DT = 0.8;              // s
+const MAX_DT = 2.5;              // s
+const MIN_DIST = 0.8;            // m (taglio rumore GPS)
+const MAX_ACC = 20;              // m (accuracy max accettata)
+const EMA_ALPHA = 0.15;          // Strava-like
+const MAX_ACCEL = 6;             // m/s² (salti fisicamente impossibili)
+let lastFix = null;
+let lastSpeed = 0;
+let smoothSpeed = 0;
+let totalDistance = 0;
 
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 /**
  * Pipeline GPS Professionale (Stile Strava/Garmin)
  * 1. Filtro Accuracy Pesato
@@ -458,83 +475,56 @@ const MAX_SPEED_PATTINAGGIO = 75;
  * 3. Derivata Temporale Coerente (Dist/Tempo sulla stessa finestra)
  * 4. Smoothing Temporale (EMA)
  */
-function onGpsUpdate(data) {
-  const lat = data.latitude;
-  const lng = data.longitude;
-  const acc = data.accuracy || 10;
-  const tMs = data.t || (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
+function onGpsUpdate({ lat, lng, timestamp, accuracy }) {
+  const t = timestamp ? new Date(timestamp).getTime() : Date.now();
 
-  // Inizializzazione sessione e mappa
-  ensureSessionStart(tMs);
-  ensureMapInitialized(lat, lng);
-
-  const prev = gpsSamples.length > 0 ? gpsSamples[gpsSamples.length - 1] : null;
-  
-  if (!prev) {
-    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speed: 0 });
-    lastSpeedCalcPos = { lat, lng, t: tMs };
+  if (!lastFix) {
+    lastFix = { lat, lng, t };
     return;
   }
 
-  // 1. CLAMP DEL DELTA TEMPO (Evita salti temporali del backend/BLE)
-  let dtS = (tMs - prev.t) / 1000;
-  if (dtS <= 0) return; // Salta campioni duplicati o fuori ordine
-  dtS = Math.min(dtS, 5.0); // Se passa troppo tempo (es. tunnel), limita a 5s
-
-  // 2. FILTRO ACCURACY PESATO E SOGLIA RUMORE
-  const dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-  
-  // Applichiamo la soglia di 0.8m per eliminare il rumore da fermo (Zitter)
-  // E scartiamo se l'accuratezza è pessima (> 25m)
-  let validDist = 0;
-  if (dM_step > 0.8 && acc < 25) {
-      // Peso l'accuratezza: se acc è alta, riduco il contributo (smoothing spaziale)
-      const accWeight = acc < 10 ? 1 : (acc < 20 ? 0.5 : 0.2);
-      validDist = dM_step * accWeight;
+  let dt = (t - lastFix.t) / 1000;
+  if (dt < MIN_DT || dt > MAX_DT) {
+    lastFix = { lat, lng, t };
+    return;
   }
 
-  // 3. AGGIORNAMENTO DISTANZA CUMULATIVA
-  const newCumDistM = prev.cumDistM + validDist;
-  
-  // 4. CALCOLO VELOCITÀ SULLA STESSA FINESTRA (Coerenza Totale)
-  // Usiamo una finestra di ~1.5s per evitare fluttuazioni eccessive
-  const dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
-  
-  if (dtS_win >= 1.5) {
-    const dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
-    
-    // Filtro di plausibilità sulla finestra
-    let rawSpeed = 0;
-    if (dM_win > 1.2) { // Soglia minima di movimento nella finestra
-       rawSpeed = (dM_win / dtS_win) * 3.6;
-    }
-
-    // Limite umano corsa (40 km/h) per evitare picchi GPS (jump)
-    rawSpeed = Math.min(rawSpeed, 40.0);
-
-    // 5. SMOOTHING TEMPORALE (EMA)
-    // Alpha più alto (0.35) per essere reattivi ma stabili
-    const ALPHA = 0.35;
-    currentSmoothedSpeed = (rawSpeed * ALPHA) + (currentSmoothedSpeed * (1 - ALPHA));
-    
-    // Aggiorno il punto di riferimento per la prossima finestra
-    lastSpeedCalcPos = { lat, lng, t: tMs };
+  if (accuracy == null || accuracy > MAX_ACC) {
+    lastFix = { lat, lng, t };
+    return;
   }
 
-  // Salvo il campione con i dati processati
-  gpsSamples.push({
-    t: tMs,
-    lat,
-    lng,
-    acc,
-    cumDistM: newCumDistM,
-    speed: currentSmoothedSpeed
-  });
-
-  // Aggiorno la UI (solo se non siamo in Replay mode)
-  if (!isReplayActive) {
-    updateDashboardUI(currentSmoothedSpeed, newCumDistM, lat, lng);
+  const d = haversineMeters(lastFix.lat, lastFix.lng, lat, lng);
+  if (d < MIN_DIST) {
+    lastFix = { lat, lng, t };
+    return;
   }
+
+  // velocità istantanea
+  let speed = d / dt; // m/s
+
+  // clamp accelerazione fisica
+  const dv = speed - lastSpeed;
+  const maxDv = MAX_ACCEL * dt;
+  speed = lastSpeed + Math.max(-maxDv, Math.min(maxDv, dv));
+
+  // EMA
+  smoothSpeed = smoothSpeed
+    ? EMA_ALPHA * speed + (1 - EMA_ALPHA) * smoothSpeed
+    : speed;
+
+  // distanza coerente con la velocità
+  totalDistance += d;
+
+  lastSpeed = speed;
+  lastFix = { lat, lng, t };
+
+  // OUTPUT
+  return {
+    speed_mps: smoothSpeed,
+    speed_kmh: smoothSpeed * 3.6,
+    distance_m: totalDistance
+  };
 }
 
 function updateDashboardUI(speed, distM, lat, lng) {
