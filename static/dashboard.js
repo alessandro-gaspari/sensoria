@@ -140,37 +140,36 @@ function calculateBI(payload) {
 function updateSocksUI(side, data, bi) {
     const prefix = side === 'left' ? 'l' : 'r';
     
-    // 1. Aggiorna Numeri e BI
-    document.getElementById(`bi-val-${side}`).textContent = `BI: ${bi.toFixed(1)}%`;
-    document.getElementById(`${prefix}-p0`).textContent = Math.round(data.pressure_0);
-    document.getElementById(`${prefix}-p1`).textContent = Math.round(data.pressure_1);
-    document.getElementById(`${prefix}-p2`).textContent = Math.round(data.pressure_2);
-
-    // 2. Inizializza grafici se mancano
-    if (!sockCharts[side]) {
-        const container = document.getElementById(`chart-${side}-p`);
-        const color = side === 'left' ? '#ff6384' : '#36a2eb';
-        sockCharts[side] = new uPlot({
-            width: container.offsetWidth,
-            height: 120,
-            scales: { x: { time: true }, y: { auto: false, range: [0, 1024] } },
-            series: [{}, { stroke: color, width: 2 }, { stroke: color, width: 2, dash:[5,5] }, { stroke: color, width: 2, dash:[2,2] }],
-            axes: [{show: false}, {show: false}],
-            cursor: {show: false}
-        }, sockChartData[side], container);
+    // 1. Aggiorna BI
+    const biEl = document.getElementById(`bi-val-${side}`);
+    if (biEl) {
+        biEl.textContent = `BI: ${bi.toFixed(1)}%`;
+        biEl.style.color = bi > 40 ? '#ff4444' : SENSORIA_GREEN;
     }
 
-    // 3. Aggiorna Dati Grafico (per reattività)
-    const d = sockChartData[side];
-    const timestamp = Date.now() / 1000;
-    d[0].push(timestamp);
-    d[1].push(data.pressure_0);
-    d[2].push(data.pressure_1);
-    d[3].push(data.pressure_2);
-    
-    if (d[0].length > 100) d.forEach(a => a.shift());
-    sockCharts[side].setData(d);
+    // 2. Aggiorna Numeri (Gestione p0 vs pressure_0)
+    const val0 = data.p0 ?? data.pressure_0 ?? 0;
+    const val1 = data.p1 ?? data.pressure_1 ?? 0;
+    const val2 = data.p2 ?? data.pressure_2 ?? 0;
+
+    const el0 = document.getElementById(`${prefix}-p0`);
+    const el1 = document.getElementById(`${prefix}-p1`);
+    const el2 = document.getElementById(`${prefix}-p2`);
+
+    if (el0) el0.textContent = Math.round(val0);
+    if (el1) el1.textContent = Math.round(val1);
+    if (el2) el2.textContent = Math.round(val2);
+
+    // 3. Update Grafico Live
+    if (!isReplayMode && sockCharts[side]) {
+        const d = sockChartData[side];
+        const tRel = (Date.now() - sessionStartTimeMs) / 1000;
+        d[0].push(tRel); d[1].push(val0); d[2].push(val1); d[3].push(val2);
+        if (d[0].length > 100) d.forEach(a => a.shift());
+        sockCharts[side].setData(d);
+    }
 }
+
 
 // ==========================================
 // INIZIALIZZAZIONE
@@ -1065,36 +1064,36 @@ function goLive() {
 // PARSING sensor_update (robusto)
 // ==========================================
 function processIncomingData(data) {
-  var payload = (typeof data === 'object') ? (data.data || data) : null;
-  if (!payload && typeof data === 'string') {
-     try { payload = JSON.parse(data); } catch(e) { return; }
-  }
-
-  if (payload && payload.sensor_name) {
-    const name = payload.sensor_name.toLowerCase();
-    const tMs = getNowMs();
+  var payload = (typeof data === 'object') ? (data.data || data) : data;
+  
+  if (payload && (payload.sensor_name || payload.name)) {
+    const name = (payload.sensor_name || payload.name).toLowerCase();
+    const tMs = Date.now();
     ensureSessionStart(tMs);
 
-    // Gestione Calzino Sinistro
-    if (name.includes("calzino sx") || name.includes("sock left")) {
-        const bi = calculateBI(payload);
-        const sample = { t: tMs, p0: payload.pressure_0, p1: payload.pressure_1, p2: payload.pressure_2, bi: bi };
-        leftSockSamples.push(sample);
-        if (!isReplayMode) updateSocksUI('left', payload, bi);
-    } 
-    // Gestione Calzino Destro
-    else if (name.includes("calzino dx") || name.includes("sock right")) {
-        const bi = calculateBI(payload);
-        const sample = { t: tMs, p0: payload.pressure_0, p1: payload.pressure_1, p2: payload.pressure_2, bi: bi };
-        rightSockSamples.push(sample);
-        if (!isReplayMode) updateSocksUI('right', payload, bi);
-    }
+    // Mappatura flessibile dei campi pressione
+    const pData = {
+        p0: payload.pressure_0 ?? payload.p0 ?? 0,
+        p1: payload.pressure_1 ?? payload.p1 ?? 0,
+        p2: payload.pressure_2 ?? payload.p2 ?? 0
+    };
 
-    // ... (restante logica sensor_update esistente) ...
-    sensors[payload.sensor_name] = payload;
-    updateSensorCardUI(payload.sensor_name, payload);
+    const bi = calculateBI(payload);
+
+    if (name.includes("sx") || name.includes("left")) {
+        leftSockSamples.push({ t: tMs, ...pData, bi });
+        if (!isReplayMode) updateSocksUI('left', pData, bi);
+    } else if (name.includes("dx") || name.includes("right")) {
+        rightSockSamples.push({ t: tMs, ...pData, bi });
+        if (!isReplayMode) updateSocksUI('right', pData, bi);
+    }
+    
+    // Aggiorna anche le card classiche se presenti
+    sensors[payload.sensor_name || payload.name] = payload;
+    updateSensorCardUI(payload.sensor_name || payload.name, payload);
   }
 }
+
 
 
 // ==========================================
