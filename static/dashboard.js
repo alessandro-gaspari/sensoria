@@ -450,22 +450,10 @@ var lastSpeedCalcPos = null;
 var currentSmoothedSpeed = 0; 
 const EMA_ALPHA = 0.35;
 const SPEED_WINDOW_SEC = 1.5;
-const MIN_DIST_THRESHOLD = 0.1;   // Metri minimi per considerare un movimento (filtra il rumore)
-const MAX_ACCURACY_FILTER = 40;   // Metri di errore GPS massimi accettati per la velocità
+const MIN_DIST_THRESHOLD = 0.05;   // Metri minimi per considerare un movimento (filtra il rumore)
+const MAX_ACCURACY_FILTER = 50;   // Metri di errore GPS massimi accettati per la velocità
 const MAX_HUMAN_SPEED_KMH = 60.0;
 
-
-/**
- * Pipeline GPS Professionale (Stile Strava/Garmin)
- * 1. Filtro Accuracy Pesato
- * 2. Smoothing Spaziale (Soglia dinamica)
- * 3. Derivata Temporale Coerente (Dist/Tempo sulla stessa finestra)
- * 4. Smoothing Temporale (EMA)
- */
-/**
- * Pipeline GPS Professionale (Stile Strava/Garmin)
- * Integra: Filtro Accuracy Pesato, Soglia Rumore (0.8m), Coerenza Distanza/Velocità.
- */
 function onGpsUpdate(data) {
   if (!data) return;
 
@@ -474,14 +462,12 @@ function onGpsUpdate(data) {
   const acc = Number(data.accuracy || 10);
   const tMs = data.t || (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
 
-  // Salto dati matematicamente impossibili o nulli
   if (!isFinite(lat) || (lat === 0 && lng === 0)) return;
 
   ensureSessionStart(tMs);
 
   const prev = gpsSamples.length > 0 ? gpsSamples[gpsSamples.length - 1] : null;
   
-  // Primo punto della sessione
   if (!prev) {
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
     lastSpeedCalcPos = { lat, lng, t: tMs };
@@ -489,25 +475,23 @@ function onGpsUpdate(data) {
     return;
   }
 
-  // 1. GESTIONE TEMPO (Clamp per evitare outlier)
+  // 1. TEMPO (Clamp 0.8s - 5.0s per stabilità)
   let dtS = (tMs - prev.t) / 1000;
-  if (dtS <= 0) return; // Protezione contro campioni duplicati o fuori ordine
-  dtS = Math.min(dtS, 5.0); // Limite massimo 5s per mantenere stabilità
+  if (dtS <= 0) return; 
+  dtS = Math.min(dtS, 5.0); 
 
-  // 2. FILTRO DISTANZA & ACCURACY (Smoothing Spaziale)
+  // 2. DISTANZA REALE (Soglia minima 0.05m per catturare tutto)
   const dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-  
   let validDist = 0;
-  // Soglia 0.8m per eliminare lo "Zitter" (rumore da fermo)
-  if (dM_step > MIN_DIST_THRESHOLD && acc < MAX_ACCURACY_FILTER) {
-      // Applichiamo un peso all'accuratezza (più è alta, meno il punto è "solido")
-      validDist = dM_step;
+
+  // Includiamo ogni movimento sopra i 5cm per arrivare ai 0.49km reali
+  if (isFinite(dM_step) && dM_step > 0.05 && acc < 50) {
+      validDist = dM_step; // Nessun accWeight, prendiamo la distanza pura
   }
 
-  // 3. DISTANZA CUMULATIVA (Base per tutta la sessione)
   const newCumDistM = prev.cumDistM + validDist;
 
-  // 4. CALCOLO VELOCITÀ (Finestra Coerente di ~1.5s)
+  // 3. VELOCITÀ REATTIVA (Finestra 1.5s)
   if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
   const dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
 
@@ -515,23 +499,21 @@ function onGpsUpdate(data) {
     const dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
     
     let rawSpeed = 0;
-    if (dM_win > 1.2) { // Soglia minima di spostamento nella finestra
+    if (dM_win > 0.5) { // Minimo spostamento per calcolare velocità
        rawSpeed = (dM_win / dtS_win) * 3.6;
     }
 
-    // Filtro di plausibilità (Corsa max 40 km/h)
-    rawSpeed = Math.min(rawSpeed, 40.0);
+    // Filtro plausibilità (Corsa max 45 km/h)
+    rawSpeed = Math.min(rawSpeed, 45.0);
 
-    // 5. SMOOTHING TEMPORALE (EMA - Esponenziale)
-    // Usiamo ALPHA 0.35 per bilanciare reattività e stabilità
-    const ALPHA = 0.35;
+    // 4. SMOOTHING VELOCITÀ (EMA con Alpha 0.35)
+    const ALPHA = 0.35; 
     currentSmoothedSpeed = (rawSpeed * ALPHA) + (currentSmoothedSpeed * (1 - ALPHA));
     
-    // Aggiorno il punto di riferimento per la prossima finestra di velocità
     lastSpeedCalcPos = { lat, lng, t: tMs };
   }
 
-  // 6. SALVATAGGIO CAMPIONE
+  // 5. SALVATAGGIO
   gpsSamples.push({
     t: tMs,
     lat: lat,
@@ -541,23 +523,20 @@ function onGpsUpdate(data) {
     speedKmh: currentSmoothedSpeed
   });
 
-  // 7. AGGIORNAMENTO UI LIVE (Solo se non siamo in Replay)
+  // 6. UPDATE UI
   if (!isReplayMode) {
-    // Aggiorna metriche numeriche
     updateSpeedDistanceUI(currentSmoothedSpeed, newCumDistM);
     
-    // Aggiorna tracciato e marker sulla mappa
     if (map && mapMarker) {
         const pos = [lat, lng];
         mapMarker.setLatLng(pos);
         if (fullRoute) fullRoute.addLatLng(pos);
         if (progressRoute) progressRoute.addLatLng(pos);
         
-        // Segui il marker se non stai interagendo con la mappa
+        // Auto-center se non l'utente non sta toccando la mappa
         if (!isUserInteracting) map.panTo(pos);
     }
 
-    // Sincronizza lo slider del replay con il tempo attuale
     updateReplayUiBounds();
     showReplayOverlayIfReady();
   }
