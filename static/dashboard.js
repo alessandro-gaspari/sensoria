@@ -332,12 +332,11 @@ function onBpmUpdate(val) {
 // ==========================================
 // --- Variabili di stato per i filtri (mettile fuori dalla funzione) ---
 
-// --- Variabili di stato globali (fuori dalla funzione) ---
-var speedWindow = []; 
-const EMA_ALPHA = 0.3;
-var lastSpeedCalcPos = null; // Tempo di ricezione dell'ultimo pacchetto GPS
-const MAX_SPEED_PATTINAGGIO = 75; 
-var currentSmoothedSpeed = 0;
+// --- Assicurati che queste siano definite in alto nel file ---
+var lastSpeedCalcPos = null; 
+var currentSmoothedSpeed = 0; 
+const EMA_ALPHA = 0.15; // Valore basso = massima stabilità (Strava style)
+const MAX_SPEED_PATTINAGGIO = 75;
 
 function onGpsUpdate(data) {
   if (!data) return;
@@ -356,24 +355,33 @@ function onGpsUpdate(data) {
   if (gpsSamples.length > 0) {
     const prev = gpsSamples[gpsSamples.length - 1];
     
-    // --- DISTANZA (Senza filtri aggressivi per non perdere i 500m) ---
+    // 1. DISTANZA (Ultra-sensibile: aggiungiamo ogni millimetro per i 500m)
     let dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-    // Scarta solo errori matematici o balzi fisicamente impossibili (>100m in un attimo)
-    if (!isFinite(dM_step) || dM_step < 0 || dM_step > 100) dM_step = 0;
-    
-    cumDistM = (prev.cumDistM || 0) + dM_step;
+    if (isFinite(dM_step) && dM_step > 0.2 && (acc === null || acc < 40)) {
+      cumDistM = (prev.cumDistM || 0) + dM_step;
+    } else {
+      cumDistM = prev.cumDistM || 0;
+    }
 
-    // --- VELOCITÀ (Mantiene il filtro EMA + Auto-Pause) ---
+    // 2. VELOCITÀ ULTRA-SMOOTH (Calcolo su finestra lunga 2.5s)
     if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
     let dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
 
-    if (dtS_win >= 1.2) { 
+    if (dtS_win >= 2.5) { 
       let dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
       let rawSpeed = (dM_win / dtS_win) * 3.6;
 
-      // Applichiamo i filtri solo alla velocità (accuracy e soglia fisica)
-      if (rawSpeed < MAX_SPEED_PATTINAGGIO && (acc === null || acc < 35)) {
-        let targetSpeed = (rawSpeed < 1.0) ? 0 : rawSpeed;
+      // Filtro Accuracy e verosimiglianza
+      if (rawSpeed < MAX_SPEED_PATTINAGGIO && (acc === null || acc < 25)) {
+        let targetSpeed = (rawSpeed < 1.5) ? 0 : rawSpeed;
+        
+        // Limitatore di variazione brusca (evita salti 9 -> 14 km/h istantanei)
+        let diff = targetSpeed - currentSmoothedSpeed;
+        if (Math.abs(diff) > 8) { // Se il salto è superiore a 8 km/h, lo smussiamo
+           targetSpeed = currentSmoothedSpeed + (diff > 0 ? 3 : -3);
+        }
+
+        // Exponential Moving Average
         currentSmoothedSpeed = (targetSpeed * EMA_ALPHA) + (currentSmoothedSpeed * (1 - EMA_ALPHA));
       }
       lastSpeedCalcPos = { lat, lng, t: tMs };
@@ -381,6 +389,7 @@ function onGpsUpdate(data) {
     speedKmh = currentSmoothedSpeed;
   }
 
+  // Salvataggio campione
   gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
 
   // Update Mappa e UI
@@ -389,6 +398,7 @@ function onGpsUpdate(data) {
 
   if (!isReplayMode) {
     updateProgressRouteToTime(getSessionEndMs());
+    
     if (!currentMapPos) currentMapPos = { lat, lng };
     targetMapPos = { lat, lng };
     startMapPos = { ...currentMapPos };
@@ -398,12 +408,13 @@ function onGpsUpdate(data) {
     var accEl = document.getElementById('gps-accuracy');
     if (accEl && acc != null) accEl.textContent = Math.round(acc);
 
+    // Aggiorna le card metriche con i nuovi valori smooth
     updateSpeedDistanceUI(speedKmh, cumDistM);
+    
     updateReplayUiBounds();
     showReplayOverlayIfReady();
   }
 }
-
 
 // ==========================================
 // MAP INIT + PANES
