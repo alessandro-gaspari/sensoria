@@ -446,28 +446,15 @@ function onBpmUpdate(val) {
 // --- Variabili di stato per i filtri (mettile fuori dalla funzione) ---
 
 // --- Assicurati che queste siano definite in alto nel file ---
-const MIN_DT = 0.8;              // s
-const MAX_DT = 2.5;              // s
-const MIN_DIST = 0.8;            // m (taglio rumore GPS)
-const MAX_ACC = 20;              // m (accuracy max accettata)
-const EMA_ALPHA = 0.15;          // Strava-like
-const MAX_ACCEL = 6;             // m/s² (salti fisicamente impossibili)
-let lastFix = null;
-let lastSpeed = 0;
-let smoothSpeed = 0;
-let totalDistance = 0;
+var lastSpeedCalcPos = null; 
+var currentSmoothedSpeed = 0; 
+const EMA_ALPHA = 0.35;
+const SPEED_WINDOW_SEC = 1.5;
+const MIN_DIST_THRESHOLD = 0.8;   // Metri minimi per considerare un movimento (filtra il rumore)
+const MAX_ACCURACY_FILTER = 25;   // Metri di errore GPS massimi accettati per la velocità
+const MAX_HUMAN_SPEED_KMH = 60.0;
 
-function haversineMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) *
-    Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+
 /**
  * Pipeline GPS Professionale (Stile Strava/Garmin)
  * 1. Filtro Accuracy Pesato
@@ -475,57 +462,108 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
  * 3. Derivata Temporale Coerente (Dist/Tempo sulla stessa finestra)
  * 4. Smoothing Temporale (EMA)
  */
-function onGpsUpdate({ lat, lng, timestamp, accuracy }) {
-  const t = timestamp ? new Date(timestamp).getTime() : Date.now();
+/**
+ * Pipeline GPS Professionale (Stile Strava/Garmin)
+ * Integra: Filtro Accuracy Pesato, Soglia Rumore (0.8m), Coerenza Distanza/Velocità.
+ */
+function onGpsUpdate(data) {
+  if (!data) return;
 
-  if (!lastFix) {
-    lastFix = { lat, lng, t };
+  const lat = Number(data.latitude);
+  const lng = Number(data.longitude);
+  const acc = Number(data.accuracy || 10);
+  const tMs = data.t || (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
+
+  // Salto dati matematicamente impossibili o nulli
+  if (!isFinite(lat) || (lat === 0 && lng === 0)) return;
+
+  ensureSessionStart(tMs);
+
+  const prev = gpsSamples.length > 0 ? gpsSamples[gpsSamples.length - 1] : null;
+  
+  // Primo punto della sessione
+  if (!prev) {
+    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
+    lastSpeedCalcPos = { lat, lng, t: tMs };
+    ensureMapInitialized(lat, lng);
     return;
   }
 
-  let dt = (t - lastFix.t) / 1000;
-  if (dt < MIN_DT || dt > MAX_DT) {
-    lastFix = { lat, lng, t };
-    return;
+  // 1. GESTIONE TEMPO (Clamp per evitare outlier)
+  let dtS = (tMs - prev.t) / 1000;
+  if (dtS <= 0) return; // Protezione contro campioni duplicati o fuori ordine
+  dtS = Math.min(dtS, 5.0); // Limite massimo 5s per mantenere stabilità
+
+  // 2. FILTRO DISTANZA & ACCURACY (Smoothing Spaziale)
+  const dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
+  
+  let validDist = 0;
+  // Soglia 0.8m per eliminare lo "Zitter" (rumore da fermo)
+  if (dM_step > 0.8 && acc < 25) {
+      // Applichiamo un peso all'accuratezza (più è alta, meno il punto è "solido")
+      const accWeight = acc < 10 ? 1 : (acc < 20 ? 0.5 : 0.2);
+      validDist = dM_step * accWeight;
   }
 
-  if (accuracy == null || accuracy > MAX_ACC) {
-    lastFix = { lat, lng, t };
-    return;
+  // 3. DISTANZA CUMULATIVA (Base per tutta la sessione)
+  const newCumDistM = prev.cumDistM + validDist;
+
+  // 4. CALCOLO VELOCITÀ (Finestra Coerente di ~1.5s)
+  if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
+  const dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
+
+  if (dtS_win >= 1.5) {
+    const dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
+    
+    let rawSpeed = 0;
+    if (dM_win > 1.2) { // Soglia minima di spostamento nella finestra
+       rawSpeed = (dM_win / dtS_win) * 3.6;
+    }
+
+    // Filtro di plausibilità (Corsa max 40 km/h)
+    rawSpeed = Math.min(rawSpeed, 40.0);
+
+    // 5. SMOOTHING TEMPORALE (EMA - Esponenziale)
+    // Usiamo ALPHA 0.35 per bilanciare reattività e stabilità
+    const ALPHA = 0.35;
+    currentSmoothedSpeed = (rawSpeed * ALPHA) + (currentSmoothedSpeed * (1 - ALPHA));
+    
+    // Aggiorno il punto di riferimento per la prossima finestra di velocità
+    lastSpeedCalcPos = { lat, lng, t: tMs };
   }
 
-  const d = haversineMeters(lastFix.lat, lastFix.lng, lat, lng);
-  if (d < MIN_DIST) {
-    lastFix = { lat, lng, t };
-    return;
+  // 6. SALVATAGGIO CAMPIONE
+  gpsSamples.push({
+    t: tMs,
+    lat: lat,
+    lng: lng,
+    acc: acc,
+    cumDistM: newCumDistM,
+    speedKmh: currentSmoothedSpeed
+  });
+
+  // 7. AGGIORNAMENTO UI LIVE (Solo se non siamo in Replay)
+  if (!isReplayMode) {
+    // Aggiorna metriche numeriche
+    updateSpeedDistanceUI(currentSmoothedSpeed, newCumDistM);
+    
+    // Aggiorna tracciato e marker sulla mappa
+    if (map && mapMarker) {
+        const pos = [lat, lng];
+        mapMarker.setLatLng(pos);
+        if (fullRoute) fullRoute.addLatLng(pos);
+        if (progressRoute) progressRoute.addLatLng(pos);
+        
+        // Segui il marker se non stai interagendo con la mappa
+        if (!isUserInteracting) map.panTo(pos);
+    }
+
+    // Sincronizza lo slider del replay con il tempo attuale
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
   }
-
-  // velocità istantanea
-  let speed = d / dt; // m/s
-
-  // clamp accelerazione fisica
-  const dv = speed - lastSpeed;
-  const maxDv = MAX_ACCEL * dt;
-  speed = lastSpeed + Math.max(-maxDv, Math.min(maxDv, dv));
-
-  // EMA
-  smoothSpeed = smoothSpeed
-    ? EMA_ALPHA * speed + (1 - EMA_ALPHA) * smoothSpeed
-    : speed;
-
-  // distanza coerente con la velocità
-  totalDistance += d;
-
-  lastSpeed = speed;
-  lastFix = { lat, lng, t };
-
-  // OUTPUT
-  return {
-    speed_mps: smoothSpeed,
-    speed_kmh: smoothSpeed * 3.6,
-    distance_m: totalDistance
-  };
 }
+
 
 function updateDashboardUI(speed, distM, lat, lng) {
     const speedEl = document.getElementById('speed-val');
