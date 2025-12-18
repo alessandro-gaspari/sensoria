@@ -25,6 +25,7 @@ var isReplayMode = false;
 var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
 var lastLiveBpm = "--";
+var speedWindow = [];
 
 // =========================
 // MAPPA
@@ -330,6 +331,10 @@ function onBpmUpdate(val) {
 // ==========================================
 // GPS (LIVE + TIMELINE + MAP)
 // ==========================================
+// --- Variabili di stato per i filtri (mettile fuori dalla funzione) ---
+
+const MAX_SPEED_PATTINAGGIO = 70; // km/h
+
 function onGpsUpdate(data) {
   if (!data) return;
 
@@ -347,21 +352,56 @@ function onGpsUpdate(data) {
 
   if (gpsSamples.length > 0) {
     const prev = gpsSamples[gpsSamples.length - 1];
+    
+    // 1. Calcolo tempo trascorso (secondi)
     const dtS = Math.max(0, (tMs - prev.t) / 1000);
 
+    // 2. Calcolo distanza (metri)
     let dM = haversineMeters(prev.lat, prev.lng, lat, lng);
-    if (!isFinite(dM) || dM < 0.5) dM = 0;
+    
+    // FILTRO RUMORE: Se lo spostamento è < 1.5m, probabilmente è errore del sensore da fermo
+    if (!isFinite(dM) || dM < 1.5) {
+      dM = 0;
+    }
 
     cumDistM = (prev.cumDistM || 0) + dM;
 
-    if (dtS >= 0.3 && dM >= 1.0) speedKmh = (dM / dtS) * 3.6;
-    else speedKmh = prev.speedKmh || 0;
+    // 3. Calcolo Velocità con Media Mobile
+    // Calcoliamo la velocità solo se è passato un tempo ragionevole (> 0.5s)
+    if (dtS > 0.5 && dM > 0) {
+      let instantSpeed = (dM / dtS) * 3.6;
+
+      // Gestione finestra per media mobile (3 campioni per reattività nel pattinaggio)
+      speedWindow.push(instantSpeed);
+      if (speedWindow.length > 3) speedWindow.shift();
+
+      // Calcolo media
+      let avgSpeed = speedWindow.reduce((a, b) => a + b) / speedWindow.length;
+
+      // CAP DI SICUREZZA: scarta fix GPS che implicano velocità sovrumane (>70 km/h)
+      if (avgSpeed < MAX_SPEED_PATTINAGGIO) {
+        speedKmh = avgSpeed;
+      } else {
+        speedKmh = prev.speedKmh || 0;
+      }
+    } else {
+      // Se fermo o intervallo troppo piccolo, mantieni l'ultima o azzera se il tempo è tanto
+      speedKmh = (dtS > 2.0) ? 0 : (prev.speedKmh || 0);
+    }
   }
 
-  gpsSamples.push({ t: tMs, lat: lat, lng: lng, acc: acc, cumDistM: cumDistM, speedKmh: speedKmh });
+  // Salvataggio campione
+  gpsSamples.push({ 
+    t: tMs, 
+    lat: lat, 
+    lng: lng, 
+    acc: acc, 
+    cumDistM: cumDistM, 
+    speedKmh: speedKmh 
+  });
 
+  // Aggiornamento Mappa e UI
   ensureMapInitialized(lat, lng);
-
   if (fullRoute) fullRoute.addLatLng([lat, lng]);
 
   if (!isReplayMode) {
@@ -376,8 +416,8 @@ function onGpsUpdate(data) {
     var accEl = document.getElementById('gps-accuracy');
     if (accEl && acc != null && isFinite(acc)) accEl.textContent = Math.round(acc);
 
-    const last = gpsSamples[gpsSamples.length - 1];
-    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+    // Aggiorna le card in alto a destra
+    updateSpeedDistanceUI(speedKmh, cumDistM);
 
     updateReplayUiBounds();
     showReplayOverlayIfReady();
