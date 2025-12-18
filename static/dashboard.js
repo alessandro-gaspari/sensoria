@@ -68,46 +68,35 @@ var isUserInteracting = false;
 var MIN_ZOOM_RANGE = 0.5;
 var leftSockSamples = [];  
 var rightSockSamples = []; 
-// Nuove variabili globali
-var sockCharts = { left: null, right: null };
-var sockChartData = { 
-    left: [[], [], [], []], // [timestamp, p0, p1, p2]
-    right: [[], [], [], []] 
-};
 
-// Funzione per inizializzare i grafici dei calzini
+var sockCharts = { left: null, right: null };
+var sockChartData = { left: [[], [], [], []], right: [[], [], [], []] };
+
 function initSockCharts() {
-    // ID corretti che abbiamo messo nell'ultimo HTML
     const leftEl = document.getElementById('chart-left-p');
     const rightEl = document.getElementById('chart-right-p');
+    if (!leftEl || !rightEl) return;
 
-    // Se i div non esistono ancora, esci senza rompere il caricamento
-    if (!leftEl || !rightEl) {
-        console.warn("Contenitori grafici calzini non trovati nell'HTML!");
-        return;
-    }
-
-    const commonOpts = (container, color) => ({
-        width: container.offsetWidth || 300, // Fallback se offsetWidth è 0
-        height: 120,
-        scales: { x: { time: true }, y: { auto: false, range: [0, 1024] } },
+    const makeOpts = (container, title) => ({
+        width: container.offsetWidth,
+        height: 130,
+        scales: { 
+            x: { time: false }, // Usiamo secondi dall'inizio attività
+            y: { auto: false, range: [0, 1100] } 
+        },
         series: [
-            {},
-            { stroke: color, width: 2 },
-            { stroke: color, width: 2, dash: [5, 5] },
-            { stroke: color, width: 2, dash: [2, 2] }
+            {}, // Tempo (Asse X)
+            { label: "P0", stroke: "#ffb74d", width: 2, points: { show: false } },
+            { label: "P1", stroke: "#e91e63", width: 2, points: { show: false } },
+            { label: "P2", stroke: "#4fc3f7", width: 2, points: { show: false } }
         ],
         axes: [{ show: false }, { show: false }],
-        cursor: { show: false }
+        legend: { show: true, live: false }, // Legenda cliccabile
+        cursor: { show: true, sync: { key: "socks" } }
     });
 
-    // Inizializza solo se non sono già stati creati
-    if (!sockCharts.left) {
-        sockCharts.left = new uPlot(commonOpts(leftEl, '#ff6384'), sockChartData.left, leftEl);
-    }
-    if (!sockCharts.right) {
-        sockCharts.right = new uPlot(commonOpts(rightEl, '#36a2eb'), sockChartData.right, rightEl);
-    }
+    if (!sockCharts.left) sockCharts.left = new uPlot(makeOpts(leftEl, "SX"), sockChartData.left, leftEl);
+    if (!sockCharts.right) sockCharts.right = new uPlot(makeOpts(rightEl, "DX"), sockChartData.right, rightEl);
 }
 
 
@@ -968,37 +957,78 @@ function updateProgressRouteToTime(tMs) {
   progressRoute.setLatLngs(pts);
 }
 
+/**
+ * Sposta l'intera dashboard (mappa, grafici, metriche) a un secondo specifico dell'attività.
+ * @param {number} sec - Secondi trascorsi dall'inizio della sessione.
+ */
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
 
+  // Imposta la modalità replay e ferma eventuali animazioni live del marker
   isReplayMode = true;
-  cancelAnimationFrame(animationFrameId);
-  animationFrameId = null;
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
 
-  var clampedSec = clamp(sec, 0, getDurationSec());
+  // 1. Calcolo del timestamp assoluto
+  const durationSec = getDurationSec();
+  const clampedSec = Math.max(0, Math.min(sec, durationSec));
+  const tMs = sessionStartTimeMs + (clampedSec * 1000);
+
+  // 2. Aggiornamento Label Temporale mm:ss
   updateReplayTimeLabel(clampedSec);
-  var tMs = sessionStartTimeMs + clampedSec * 1000;
 
-  // 1. Mappa e GPS
-  var pos = getInterpolatedGpsAtTime(tMs);
+  // 3. MAPPA: Posizionamento Marker e Tracciato progressivo
+  const pos = getInterpolatedGpsAtTime(tMs);
   if (pos && mapMarker) {
     mapMarker.setLatLng([pos.lat, pos.lng]);
     currentMapPos = { lat: pos.lat, lng: pos.lng };
+    
+    // Se la rotazione è attiva o vuoi centrare la mappa durante il replay
+    // map.panTo([pos.lat, pos.lng], { animate: false }); 
   }
   updateProgressRouteToTime(tMs);
 
-  // 2. Metriche Standard
-  var bpm = getBpmAtTime(tMs);
+  // 4. METRICHE: BPM, Velocità e Distanza al tempo T
+  const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
-  updateSpeedDistanceUI(getSpeedAtTime(tMs), getDistanceAtTime(tMs));
 
-  // 3. Calzini e BI nel Replay
+  const speed = getSpeedAtTime(tMs);
+  const dist = getDistanceAtTime(tMs);
+  updateSpeedDistanceUI(speed, dist);
+
+  // 5. GRAFICI CALZINI: Sincronizzazione Finestra Temporale (Zoom)
+  // Definiamo una finestra di 10 secondi (5 prima e 5 dopo il punto attuale)
+  const windowHalf = 5; 
+  const tMin = Math.max(0, clampedSec - windowHalf);
+  const tMax = tMin + (windowHalf * 2);
+
+  if (sockCharts.left) {
+    sockCharts.left.setScale("x", { min: tMin, max: tMax });
+  }
+  if (sockCharts.right) {
+    sockCharts.right.setScale("x", { min: tMin, max: tMax });
+  }
+
+  // 6. UI CALZINI: Valori numerici e Bongiorno Index istantaneo
   const lS = findSampleAtTime(leftSockSamples, tMs);
-  if (lS) updateSocksUI('left', { pressure_0: lS.p0, pressure_1: lS.p1, pressure_2: lS.p2 }, lS.bi);
+  if (lS) {
+    updateSocksUI('left', { pressure_0: lS.p0, pressure_1: lS.p1, pressure_2: lS.p2 }, lS.bi);
+  }
 
   const rS = findSampleAtTime(rightSockSamples, tMs);
-  if (rS) updateSocksUI('right', { pressure_0: rS.p0, pressure_1: rS.p1, pressure_2: rS.p2 }, rS.bi);
+  if (rS) {
+    updateSocksUI('right', { pressure_0: rS.p0, pressure_1: rS.p1, pressure_2: rS.p2 }, rS.bi);
+  }
+
+  // 7. Sincronizzazione Slider UI (se non è l'utente a trascinarlo)
+  const slider = document.getElementById('replay-slider');
+  if (slider && Math.abs(parseFloat(slider.value) - clampedSec) > 0.5) {
+    slider.value = clampedSec.toFixed(1);
+  }
 }
+
 
 // Funzione helper per trovare il campione più vicino nel tempo
 function findSampleAtTime(arr, tMs) {
@@ -1476,91 +1506,96 @@ async function openLogsModal() {
   }
 }
 
+/**
+ * Carica un'attività passata dal server e prepara tutti i dati per il Replay.
+ * Gestisce il parsing di Sensori (Calzini), GPS e BPM.
+ */
 async function loadPastActivity(logName) {
-  const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
-  const data = await resp.json();
+  try {
+    const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
+    const data = await resp.json();
 
-  // 1. Reset totale degli array
-  gpsSamples = [];
-  bpmSamples = [];
-  leftSockSamples = [];
-  rightSockSamples = [];
-  
-  lastSpeedCalcPos = null;
-  currentSmoothedSpeed = 0;
-  sessionStartTimeMs = null;
-  sessionEndTimeMs = null;
-  isReplayMode = false;
-
-  // Assicurati che i grafici dei calzini siano pronti
-  if (typeof initSockCharts === "function") initSockCharts();
-
-  // 2. Estrazione dati dal pacchetto JSON (gestisce vari formati di risposta)
-  const gps = Array.isArray(data.gps) ? data.gps : [];
-  const bpm = Array.isArray(data.bpm) ? data.bpm : [];
-  const sensorsData = Array.isArray(data.sensors) ? data.sensors : []; // dati IMU/Pressioni
-
-  // 3. Parsing GPS (con filtri smooth già visti)
-  gps.sort((a, b) => (a.t || new Date(a.timestamp).getTime()) - (b.t || new Date(b.timestamp).getTime()));
-  gps.forEach(p => {
-    const lat = Number(p.lat ?? p.latitude);
-    const lng = Number(p.lng ?? p.longitude);
-    const tMs = p.t ?? new Date(p.timestamp).getTime();
-    if (isFinite(lat) && lat !== 0 && tMs) {
-      ensureSessionStart(tMs);
-      // ... logica distanza e velocità smooth ...
-      // (Per brevità qui assumiamo il calcolo standard già implementato)
-      gpsSamples.push({ t: tMs, lat, lng, acc: p.accuracy, cumDistM: 0, speedKmh: 0 });
-    }
-  });
-
-  // 4. Parsing BPM
-  bpm.forEach(b => {
-    const tMs = b.t ?? new Date(b.timestamp).getTime();
-    const val = parseInt(b.bpm ?? b.value ?? b);
-    if (tMs && !isNaN(val)) {
-      ensureSessionStart(tMs);
-      bpmSamples.push({ t: tMs, bpm: val });
-    }
-  });
-
-  // 5. PARSING CALZINI (Fondamentale per i grafici sotto la mappa)
-  sensorsData.forEach(s => {
-    const tMs = s.t ?? new Date(s.timestamp).getTime();
-    const name = (s.sensor_name || "").toLowerCase();
+    // 1. Reset totale degli stati e degli array
+    gpsSamples = [];
+    bpmSamples = [];
+    leftSockSamples = [];
+    rightSockSamples = [];
+    sockChartData.left = [[], [], [], []];  // [tRel, p0, p1, p2]
+    sockChartData.right = [[], [], [], []]; // [tRel, p0, p1, p2]
     
-    if (name.includes("calzino") || name.includes("sock")) {
-        const bi = calculateBI(s);
-        const sample = { 
-            t: tMs, 
-            p0: s.pressure_0 || 0, 
-            p1: s.pressure_1 || 0, 
-            p2: s.pressure_2 || 0, 
-            bi: bi 
-        };
-        
-        if (name.includes("sx") || name.includes("left")) leftSockSamples.push(sample);
-        else if (name.includes("dx") || name.includes("right")) rightSockSamples.push(sample);
+    // Reset filtri velocità
+    currentSmoothedSpeed = 0;
+    lastSpeedCalcPos = null;
+
+    const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
+    if (sensorsData.length === 0) {
+      console.warn("Nessun dato sensore trovato nel log.");
+      return;
     }
-  });
 
-  // 6. Finalizzazione UI
-  if (sessionStartTimeMs != null) sessionEndTimeMs = getSessionEndMs();
+    // 2. Determina l'inizio sessione per i calcoli relativi (Asse X dei grafici)
+    sessionStartTimeMs = sensorsData.reduce((min, s) => {
+        const t = s.t || new Date(s.timestamp).getTime();
+        return t < min ? t : min;
+    }, s.t || new Date(sensorsData[0].timestamp).getTime());
 
-  if (gpsSamples.length) {
-    ensureMapInitialized(gpsSamples[0].lat, gpsSamples[0].lng);
-    const pts = gpsSamples.map(p => [p.lat, p.lng]);
-    fullRoute && fullRoute.setLatLngs(pts);
-    const last = gpsSamples[gpsSamples.length - 1];
-    if (fullRoute) map.fitBounds(fullRoute.getBounds(), { padding: [40, 40] });
-    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+    // 3. Parsing Sensori e Calzini (Pre-rendering Grafici)
+    sensorsData.forEach(s => {
+      const tMs = s.t || new Date(s.timestamp).getTime();
+      const tRelSec = (tMs - sessionStartTimeMs) / 1000;
+      const name = (s.sensor_name || "").toLowerCase();
+      
+      // Calcolo BI e preparazione campioni
+      const bi = calculateBI(s);
+      const p0 = Number(s.pressure_0 || 0), p1 = Number(s.pressure_1 || 0), p2 = Number(s.pressure_2 || 0);
+      const sample = { t: tMs, p0, p1, p2, bi };
+
+      if (name.includes("sx") || name.includes("left")) {
+        leftSockSamples.push(sample);
+        sockChartData.left[0].push(tRelSec);
+        sockChartData.left[1].push(p0);
+        sockChartData.left[2].push(p1);
+        sockChartData.left[3].push(p2);
+      } else if (name.includes("dx") || name.includes("right")) {
+        rightSockSamples.push(sample);
+        sockChartData.right[0].push(tRelSec);
+        sockChartData.right[1].push(p0);
+        sockChartData.right[2].push(p1);
+        sockChartData.right[3].push(p2);
+      }
+    });
+
+    // 4. Parsing GPS (Ricostruzione distanza e velocità smooth)
+    if (Array.isArray(data.gps)) {
+      data.gps.forEach(p => onGpsUpdate(p));
+    }
+
+    // 5. Parsing BPM
+    if (Array.isArray(data.bpm)) {
+      data.bpm.forEach(b => {
+        const tMs = b.t || new Date(b.timestamp).getTime();
+        bpmSamples.push({ t: tMs, bpm: b.bpm || b.value });
+      });
+    }
+
+    // 6. Inizializzazione UI e Grafici
+    initSockCharts();
+    if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
+    if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
+
+    // 7. Imposta fine sessione e attiva Replay Overlay
+    sessionEndTimeMs = getSessionEndMs();
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
+
+    // Posiziona il replay all'inizio dell'attività
+    enterReplayAtSecond(0);
+
+    console.log(`Log "${logName}" caricato con successo. Campioni GPS: ${gpsSamples.length}`);
+
+  } catch (error) {
+    console.error("Errore durante il caricamento dell'attività:", error);
   }
-
-  updateReplayUiBounds();
-  showReplayOverlayIfReady();
-  
-  // Forza il primo aggiornamento del replay al tempo zero
-  enterReplayAtSecond(0);
 }
 
 // ==========================================
