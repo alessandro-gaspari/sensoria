@@ -450,8 +450,8 @@ var lastSpeedCalcPos = null;
 var currentSmoothedSpeed = 0; 
 const EMA_ALPHA = 0.35;
 const SPEED_WINDOW_SEC = 1.5;
-const MIN_DIST_THRESHOLD = 0.8;   // Metri minimi per considerare un movimento (filtra il rumore)
-const MAX_ACCURACY_FILTER = 25;   // Metri di errore GPS massimi accettati per la velocità
+const MIN_DIST_THRESHOLD = 0.1;   // Metri minimi per considerare un movimento (filtra il rumore)
+const MAX_ACCURACY_FILTER = 40;   // Metri di errore GPS massimi accettati per la velocità
 const MAX_HUMAN_SPEED_KMH = 60.0;
 
 
@@ -499,10 +499,9 @@ function onGpsUpdate(data) {
   
   let validDist = 0;
   // Soglia 0.8m per eliminare lo "Zitter" (rumore da fermo)
-  if (dM_step > 0.8 && acc < 25) {
+  if (dM_step > MIN_DIST_THRESHOLD && acc < MAX_ACCURACY_FILTER) {
       // Applichiamo un peso all'accuratezza (più è alta, meno il punto è "solido")
-      const accWeight = acc < 10 ? 1 : (acc < 20 ? 0.5 : 0.2);
-      validDist = dM_step * accWeight;
+      validDist = dM_step;
   }
 
   // 3. DISTANZA CUMULATIVA (Base per tutta la sessione)
