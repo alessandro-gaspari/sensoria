@@ -451,83 +451,109 @@ var currentSmoothedSpeed = 0;
 const EMA_ALPHA = 0.35;
 const MAX_SPEED_PATTINAGGIO = 75;
 
+/**
+ * Pipeline GPS Professionale (Stile Strava/Garmin)
+ * 1. Filtro Accuracy Pesato
+ * 2. Smoothing Spaziale (Soglia dinamica)
+ * 3. Derivata Temporale Coerente (Dist/Tempo sulla stessa finestra)
+ * 4. Smoothing Temporale (EMA)
+ */
 function onGpsUpdate(data) {
-  if (!data) return;
+  const lat = data.latitude;
+  const lng = data.longitude;
+  const acc = data.accuracy || 10;
+  const tMs = data.t || (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
 
-  var lat = Number(data.latitude);
-  var lng = Number(data.longitude);
-  if (!isFinite(lat) || !isFinite(lng) || (lat === 0 && lng === 0)) return;
-
-  var acc = (data.accuracy != null) ? Number(data.accuracy) : null;
-  var tMs = data.timestamp ? new Date(data.timestamp).getTime() : getNowMs();
+  // Inizializzazione sessione e mappa
   ensureSessionStart(tMs);
+  ensureMapInitialized(lat, lng);
 
-  let cumDistM = 0;
-  let speedKmh = 0;
-
-  if (gpsSamples.length > 0) {
-    const prev = gpsSamples[gpsSamples.length - 1];
-    
-    // 1. DISTANZA (Ultra-sensibile: aggiungiamo ogni millimetro per i 500m)
-    let dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-    if (isFinite(dM_step) && dM_step > 0.05 && (acc === null || acc < 35)) {
-      cumDistM = (prev.cumDistM || 0) + dM_step;
-    } else {
-      cumDistM = prev.cumDistM || 0;
-    }
-
-    // 2. VELOCITÀ ULTRA-SMOOTH (Calcolo su finestra lunga 2.5s)
-    if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
-    let dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
-
-    if (dtS_win >= 1.5) { 
-      let dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
-      let rawSpeed = (dM_win / dtS_win) * 3.6;
-
-      // Filtro Accuracy e verosimiglianza
-      if (rawSpeed < MAX_SPEED_PATTINAGGIO && (acc === null || acc < 25)) {
-        let targetSpeed = (rawSpeed < 1.5) ? 0 : rawSpeed;
-        
-        // Limitatore di variazione brusca (evita salti 9 -> 14 km/h istantanei)
-        let diff = targetSpeed - currentSmoothedSpeed;
-        if (Math.abs(diff) > 8) { // Se il salto è superiore a 8 km/h, lo smussiamo
-           targetSpeed = currentSmoothedSpeed + (diff > 0 ? 3 : -3);
-        }
-
-        // Exponential Moving Average
-        currentSmoothedSpeed = (targetSpeed * EMA_ALPHA) + (currentSmoothedSpeed * (1 - EMA_ALPHA));
-      }
-      lastSpeedCalcPos = { lat, lng, t: tMs };
-    }
-    speedKmh = currentSmoothedSpeed;
+  const prev = gpsSamples.length > 0 ? gpsSamples[gpsSamples.length - 1] : null;
+  
+  if (!prev) {
+    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speed: 0 });
+    lastSpeedCalcPos = { lat, lng, t: tMs };
+    return;
   }
 
-  // Salvataggio campione
-  gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM, speedKmh });
+  // 1. CLAMP DEL DELTA TEMPO (Evita salti temporali del backend/BLE)
+  let dtS = (tMs - prev.t) / 1000;
+  if (dtS <= 0) return; // Salta campioni duplicati o fuori ordine
+  dtS = Math.min(dtS, 5.0); // Se passa troppo tempo (es. tunnel), limita a 5s
 
-  // Update Mappa e UI
-  ensureMapInitialized(lat, lng);
-  if (fullRoute) fullRoute.addLatLng([lat, lng]);
+  // 2. FILTRO ACCURACY PESATO E SOGLIA RUMORE
+  const dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
+  
+  // Applichiamo la soglia di 0.8m per eliminare il rumore da fermo (Zitter)
+  // E scartiamo se l'accuratezza è pessima (> 25m)
+  let validDist = 0;
+  if (dM_step > 0.8 && acc < 25) {
+      // Peso l'accuratezza: se acc è alta, riduco il contributo (smoothing spaziale)
+      const accWeight = acc < 10 ? 1 : (acc < 20 ? 0.5 : 0.2);
+      validDist = dM_step * accWeight;
+  }
 
-  if (!isReplayMode) {
-    updateProgressRouteToTime(getSessionEndMs());
+  // 3. AGGIORNAMENTO DISTANZA CUMULATIVA
+  const newCumDistM = prev.cumDistM + validDist;
+  
+  // 4. CALCOLO VELOCITÀ SULLA STESSA FINESTRA (Coerenza Totale)
+  // Usiamo una finestra di ~1.5s per evitare fluttuazioni eccessive
+  const dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
+  
+  if (dtS_win >= 1.5) {
+    const dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
     
-    if (!currentMapPos) currentMapPos = { lat, lng };
-    targetMapPos = { lat, lng };
-    startMapPos = { ...currentMapPos };
-    animationStartTime = performance.now();
-    if (!animationFrameId) animateMarkerLoop();
+    // Filtro di plausibilità sulla finestra
+    let rawSpeed = 0;
+    if (dM_win > 1.2) { // Soglia minima di movimento nella finestra
+       rawSpeed = (dM_win / dtS_win) * 3.6;
+    }
 
-    var accEl = document.getElementById('gps-accuracy');
-    if (accEl && acc != null) accEl.textContent = Math.round(acc);
+    // Limite umano corsa (40 km/h) per evitare picchi GPS (jump)
+    rawSpeed = Math.min(rawSpeed, 40.0);
 
-    // Aggiorna le card metriche con i nuovi valori smooth
-    updateSpeedDistanceUI(speedKmh, cumDistM);
+    // 5. SMOOTHING TEMPORALE (EMA)
+    // Alpha più alto (0.35) per essere reattivi ma stabili
+    const ALPHA = 0.35;
+    currentSmoothedSpeed = (rawSpeed * ALPHA) + (currentSmoothedSpeed * (1 - ALPHA));
     
-    updateReplayUiBounds();
-    showReplayOverlayIfReady();
+    // Aggiorno il punto di riferimento per la prossima finestra
+    lastSpeedCalcPos = { lat, lng, t: tMs };
+  }
+
+  // Salvo il campione con i dati processati
+  gpsSamples.push({
+    t: tMs,
+    lat,
+    lng,
+    acc,
+    cumDistM: newCumDistM,
+    speed: currentSmoothedSpeed
+  });
+
+  // Aggiorno la UI (solo se non siamo in Replay mode)
+  if (!isReplayActive) {
+    updateDashboardUI(currentSmoothedSpeed, newCumDistM, lat, lng);
   }
 }
+
+function updateDashboardUI(speed, distM, lat, lng) {
+    const speedEl = document.getElementById('speed-val');
+    const distEl = document.getElementById('dist-val');
+    
+    if (speedEl) speedEl.innerText = speed.toFixed(1);
+    if (distEl) distEl.innerText = (distM / 1000).toFixed(2);
+    
+    // Aggiornamento mappa e tracciati
+    if (map && mapMarker) {
+        const pos = [lat, lng];
+        mapMarker.setLatLng(pos);
+        fullRoute.addLatLng(pos);
+        progressRoute.addLatLng(pos);
+        if (followMarker) map.panTo(pos);
+    }
+}
+
 
 // ==========================================
 // MAP INIT + PANES
