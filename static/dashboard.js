@@ -131,38 +131,40 @@ function calculateBI(payload) {
     return norm > 0.1 ? (Math.abs(ax) / norm) * 100 : 0;
 }
 
-
 function updateSocksUI(side, data, bi) {
-    const containerId = `sock-display-${side}`;
-    let container = document.getElementById(containerId);
+    const prefix = side === 'left' ? 'l' : 'r';
     
-    if (!container) {
-        const parent = document.getElementById('map-section');
-        container = document.createElement('div');
-        container.id = containerId;
-        container.className = 'sock-card-ui';
-        // Stile inline veloce o via CSS
-        container.style.cssText = "background:#111; padding:10px; border-radius:8px; margin-top:10px; border:1px solid #333; display:inline-block; width:45%; margin-right:2%;";
-        parent.appendChild(container);
+    // 1. Aggiorna Numeri e BI
+    document.getElementById(`bi-val-${side}`).textContent = `BI: ${bi.toFixed(1)}%`;
+    document.getElementById(`${prefix}-p0`).textContent = Math.round(data.pressure_0);
+    document.getElementById(`${prefix}-p1`).textContent = Math.round(data.pressure_1);
+    document.getElementById(`${prefix}-p2`).textContent = Math.round(data.pressure_2);
+
+    // 2. Inizializza grafici se mancano
+    if (!sockCharts[side]) {
+        const container = document.getElementById(`chart-${side}-p`);
+        const color = side === 'left' ? '#ff6384' : '#36a2eb';
+        sockCharts[side] = new uPlot({
+            width: container.offsetWidth,
+            height: 120,
+            scales: { x: { time: true }, y: { auto: false, range: [0, 1024] } },
+            series: [{}, { stroke: color, width: 2 }, { stroke: color, width: 2, dash:[5,5] }, { stroke: color, width: 2, dash:[2,2] }],
+            axes: [{show: false}, {show: false}],
+            cursor: {show: false}
+        }, sockChartData[side], container);
     }
 
-    container.innerHTML = `
-        <div style="color:${SENSORIA_GREEN}; font-weight:900; font-size:12px; margin-bottom:5px;">${side.toUpperCase()} FOOT</div>
-        <div style="font-size:18px; color:#fff; font-family:monospace;">BI: ${bi.toFixed(1)}%</div>
-        <div style="display:flex; gap:10px; margin-top:8px;">
-            <div style="flex:1; background:rgba(255,255,255,0.1); padding:4px; text-align:center; border-radius:4px;">
-                <div style="font-size:9px; color:#999;">P0</div><div style="color:#ffce56;">${Math.round(data.pressure_0)}</div>
-            </div>
-            <div style="flex:1; background:rgba(255,255,255,0.1); padding:4px; text-align:center; border-radius:4px;">
-                <div style="font-size:9px; color:#999;">P1</div><div style="color:#ffce56;">${Math.round(data.pressure_1)}</div>
-            </div>
-            <div style="flex:1; background:rgba(255,255,255,0.1); padding:4px; text-align:center; border-radius:4px;">
-                <div style="font-size:9px; color:#999;">P2</div><div style="color:#ffce56;">${Math.round(data.pressure_2)}</div>
-            </div>
-        </div>
-    `;
+    // 3. Aggiorna Dati Grafico (per reattività)
+    const d = sockChartData[side];
+    const timestamp = Date.now() / 1000;
+    d[0].push(timestamp);
+    d[1].push(data.pressure_0);
+    d[2].push(data.pressure_1);
+    d[3].push(data.pressure_2);
+    
+    if (d[0].length > 100) d.forEach(a => a.shift());
+    sockCharts[side].setData(d);
 }
-
 
 // ==========================================
 // INIZIALIZZAZIONE
