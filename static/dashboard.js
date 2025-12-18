@@ -244,17 +244,26 @@ function ensureSessionStart(tMs) {
 }
 
 function getSessionEndMs() {
-  var last = sessionStartTimeMs || getNowMs();
-  if (gpsSamples.length) last = Math.max(last, gpsSamples[gpsSamples.length - 1].t);
-  if (bpmSamples.length) last = Math.max(last, bpmSamples[bpmSamples.length - 1].t);
-  if (sessionEndTimeMs != null) last = Math.max(last, sessionEndTimeMs);
-  return last;
+  if (!gpsSamples.length) return sessionStartTimeMs || Date.now();
+  
+  // Prendi l'ultimo GPS valido
+  const lastGps = gpsSamples[gpsSamples.length - 1].t;
+  
+  // Se la sessione supera le 2 ore, probabilmente c'è un timestamp errato
+  const diff = lastGps - sessionStartTimeMs;
+  if (diff > 7200000) { // 2 ore
+      console.warn("Rilevato timestamp anomalo, tronco la durata.");
+      return sessionStartTimeMs + (gpsSamples.length * 1000); // Fallback: 1 sec per campione
+  }
+  return lastGps;
 }
 
 function getDurationSec() {
-  if (sessionStartTimeMs == null) return 0;
-  return Math.max(0, Math.floor((getSessionEndMs() - sessionStartTimeMs) / 1000));
+  if (!sessionStartTimeMs) return 0;
+  const duration = (getSessionEndMs() - sessionStartTimeMs) / 1000;
+  return Math.max(0, duration);
 }
+
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
@@ -439,7 +448,7 @@ function onBpmUpdate(val) {
 // --- Assicurati che queste siano definite in alto nel file ---
 var lastSpeedCalcPos = null; 
 var currentSmoothedSpeed = 0; 
-const EMA_ALPHA = 0.15; // Valore basso = massima stabilità (Strava style)
+const EMA_ALPHA = 0.35;
 const MAX_SPEED_PATTINAGGIO = 75;
 
 function onGpsUpdate(data) {
@@ -461,7 +470,7 @@ function onGpsUpdate(data) {
     
     // 1. DISTANZA (Ultra-sensibile: aggiungiamo ogni millimetro per i 500m)
     let dM_step = haversineMeters(prev.lat, prev.lng, lat, lng);
-    if (isFinite(dM_step) && dM_step > 0.2 && (acc === null || acc < 40)) {
+    if (isFinite(dM_step) && dM_step > 0.05 && (acc === null || acc < 35)) {
       cumDistM = (prev.cumDistM || 0) + dM_step;
     } else {
       cumDistM = prev.cumDistM || 0;
@@ -471,7 +480,7 @@ function onGpsUpdate(data) {
     if (!lastSpeedCalcPos) lastSpeedCalcPos = { lat, lng, t: tMs };
     let dtS_win = (tMs - lastSpeedCalcPos.t) / 1000;
 
-    if (dtS_win >= 2.5) { 
+    if (dtS_win >= 1.5) { 
       let dM_win = haversineMeters(lastSpeedCalcPos.lat, lastSpeedCalcPos.lng, lat, lng);
       let rawSpeed = (dM_win / dtS_win) * 3.6;
 
