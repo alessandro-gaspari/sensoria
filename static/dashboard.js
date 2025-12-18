@@ -525,12 +525,25 @@ function applyMapRotation(deg) {
   const mapPane = container.querySelector('.leaflet-map-pane');
   if (!mapPane) return;
 
+  // preserva l'eventuale translate di Leaflet e aggiorna solo la rotate
+  const style = window.getComputedStyle(mapPane);
+  const current = (style.transform && style.transform !== 'none') ? style.transform : '';
+
+  const cleaned = current.replace(/rotate\([^)]*\)/, '').trim();
+  const next = `${cleaned} rotate(${deg}deg)`.trim();
+
   mapPane.style.transformOrigin = '50% 50%';
   mapPane.style.transition = 'transform 0.25s ease-out';
-  mapPane.style.transform = `rotate(${deg}deg)`;
+  mapPane.style.transform = next;
 
-  setTimeout(() => map.invalidateSize(), 300);
+  // forza un refresh dopo la transform (invalidateSize è la chiamata Leaflet standard) [web:21]
+  setTimeout(() => {
+    map.invalidateSize(true);
+    const c = map.getCenter();
+    map.panTo(c, { animate: false });
+  }, 260);
 }
+
 
 // ==========================================
 // REPLAY OVERLAY (slider + LIVE)
@@ -565,7 +578,7 @@ function createReplayOverlayControls() {
       <div id="replay-time-label" style="font-family:monospace; font-size:13px; color:#fff; font-weight:700;">00:00</div>
     </div>
 
-    <input id="replay-slider" type="range" min="0" max="0" value="0"
+    <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1"
       style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer;" />
 
     <button id="btn-live" type="button"
@@ -587,7 +600,7 @@ function createReplayOverlayControls() {
   var slider = document.getElementById('replay-slider');
   var btnLive = document.getElementById('btn-live');
 
-  // blocca propagazione verso Leaflet (click/scroll) [web:103]
+  // blocca propagazione verso Leaflet (click/scroll)
   if (window.L && L.DomEvent) {
     L.DomEvent.disableClickPropagation(overlay);
     L.DomEvent.disableScrollPropagation(overlay);
@@ -615,27 +628,29 @@ function createReplayOverlayControls() {
   }
 
   function seekToSliderValue() {
-    const sec = parseInt(slider.value || "0");
+    const sec = parseFloat(slider.value || "0");
     enterReplayAtSecond(sec);
   }
 
   function setSliderFromClientX(clientX) {
-    const rect = slider.getBoundingClientRect(); // [web:120]
+    const rect = slider.getBoundingClientRect();
     const x = clamp(clientX - rect.left, 0, rect.width);
     const pct = rect.width > 0 ? (x / rect.width) : 0;
-    const min = parseInt(slider.min || "0");
-    const max = parseInt(slider.max || "0");
-    const val = Math.round(min + pct * (max - min));
-    slider.value = String(val);
+
+    const min = parseFloat(slider.min || "0");
+    const max = parseFloat(slider.max || "0");
+
+    const val = min + pct * (max - min);
+    slider.value = val.toFixed(1);     // precisione 0.1s
     seekToSliderValue();
   }
 
-  // aggiorna in continuo mentre trascini il thumb
+  // thumb drag (continua)
   slider.addEventListener('input', () => {
     if (!scrubbing) seekToSliderValue();
   });
 
-  // click + drag ovunque sulla barra (stile YouTube) [web:126]
+  // click + drag ovunque sulla barra
   slider.addEventListener('pointerdown', (e) => {
     scrubbing = true;
     slider.setPointerCapture(e.pointerId);
@@ -672,6 +687,7 @@ function createReplayOverlayControls() {
   });
 }
 
+
 function showReplayOverlayIfReady() {
   var overlay = document.getElementById('replay-overlay');
   if (!overlay) return;
@@ -687,20 +703,26 @@ function updateReplayUiBounds() {
 
   var maxSec = getDurationSec();
   slider.max = String(maxSec);
+  slider.step = "0.1";
 
   if (!isReplayMode) {
-    slider.value = String(maxSec);
+    slider.value = maxSec.toFixed(1);
     updateReplayTimeLabel(maxSec);
   }
 }
 
+
 function updateReplayTimeLabel(sec) {
   var lab = document.getElementById('replay-time-label');
   if (!lab) return;
-  var m = Math.floor(sec / 60).toString().padStart(2, '0');
-  var s = (sec % 60).toString().padStart(2, '0');
+
+  // label in mm:ss (arrotondo solo per display)
+  var whole = Math.max(0, Math.round(sec));
+  var m = Math.floor(whole / 60).toString().padStart(2, '0');
+  var s = (whole % 60).toString().padStart(2, '0');
   lab.textContent = `${m}:${s}`;
 }
+
 
 // ==========================================
 // LOOKUP / REPLAY
@@ -826,6 +848,7 @@ function enterReplayAtSecond(sec) {
   var spd = getSpeedAtTime(tMs);
   updateSpeedDistanceUI(spd, distM);
 }
+
 
 function goLive() {
   isReplayMode = false;

@@ -353,8 +353,6 @@
 }
 #bpm-display { display: none !important; }
 
-
-
 @keyframes pulse-green {
     0% {
         box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7);
