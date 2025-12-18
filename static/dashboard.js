@@ -1509,6 +1509,10 @@ async function openLogsModal() {
  * Carica un'attività passata dal server e prepara tutti i dati per il Replay.
  * Gestisce il parsing di Sensori (Calzini), GPS e BPM.
  */
+/**
+ * Carica un'attività passata dal server e prepara tutti i dati per il Replay.
+ * Corretto l'errore di riferimento alla variabile 's'.
+ */
 async function loadPastActivity(logName) {
   try {
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
@@ -1519,10 +1523,9 @@ async function loadPastActivity(logName) {
     bpmSamples = [];
     leftSockSamples = [];
     rightSockSamples = [];
-    sockChartData.left = [[], [], [], []];  // [tRel, p0, p1, p2]
-    sockChartData.right = [[], [], [], []]; // [tRel, p0, p1, p2]
+    sockChartData.left = [[], [], [], []];  
+    sockChartData.right = [[], [], [], []]; 
     
-    // Reset filtri velocità
     currentSmoothedSpeed = 0;
     lastSpeedCalcPos = null;
 
@@ -1532,21 +1535,28 @@ async function loadPastActivity(logName) {
       return;
     }
 
-    // 2. Determina l'inizio sessione per i calcoli relativi (Asse X dei grafici)
-    sessionStartTimeMs = sensorsData.reduce((min, s) => {
-        const t = s.t || new Date(s.timestamp).getTime();
+    // 2. Determina l'inizio sessione in modo sicuro (CORRETTO)
+    const firstSensor = sensorsData[0];
+    const initialT = firstSensor.t || (firstSensor.timestamp ? new Date(firstSensor.timestamp).getTime() : Date.now());
+    
+    sessionStartTimeMs = sensorsData.reduce((min, item) => {
+        const t = item.t || (item.timestamp ? new Date(item.timestamp).getTime() : min);
         return t < min ? t : min;
-    }, s.t || new Date(sensorsData[0].timestamp).getTime());
+    }, initialT);
 
     // 3. Parsing Sensori e Calzini (Pre-rendering Grafici)
-    sensorsData.forEach(s => {
-      const tMs = s.t || new Date(s.timestamp).getTime();
+    sensorsData.forEach(sensorItem => {
+      const tMs = sensorItem.t || (sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() : null);
+      if (!tMs) return;
+
       const tRelSec = (tMs - sessionStartTimeMs) / 1000;
-      const name = (s.sensor_name || "").toLowerCase();
+      const name = (sensorItem.sensor_name || "").toLowerCase();
       
-      // Calcolo BI e preparazione campioni
-      const bi = calculateBI(s);
-      const p0 = Number(s.pressure_0 || 0), p1 = Number(s.pressure_1 || 0), p2 = Number(s.pressure_2 || 0);
+      const bi = calculateBI(sensorItem);
+      const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? 0);
+      const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? 0);
+      const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? 0);
+      
       const sample = { t: tMs, p0, p1, p2, bi };
 
       if (name.includes("sx") || name.includes("left")) {
@@ -1565,15 +1575,15 @@ async function loadPastActivity(logName) {
     });
 
     // 4. Parsing GPS (Ricostruzione distanza e velocità smooth)
-    if (Array.isArray(data.gps)) {
+    if (Array.isArray(data.gps) && data.gps.length > 0) {
       data.gps.forEach(p => onGpsUpdate(p));
     }
 
     // 5. Parsing BPM
     if (Array.isArray(data.bpm)) {
       data.bpm.forEach(b => {
-        const tMs = b.t || new Date(b.timestamp).getTime();
-        bpmSamples.push({ t: tMs, bpm: b.bpm || b.value });
+        const tMs = b.t || (b.timestamp ? new Date(b.timestamp).getTime() : null);
+        if (tMs) bpmSamples.push({ t: tMs, bpm: b.bpm || b.value || 0 });
       });
     }
 
@@ -1590,12 +1600,13 @@ async function loadPastActivity(logName) {
     // Posiziona il replay all'inizio dell'attività
     enterReplayAtSecond(0);
 
-    console.log(`Log "${logName}" caricato con successo. Campioni GPS: ${gpsSamples.length}`);
+    console.log(`✅ Log "${logName}" caricato. Start: ${sessionStartTimeMs}`);
 
   } catch (error) {
-    console.error("Errore durante il caricamento dell'attività:", error);
+    console.error("❌ Errore durante il caricamento dell'attività:", error);
   }
 }
+
 
 // ==========================================
 // OPTIONAL: CLEAR API CLIENT
