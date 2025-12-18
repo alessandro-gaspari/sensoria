@@ -68,6 +68,59 @@ var isUserInteracting = false;
 var MIN_ZOOM_RANGE = 0.5;
 var leftSockSamples = [];  
 var rightSockSamples = []; 
+// Nuove variabili globali
+var sockCharts = { left: null, right: null };
+var sockChartData = { 
+    left: [[], [], [], []], // [timestamp, p0, p1, p2]
+    right: [[], [], [], []] 
+};
+
+// Funzione per inizializzare i grafici dei calzini
+function initSockCharts() {
+    const commonOpts = (color) => ({
+        width: document.getElementById('pressure-left-chart').offsetWidth,
+        height: 150,
+        scales: { x: { time: true }, y: { auto: false, range: [0, 1024] } },
+        series: [
+            {},
+            { label: 'P0', stroke: color, width: 2 },
+            { label: 'P1', stroke: color, width: 2, dash: [5, 5] },
+            { label: 'P2', stroke: color, width: 2, dash: [2, 2] }
+        ],
+        axes: [{ show: false }, { stroke: "#666", size: 30 }]
+    });
+
+    sockCharts.left = new uPlot(commonOpts('#ff6384'), sockChartData.left, document.getElementById('pressure-left-chart'));
+    sockCharts.right = new uPlot(commonOpts('#36a2eb'), sockChartData.right, document.getElementById('pressure-right-chart'));
+}
+
+// Aggiorna UI Calzini (Chiamala da processIncomingData e enterReplayAtSecond)
+function updateSocksAnalysisUI(side, data, bi) {
+    if (!sockCharts.left) initSockCharts();
+
+    const t = Date.now() / 1000;
+    const targetData = sockChartData[side];
+    const targetChart = sockCharts[side];
+
+    // Aggiorna Dati Grafico
+    targetData[0].push(t);
+    targetData[1].push(data.pressure_0);
+    targetData[2].push(data.pressure_1);
+    targetData[3].push(data.pressure_2);
+    
+    // Mantieni ultimi 100 punti
+    if (targetData[0].length > 100) targetData.forEach(arr => arr.shift());
+    targetChart.setData(targetData);
+
+    // Aggiorna Valore BI (Bongiorno Index)
+    const biDisplay = document.getElementById('bi-value-display');
+    if (biDisplay) {
+        biDisplay.textContent = `${bi.toFixed(1)}%`;
+        // Colora in base all'intensità (opzionale)
+        biDisplay.style.color = bi > 40 ? '#ff4444' : '#97c93e';
+    }
+}
+
 
 function calculateBI(payload) {
     if (payload.accel_x == null || payload.accel_y == null || payload.accel_z == null) return 0;
