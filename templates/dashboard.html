@@ -1,88 +1,245 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Sensoria Dashboard - GPS Only</title>
-
-  <!-- (Opzionale) Il tuo CSS -->
-  <link rel="stylesheet" href="/static/dashboard.css" />
-
-  <!-- Leaflet (mappa) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <style>
-    body {
-      background: #0f0f0f;
-      color: #fff;
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    }
-    .dashboard-header {
-      background: #111;
-      border-bottom: 1px solid #333;
-      padding: 12px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-    }
-    #connection-status {
-      font-weight: 700;
-      color: #ddd;
-      white-space: nowrap;
-    }
-    .dot {
-      height: 10px;
-      width: 10px;
-      background: #97c93e;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 8px;
-    }
-    .dashboard-container {
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 25px;
-    }
-    #map-section {
-      position: relative;
-      height: 520px;
-      width: 100%;
-    }
-    #map {
-      height: 100%;
-      width: 100%;
-      border-radius: 20px;
-      border: 2px solid #333;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensoria Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.min.css">
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif; 
+            background: #0a0a0a; 
+            color: #fff; 
+            overflow-x: hidden;
+        }
+        
+        #map { 
+            width: 100vw; 
+            height: 60vh; 
+            position: relative;
+            background: #111;
+        }
+        
+        /* ========================================== */
+        /* RIQUADRI CALZINI */
+        /* ========================================== */
+        #socks-container {
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+            background: #0a0a0a;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .sock-card {
+            background: linear-gradient(145deg, #1a1a1a, #0f0f0f);
+            border: 1px solid #333;
+            border-radius: 16px;
+            padding: 20px;
+            width: 320px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .sock-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(151, 201, 62, 0.2);
+        }
+        
+        .sock-card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #333;
+        }
+        
+        .sock-emoji {
+            font-size: 32px;
+            line-height: 1;
+        }
+        
+        .sock-title {
+            flex: 1;
+        }
+        
+        .sock-title h3 {
+            font-size: 18px;
+            font-weight: 800;
+            color: #fff;
+            margin-bottom: 4px;
+            letter-spacing: 0.3px;
+        }
+        
+        .sock-title p {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #97c93e;
+            text-transform: uppercase;
+        }
+        
+        .sock-pressures {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .pressure-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.05);
+            transition: background 0.2s ease;
+        }
+        
+        .pressure-row:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        
+        .pressure-label {
+            font-size: 13px;
+            font-weight: 700;
+            color: #aaa;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .pressure-value {
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 20px;
+            font-weight: 900;
+            color: #97c93e;
+            min-width: 50px;
+            text-align: right;
+        }
+        
+        /* ========================================== */
+        /* PULSATING MARKER ANIMATION */
+        /* ========================================== */
+        .pulsating-marker {
+            width: 24px;
+            height: 24px;
+            background: #97c93e;
+            border-radius: 50%;
+            position: relative;
+            box-shadow: 0 0 12px rgba(151, 201, 62, 0.8);
+        }
+        
+        .pulsating-marker::before {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: rgba(151, 201, 62, 0.6);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { 
+                transform: scale(1); 
+                opacity: 1; 
+            }
+            100% { 
+                transform: scale(2.5); 
+                opacity: 0; 
+            }
+        }
+        
+        /* ========================================== */
+        /* RESPONSIVE */
+        /* ========================================== */
+        @media (max-width: 768px) {
+            #map {
+                height: 50vh;
+            }
+            
+            #socks-container {
+                padding: 12px;
+                gap: 12px;
+            }
+            
+            .sock-card {
+                width: 100%;
+                max-width: 400px;
+            }
+        }
+    </style>
 </head>
-
 <body>
-  <!-- HEADER -->
-  <div class="dashboard-header">
-    <div style="display:flex;align-items:center;gap:14px;">
-      <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo" style="height:40px;object-fit:contain;" />
+    <!-- MAPPA -->
+    <div id="map"></div>
+    
+    <!-- RIQUADRI CALZINI -->
+    <div id="socks-container">
+        <!-- CALZINO SINISTRO -->
+        <div class="sock-card">
+            <div class="sock-card-header">
+                <div class="sock-emoji">👟</div>
+                <div class="sock-title">
+                    <h3>Piede Sinistro</h3>
+                    <p>Pressioni</p>
+                </div>
+            </div>
+            <div class="sock-pressures">
+                <div class="pressure-row">
+                    <span class="pressure-label">Posteriore</span>
+                    <span class="pressure-value" id="l-posteriore">--</span>
+                </div>
+                <div class="pressure-row">
+                    <span class="pressure-label">Sinistra</span>
+                    <span class="pressure-value" id="l-sinistra">--</span>
+                </div>
+                <div class="pressure-row">
+                    <span class="pressure-label">Destra</span>
+                    <span class="pressure-value" id="l-destra">--</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- CALZINO DESTRO -->
+        <div class="sock-card">
+            <div class="sock-card-header">
+                <div class="sock-emoji">👟</div>
+                <div class="sock-title">
+                    <h3>Piede Destro</h3>
+                    <p>Pressioni</p>
+                </div>
+            </div>
+            <div class="sock-pressures">
+                <div class="pressure-row">
+                    <span class="pressure-label">Posteriore</span>
+                    <span class="pressure-value" id="r-posteriore">--</span>
+                </div>
+                <div class="pressure-row">
+                    <span class="pressure-label">Sinistra</span>
+                    <span class="pressure-value" id="r-sinistra">--</span>
+                </div>
+                <div class="pressure-row">
+                    <span class="pressure-label">Destra</span>
+                    <span class="pressure-value" id="r-destra">--</span>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div id="connection-status">
-      <span class="dot"></span> Disconnesso
-    </div>
-  </div>
-
-  <div class="dashboard-container">
-    <!-- MAPPA (il JS mette overlay metriche + slider replay sopra questa) -->
-    <div id="map-section">
-      <div id="map"></div>
-    </div>
-  </div>
-
-  <!-- Socket.io -->
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-
-  <!-- Il tuo JS minimale -->
-  <script src="/static/dashboard.js"></script>
+    <!-- JAVASCRIPT -->
+    <script src="/static/dashboard.js"></script>
 </body>
 </html>

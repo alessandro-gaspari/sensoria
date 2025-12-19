@@ -1119,20 +1119,23 @@ function initSockCharts() {
 
 function updateSocksUI(side, data, bi) {
   const prefix = side === "left" ? "l" : "r";
-
+  
+  // BI (Balance Index) - se hai questo dato
   const biEl = document.getElementById(`bi-val-${side}`);
   if (biEl) {
-    biEl.textContent = `BI: ${bi.toFixed(1)}%`;
+    biEl.textContent = `BI: ${bi.toFixed(1)}`;
     biEl.style.color = bi > 40 ? "#ff4444" : SENSORIA_GREEN;
   }
 
-  const val0 = data.p0 ?? data.pressure0 ?? data.pressure_0 ?? 0;
-  const val1 = data.p1 ?? data.pressure1 ?? data.pressure_1 ?? 0;
-  const val2 = data.p2 ?? data.pressure2 ?? data.pressure_2 ?? 0;
+  const val0 = data.p0 ?? data.pressure_0 ?? data.pressure0 ?? 0;
+  const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
+  const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
 
-  const el0 = document.getElementById(`${prefix}-p0`);
-  const el1 = document.getElementById(`${prefix}-p1`);
-  const el2 = document.getElementById(`${prefix}-p2`);
+  // Aggiorna i valori con le nuove label
+  const el0 = document.getElementById(`${prefix}-posteriore`);
+  const el1 = document.getElementById(`${prefix}-sinistra`);
+  const el2 = document.getElementById(`${prefix}-destra`);
+
   if (el0) el0.textContent = Math.round(val0);
   if (el1) el1.textContent = Math.round(val1);
   if (el2) el2.textContent = Math.round(val2);
@@ -1143,16 +1146,17 @@ function updateSocksUI(side, data, bi) {
     const chart = sockCharts[side];
     if (chart) {
       const d = sockChartData[side];
-      const tRel = sessionStartTimeMs ? ((Date.now() - sessionStartTimeMs) / 1000) : 0;
+      const tRel = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
       d[0].push(tRel);
       d[1].push(val0);
       d[2].push(val1);
       d[3].push(val2);
-      if (d[0].length > 100) d.forEach(a => a.shift());
+      if (d[0].length > 100) d.forEach((a) => a.shift());
       chart.setData(d);
     }
   }
 }
+
 
 // ==========================================
 // SENSOR CARDS UI (minimal)
