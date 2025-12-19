@@ -17,6 +17,8 @@
   let lastSpeedSec = null;         // ultimo secondo per cui abbiamo calcolato la speed
   let lastSpeedKmh = 0;
   let lastSpeedFix = null;         // fix usato come “punto di 1s fa”
+  let lastDistAtSecM = 0;   // cumDistM “fotografata” all’ultimo secondo chiuso
+
 
 
   // Se la sessione sembra enorme per timestamp sballati, fallback 1s per punto
@@ -102,7 +104,11 @@
 
   function resetAllState() {
     sessionStartTimeMs = null;
-
+    speedBySec = [];
+    lastSpeedSec = null;
+    lastSpeedKmh = 0;
+    lastSpeedFix = null;
+    lastDistAtSecM = 0;
     gpsSamples = [];
     bpmSamples = [];
     lastLiveBpm = "--";
@@ -247,55 +253,65 @@
       prevFix = fix;
       cumDistM = 0;
 
-      // inizializza speed "a secondi"
       lastSpeedSec = 0;
+      lastDistAtSecM = 0;
       lastSpeedKmh = 0;
       lastSpeedFix = fix;
+      speedBySec = [];
       speedBySec[0] = 0;
 
-      const s0 = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM, speedKmh: 0 };
+      const s0 = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM: 0, speedKmh: 0 };
       gpsSamples.push(s0);
 
       if (updateMap) {
         ensureMapInitialized(fix.lat, fix.lng);
         pushMapPoint(fix.lat, fix.lng, true);
       }
-      if (updateUi) updateSpeedDistanceUI(0, cumDistM);
+      if (updateUi) updateSpeedDistanceUI(0, 0);
 
       updateReplayUiBounds();
       showReplayOverlayIfReady();
       return s0;
     }
 
-    // dt (secondi)
+    // dt (secondi) per distanza cumulativa (non per speed)
     const dtS = (fix.t - prevFix.t) / 1000;
     if (!isFinite(dtS) || dtS <= 0) return null;
 
-    // distanza step (per cumDist)
+    // 1) Distanza cumulativa: somma haversine tra fix consecutivi (come già fai)
     const stepM = haversineMeters(prevFix.lat, prevFix.lng, fix.lat, fix.lng);
     const validStepM = isFinite(stepM) && stepM >= 0 ? stepM : 0;
     cumDistM += validStepM;
 
-    // ---- SPEED A SCATTI (1 Hz logico) ----
+    // 2) Speed “a scatti” ogni secondo: usa DELTA della distanza cumulativa
     const sec = Math.floor((fix.t - sessionStartTimeMs) / 1000);
 
     if (lastSpeedSec == null) {
       lastSpeedSec = sec;
-      lastSpeedFix = prevFix;
+      lastDistAtSecM = cumDistM;
       lastSpeedKmh = 0;
       speedBySec[sec] = 0;
     }
 
-    // aggiorna la speed SOLO quando cambia il secondo
     if (sec > lastSpeedSec) {
-      const dM = haversineMeters(lastSpeedFix.lat, lastSpeedFix.lng, fix.lat, fix.lng);
-      const dtBucket = sec - lastSpeedSec; // secondi interi
-      const rawKmh = (Math.max(0, dM) / Math.max(1, dtBucket)) * 3.6;
+      const dtBucket = sec - lastSpeedSec; // secondi interi passati
 
-      lastSpeedKmh = Math.min(rawKmh, MAX_SPEED_KMH);
-      speedBySec[sec] = lastSpeedKmh;
+      // differenza distanza (metri) con 1 decimale per “cifra significativa”
+      let deltaM = cumDistM - lastDistAtSecM;
+      deltaM = Math.round(Math.max(0, deltaM) * 10) / 10;
+
+      let kmh = (deltaM / Math.max(1, dtBucket)) * 3.6;
+
+      if (!isFinite(kmh) || kmh < 0) kmh = 0;
+      kmh = Math.min(kmh, MAX_SPEED_KMH);
+
+      lastSpeedKmh = kmh;
+
+      // riempi secondi mancanti per evitare speedBySec undefined -> 0 nel replay
+      for (let s = lastSpeedSec + 1; s <= sec; s++) speedBySec[s] = kmh;
 
       lastSpeedSec = sec;
+      lastDistAtSecM = cumDistM;
       lastSpeedFix = fix;
     }
 
@@ -316,7 +332,6 @@
     showReplayOverlayIfReady();
     return sample;
   }
-
 
   function ingestBpmPoint(p, opts = {}) {
     const updateUi = opts.updateUi !== false;
