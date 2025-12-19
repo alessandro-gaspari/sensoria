@@ -298,3 +298,11 @@ function updateReplayTimeLabel(sec) {
     el.textContent = `${m}:${s}`;
   }
 }
+
+// Forza inizializzazione mappa all'avvio se non ci sono dati
+setTimeout(() => {
+    if (!isMapInitialized) {
+        console.log("Forzatura mappa su posizione predefinita...");
+        ensureMapInitialized(44.4056, 8.9463); // Genoa
+    }
+}, 1000);

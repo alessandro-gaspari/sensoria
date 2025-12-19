@@ -131,10 +131,27 @@
 
   <div class="dashboard-container">
 
-    <!-- 1. MAPPA GPS + METRICHE (le cards vengono create dal JS) -->
-    <div id="map-section">
-      <div id="map"></div>
+    <!-- 1. MAPPA GPS + METRICHE -->
+    <div id="map-section" style="position: relative; height: 500px; width: 100%; margin-bottom: 30px;">
+        <div id="map" style="height: 100%; width: 100%; border-radius: 20px; border: 2px solid #333;"></div>
+        
+        <!-- BOX METRICHE (Aggiunti manualmente per sicurezza) -->
+        <div id="metrics-stack" style="position:absolute; top:16px; right:16px; z-index:20000; display:flex; flex-direction:column; gap:10px; pointer-events:none;">
+            <div class="metric-card" style="border-color:#ff4136; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
+                <div style="font-size:20px">❤️</div>
+                <div><div id="bpm-value" style="color:#fff; font-weight:bold;">--</div><div style="color:#ff4136; font-size:10px;">BPM LIVE</div></div>
+            </div>
+            <div class="metric-card" style="border-color:#ff9500; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
+                <div style="font-size:20px">⚡</div>
+                <div><div id="speed-value" style="color:#fff; font-weight:bold;">-- km/h</div><div style="color:#ff9500; font-size:10px;">VELOCITÀ</div></div>
+            </div>
+            <div class="metric-card" style="border-color:#ffd60a; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
+                <div style="font-size:20px">📍</div>
+                <div><div id="distance-value" style="color:#fff; font-weight:bold;">-- km</div><div style="color:#ffd60a; font-size:10px;">DISTANZA</div></div>
+            </div>
+        </div>
     </div>
+
 
     <!-- 2. STORICO ATTIVITÀ -->
     <div id="past-activities-section">
