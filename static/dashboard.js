@@ -4,7 +4,7 @@
 // ==========================================
 
 // ---- VERSION marker (per capire subito se il browser sta usando questo file) ----
-console.log("dashboard.js loaded - VERSION 2025-12-19 13:18 onGpsUpdate");
+console.log("dashboard.js loaded - VERSION 2025-12-19 17:20 PRESSIONI FIX");
 
 // ==========================================
 // Socket
@@ -33,7 +33,9 @@ var isReplayMode = false;
 var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
 var lastLiveBpm = "--";
+
 var isBulkLoading = false;
+
 var speedBySec = [];
 var secPos = [];
 var lastSpeedSec = null;
@@ -46,7 +48,7 @@ var lastSpeedKmh = 0;
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
-var fullRoute = null;     // polilinea intera
+var fullRoute = null; // polilinea intera
 var progressRoute = null; // polilinea fino al tempo (replay/live)
 
 // (opzionale) stato marker animato / rotazione
@@ -68,13 +70,20 @@ const METRIC_CARD_H = 64;
 // ==========================================
 // GRAFICI (uPlot)
 // ==========================================
-var charts = { accel: null, gyro: null, mag: null, pressure: null };
+var charts = {
+  accel: null,
+  gyro: null,
+  mag: null,
+  pressure: null
+};
+
 var chartData = {
   accel: [[], [], [], []],
   gyro: [[], [], [], []],
   mag: [[], [], [], []],
   pressure: [[], [], [], []]
 };
+
 var selectedSensor = null;
 var chartsInitialized = false;
 var isUserInteracting = false;
@@ -86,16 +95,19 @@ var MIN_ZOOM_RANGE = 0.5;
 var leftSockSamples = [];
 var rightSockSamples = [];
 var sockCharts = { left: null, right: null };
-var sockChartData = { left: [[], [], [], []], right: [[], [], [], []] };
+var sockChartData = {
+  left: [[], [], [], []],
+  right: [[], [], [], []]
+};
 
 // ==========================================
 // GPS SPEED config (anti picchi)
 // ==========================================
 const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanza
-const GPS_MIN_DT_S = 0.30;              // se dt < 0.30s ignora fix (timestamp duplicati)
-const GPS_MAX_DT_S = 10.0;              // se dt troppo grande, clamp per evitare drop/impulsi strani
-const GPS_MIN_STEP_M = 0.20;            // sotto 20cm = jitter (non sommare, non dare speed)
-const MAX_SPEED_KMH = 100;              // cap (alzabile per pattinaggio veloce)
+const GPS_MIN_DT_S = 0.30; // se dt < 0.30s ignora fix (timestamp duplicati)
+const GPS_MAX_DT_S = 10.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
+const GPS_MIN_STEP_M = 0.20; // sotto 20cm = jitter (non sommare, non dare speed)
+const MAX_SPEED_KMH = 100; // cap (alzabile per pattinaggio veloce)
 
 // ==========================================
 // INIZIALIZZAZIONE
@@ -111,7 +123,6 @@ document.addEventListener("DOMContentLoaded", function () {
     sel.addEventListener("change", function (e) {
       selectedSensor = e.target.value || null;
       resetChartData();
-
       var container = document.getElementById("charts-container");
       if (selectedSensor) {
         container.style.display = "block";
@@ -134,7 +145,7 @@ function initSocket() {
     var el = document.getElementById("connection-status");
     if (el) {
       el.className = "";
-      el.innerHTML = " Connesso";
+      el.innerHTML = '<span class="dot"></span> Connesso';
     }
   });
 
@@ -142,7 +153,7 @@ function initSocket() {
     var el = document.getElementById("connection-status");
     if (el) {
       el.className = "disconnected";
-      el.innerHTML = " Disconnesso";
+      el.innerHTML = '<span class="dot"></span> Disconnesso';
     }
   });
 
@@ -178,17 +189,14 @@ function clamp(n, a, b) {
 function rebuildSpeedBySecFromGps() {
   speedBySec = [];
   secPos = [];
-
   if (sessionStartTimeMs == null || !gpsSamples.length) return;
 
-  // durata in secondi (ceil per coprire l’ultimo tratto)
+  // durata in secondi (ceil per coprire l'ultimo tratto)
   const dur = Math.max(0, Math.ceil(getDurationSec()));
-
   let prev = null;
 
   for (let s = 0; s <= dur; s++) {
     const tMs = sessionStartTimeMs + s * 1000;
-
     const pos = getInterpolatedGpsAtTime(tMs);
     if (!pos) continue;
 
@@ -198,23 +206,18 @@ function rebuildSpeedBySecFromGps() {
       speedBySec[s] = 0;
     } else {
       const dM = haversineMeters(prev.lat, prev.lng, pos.lat, pos.lng);
-
-      // scatto “1 secondo”: m/s = dM / 1, km/h = m/s * 3.6
+      // scatto "1 secondo": m/s = dM / 1, km/h = m/s * 3.6
       let kmh = dM * 3.6;
-
       if (!isFinite(kmh) || kmh < 0) kmh = 0;
       kmh = Math.min(kmh, 100);
-
       speedBySec[s] = kmh;
     }
-
     prev = pos;
   }
 }
 
 function getSessionEndMs() {
   if (!gpsSamples.length) return sessionStartTimeMs || Date.now();
-
   const lastGps = gpsSamples[gpsSamples.length - 1].t;
 
   // guard-rail: se durata enorme, probabile timestamp errato -> fallback 1s per campione
@@ -223,7 +226,6 @@ function getSessionEndMs() {
     console.warn("Rilevato timestamp anomalo, tronco la durata.");
     return sessionStartTimeMs + gpsSamples.length * 1000;
   }
-
   return lastGps;
 }
 
@@ -244,10 +246,9 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 
   const a =
     Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) *
-    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
   return R * c;
 }
 
@@ -292,39 +293,45 @@ function ensureMetricsCardsUI() {
   }
 
   if (!document.getElementById("metric-bpm")) {
-    wrap.appendChild(buildMetricCard({
-      id: "metric-bpm",
-      emoji: "❤️",
-      label: "BPM LIVE",
-      labelColor: "rgba(255, 65, 54, 0.95)",
-      borderColor: "rgba(255, 65, 54, 0.70)",
-      valueId: "bpm-value",
-      unitText: ""
-    }));
+    wrap.appendChild(
+      buildMetricCard({
+        id: "metric-bpm",
+        emoji: "❤️",
+        label: "BPM LIVE",
+        labelColor: "rgba(255, 65, 54, 0.95)",
+        borderColor: "rgba(255, 65, 54, 0.70)",
+        valueId: "bpm-value",
+        unitText: ""
+      })
+    );
   }
 
   if (!document.getElementById("metric-speed")) {
-    wrap.appendChild(buildMetricCard({
-      id: "metric-speed",
-      emoji: "⚡",
-      label: "VELOCITÀ",
-      labelColor: "rgba(255, 149, 0, 0.95)",
-      borderColor: "rgba(255, 149, 0, 0.70)",
-      valueId: "speed-value",
-      unitText: "km/h"
-    }));
+    wrap.appendChild(
+      buildMetricCard({
+        id: "metric-speed",
+        emoji: "⚡",
+        label: "VELOCITÀ",
+        labelColor: "rgba(255, 149, 0, 0.95)",
+        borderColor: "rgba(255, 149, 0, 0.70)",
+        valueId: "speed-value",
+        unitText: "km/h"
+      })
+    );
   }
 
   if (!document.getElementById("metric-dist")) {
-    wrap.appendChild(buildMetricCard({
-      id: "metric-dist",
-      emoji: "📍",
-      label: "DISTANZA",
-      labelColor: "rgba(255, 214, 10, 0.95)",
-      borderColor: "rgba(255, 214, 10, 0.70)",
-      valueId: "distance-value",
-      unitText: "km"
-    }));
+    wrap.appendChild(
+      buildMetricCard({
+        id: "metric-dist",
+        emoji: "📍",
+        label: "DISTANZA",
+        labelColor: "rgba(255, 214, 10, 0.95)",
+        borderColor: "rgba(255, 214, 10, 0.70)",
+        valueId: "distance-value",
+        unitText: "km"
+      })
+    );
   }
 }
 
@@ -352,10 +359,12 @@ function buildMetricCard({ id, emoji, label, labelColor, borderColor, valueId, u
     <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px">
       <div id="${valueId}" style="font-family:monospace;font-size:14px;font-weight:900;color:#fff">--</div>
       <div style="font-size:10px;font-weight:900;letter-spacing:1px;color:${labelColor}">
-        ${label} ${unitText ? `<span style="opacity:0.9">${unitText}</span>` : ""}
+        ${label}
+        ${unitText ? `<span style="opacity:0.9">${unitText}</span>` : ""}
       </div>
     </div>
   `;
+
   return card;
 }
 
@@ -375,7 +384,7 @@ function updateSpeedDistanceUI(speedKmh, distMeters) {
 }
 
 // ==========================================
-// BPM LIVE TIMELINE
+// BPM (LIVE / TIMELINE)
 // ==========================================
 function onBpmUpdate(val) {
   var bpmInt = parseInt(val, 10);
@@ -387,7 +396,9 @@ function onBpmUpdate(val) {
   lastLiveBpm = bpmInt;
   bpmSamples.push({ t: tMs, bpm: bpmInt });
 
-  if (!isReplayMode) updateBpmValue(bpmInt);
+  if (!isReplayMode) {
+    updateBpmValue(bpmInt);
+  }
 
   updateReplayUiBounds();
   showReplayOverlayIfReady();
@@ -396,8 +407,8 @@ function onBpmUpdate(val) {
 // ==========================================
 // GPS NORMALIZATION (live + replay)
 // ==========================================
-let _gpsTimeUnit = null;   // 'ms' | 's' | null
-let _lastGpsTRaw = null;
+let gpsTimeUnit = null; // "ms" / "s" / null
+let lastGpsTRaw = null;
 
 function normalizeGpsPoint(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -422,7 +433,7 @@ function normalizeGpsPoint(raw) {
 
   let tMs = null;
 
-  // 1) timestamp (string ISO o number)
+  // 1) timestamp string ISO o number
   const ts = raw.timestamp ?? raw.ts;
   if (ts != null) {
     if (typeof ts === "number") {
@@ -433,7 +444,7 @@ function normalizeGpsPoint(raw) {
     }
   }
 
-  // 2) fallback: t / tMs / time (numerico relativo o epoch)
+  // 2) fallback: t / tMs / time numerico relativo o epoch
   if (tMs == null) {
     const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
     if (!isFinite(tRaw)) return null;
@@ -441,14 +452,17 @@ function normalizeGpsPoint(raw) {
     if (tRaw > 1e12) {
       tMs = tRaw;
     } else {
-      // capisci unità dal delta
-      if (_gpsTimeUnit == null && _lastGpsTRaw != null) {
-        const d = tRaw - _lastGpsTRaw;
-        if (d > 0 && d < 20) _gpsTimeUnit = "s";
-        else if (d >= 20) _gpsTimeUnit = "ms";
+      // capisci unit dal delta
+      if (gpsTimeUnit == null && lastGpsTRaw != null) {
+        const d = tRaw - lastGpsTRaw;
+        if (d > 0 && d < 20) {
+          gpsTimeUnit = "s";
+        } else if (d >= 20) {
+          gpsTimeUnit = "ms";
+        }
       }
-      _lastGpsTRaw = tRaw;
-      tMs = (_gpsTimeUnit === "s") ? tRaw * 1000 : tRaw;
+      lastGpsTRaw = tRaw;
+      tMs = gpsTimeUnit === "s" ? tRaw * 1000 : tRaw;
     }
   }
 
@@ -458,7 +472,7 @@ function normalizeGpsPoint(raw) {
 }
 
 // ==========================================
-// GPS LIVE + REPLAY (CORE): onGpsUpdate
+// GPS (LIVE / REPLAY CORE: onGpsUpdate)
 // ==========================================
 function onGpsUpdate(data) {
   if (!data) return;
@@ -469,9 +483,13 @@ function onGpsUpdate(data) {
 
   // timestamp: preferisci t, fallback timestamp ISO, fallback now
   let tMs = null;
-  if (data.t != null) tMs = Number(data.t);
-  else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
-  else tMs = Date.now();
+  if (data.t != null) {
+    tMs = Number(data.t);
+  } else if (data.timestamp) {
+    tMs = new Date(data.timestamp).getTime();
+  } else {
+    tMs = Date.now();
+  }
 
   if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
   if (!isFinite(tMs)) return;
@@ -480,20 +498,23 @@ function onGpsUpdate(data) {
 
   const prevSample = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
 
-  // primo punto: speed 0
+  // primo punto: speed = 0
   if (!prevSample) {
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
 
     if (!isBulkLoading) {
       ensureMapInitialized(lat, lng);
-      if (!isReplayMode) updateSpeedDistanceUI(0, 0);
-      updateReplayUiBounds();
-      showReplayOverlayIfReady();
+      if (!isReplayMode) {
+        updateSpeedDistanceUI(0, 0);
+      }
     }
+
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
     return;
   }
 
-  // CALCOLO VELOCITÀ con SMOOTHING per GPS rumorosi
+  // CALCOLO VELOCITÀ (con SMOOTHING per GPS rumorosi)
   const dtSec = (tMs - prevSample.t) / 1000;
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
@@ -502,26 +523,24 @@ function onGpsUpdate(data) {
 
   // Filtri qualità GPS
   if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50) {
-    
-    // Se ti muovi pochissimo (< 1m), considera velocità ~0
+    // Se ti muovi pochissimo (<1m), considera velocità = 0
     if (stepM < 1.0) {
       speedKmh = 0;
       usedStepM = 0;
-    } 
+    }
     // Movimento rilevato
     else {
       usedStepM = stepM;
       const instantSpeed = (stepM / dtSec) * 3.6; // km/h istantaneo
-      
-      // Smoothing esponenziale (70% vecchio, 30% nuovo) per evitare oscillazioni
+
+      // Smoothing esponenziale: 70% vecchio, 30% nuovo per evitare oscillazioni
       const prevSpeed = prevSample.speedKmh || 0;
       speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
-      
+
       // Cap realistico
       if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
       speedKmh = Math.min(speedKmh, 100);
     }
-    
   } else {
     // Fix scadenti: mantieni velocità precedente
     speedKmh = prevSample.speedKmh || 0;
@@ -530,19 +549,14 @@ function onGpsUpdate(data) {
   const newCumDistM = (prevSample.cumDistM || 0) + usedStepM;
 
   // Salva sample
-  gpsSamples.push({
-    t: tMs,
-    lat,
-    lng,
-    acc,
-    cumDistM: newCumDistM,
-    speedKmh: speedKmh
-  });
+  gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh });
 
   // UI/MAP: aggiorna solo se non bulk
   if (isBulkLoading) return;
 
-  if (!isReplayMode) updateSpeedDistanceUI(speedKmh, newCumDistM);
+  if (!isReplayMode) {
+    updateSpeedDistanceUI(speedKmh, newCumDistM);
+  }
 
   if (map && mapMarker) {
     const pos = [lat, lng];
@@ -555,6 +569,7 @@ function onGpsUpdate(data) {
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
+
 // ==========================================
 // MAP INIT + push point
 // ==========================================
@@ -571,26 +586,33 @@ function ensureMapInitialized(lat, lng) {
   if (!mapDiv) return;
   mapDiv.style.position = "relative";
 
-  map = L.map("map", { attributionControl: false, zoomControl: true }).setView([lat, lng], 19);
+  map = L.map("map", {
+    attributionControl: false,
+    zoomControl: true
+  }).setView([lat, lng], 19);
 
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
     maxZoom: 20
   }).addTo(map);
 
   // pane ordering
   map.createPane("routePane");
   map.getPane("routePane").style.zIndex = 450;
+
   map.createPane("markerPane");
   map.getPane("markerPane").style.zIndex = 650;
 
   var pulseIcon = L.divIcon({
     className: "custom-div-icon",
-    html: `<div class="pulsating-marker"></div>`,
+    html: '<div class="pulsating-marker"></div>',
     iconSize: [24, 24],
     iconAnchor: [12, 12]
   });
 
-  mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: "markerPane" }).addTo(map);
+  mapMarker = L.marker([lat, lng], {
+    icon: pulseIcon,
+    pane: "markerPane"
+  }).addTo(map);
 
   fullRoute = L.polyline([], {
     pane: "routePane",
@@ -615,7 +637,10 @@ function ensureMapInitialized(lat, lng) {
   ensureMetricsCardsUI();
 
   isMapInitialized = true;
-  setTimeout(() => map.invalidateSize(), 120);
+
+  setTimeout(() => {
+    map.invalidateSize();
+  }, 120);
 }
 
 function pushMapPoint(lat, lng) {
@@ -623,10 +648,8 @@ function pushMapPoint(lat, lng) {
 
   const pos = [lat, lng];
   mapMarker.setLatLng(pos);
-
   if (fullRoute) fullRoute.addLatLng(pos);
   if (progressRoute) progressRoute.addLatLng(pos);
-
   if (!isUserInteracting) map.panTo(pos);
 }
 
@@ -640,7 +663,7 @@ function createRotateControl() {
 
   const btn = document.createElement("button");
   btn.id = "rotate-btn";
-  btn.innerHTML = "⟳";
+  btn.innerHTML = "🧭";
   btn.title = "Ruota mappa";
   btn.style.cssText = `
     position:absolute;
@@ -671,13 +694,14 @@ function createRotateControl() {
 
 function applyMapRotation(deg) {
   if (!map) return;
+
   const container = map.getContainer();
   const mapPane = container.querySelector(".leaflet-map-pane");
   if (!mapPane) return;
 
   const style = window.getComputedStyle(mapPane);
-  const current = style.transform && style.transform !== "none" ? style.transform : "";
-  const cleaned = current.replace(/rotate\([^)]*\)/g, "").trim();
+  const current = style.transform !== "none" ? style.transform : "";
+  const cleaned = current.replace(/rotate\([^)]+\)/g, "").trim();
   const next = `${cleaned} rotate(${deg}deg)`.trim();
 
   mapPane.style.transformOrigin = "50% 50%";
@@ -723,14 +747,8 @@ function createReplayOverlayControls() {
       <div style="font-size:10px;letter-spacing:1px;color:#9aa;font-weight:700">TIME</div>
       <div id="replay-time-label" style="font-family:monospace;font-size:13px;color:#fff;font-weight:700">00:00</div>
     </div>
-
-    <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1"
-      style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
-
-    <button id="btn-live" type="button"
-      style="padding:6px 12px;border-radius:8px;border:1px solid ${SENSORIA_GREEN};
-             background:rgba(151,201,62,0.18);color:${SENSORIA_GREEN};
-             font-weight:800;font-size:11px;letter-spacing:1px;cursor:pointer">
+    <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1" style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
+    <button id="btn-live" type="button" style="padding:6px 12px;border-radius:8px;border:1px solid ${SENSORIA_GREEN};background:rgba(151,201,62,0.18);color:${SENSORIA_GREEN}; font-weight:800;font-size:11px;letter-spacing:1px;cursor:pointer">
       LIVE
     </button>
   `;
@@ -751,24 +769,24 @@ function createReplayOverlayControls() {
   function lockMapInteractions(lock) {
     if (!map) return;
     if (lock) {
-      map.dragging && map.dragging.disable();
-      map.scrollWheelZoom && map.scrollWheelZoom.disable();
-      map.doubleClickZoom && map.doubleClickZoom.disable();
-      map.touchZoom && map.touchZoom.disable();
-      map.boxZoom && map.boxZoom.disable();
-      map.keyboard && map.keyboard.disable();
+      if (map.dragging) map.dragging.disable();
+      if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
+      if (map.doubleClickZoom) map.doubleClickZoom.disable();
+      if (map.touchZoom) map.touchZoom.disable();
+      if (map.boxZoom) map.boxZoom.disable();
+      if (map.keyboard) map.keyboard.disable();
     } else {
-      map.dragging && map.dragging.enable();
-      map.scrollWheelZoom && map.scrollWheelZoom.enable();
-      map.doubleClickZoom && map.doubleClickZoom.enable();
-      map.touchZoom && map.touchZoom.enable();
-      map.boxZoom && map.boxZoom.enable();
-      map.keyboard && map.keyboard.enable();
+      if (map.dragging) map.dragging.enable();
+      if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
+      if (map.doubleClickZoom) map.doubleClickZoom.enable();
+      if (map.touchZoom) map.touchZoom.enable();
+      if (map.boxZoom) map.boxZoom.enable();
+      if (map.keyboard) map.keyboard.enable();
     }
   }
 
   function seekToSliderValue() {
-    const sec = parseFloat(slider.value || "0");
+    const sec = parseFloat(slider.value) || 0;
     enterReplayAtSecond(sec);
   }
 
@@ -776,11 +794,9 @@ function createReplayOverlayControls() {
     const rect = slider.getBoundingClientRect();
     const x = clamp(clientX - rect.left, 0, rect.width);
     const pct = rect.width > 0 ? x / rect.width : 0;
-
-    const min = parseFloat(slider.min || "0");
-    const max = parseFloat(slider.max || "0");
+    const min = parseFloat(slider.min) || 0;
+    const max = parseFloat(slider.max) || 0;
     const val = min + pct * (max - min);
-
     slider.value = val.toFixed(1);
     seekToSliderValue();
   }
@@ -819,13 +835,12 @@ function createReplayOverlayControls() {
   slider.addEventListener("mousedown", (e) => e.stopPropagation());
   slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
 
-  btnLive.addEventListener("click", () => goLive());
+  btnLive.addEventListener("click", goLive);
 }
 
 function updateReplayTimeLabel(sec) {
   var lab = document.getElementById("replay-time-label");
   if (!lab) return;
-
   var whole = Math.max(0, Math.round(sec));
   var m = Math.floor(whole / 60).toString().padStart(2, "0");
   var s = (whole % 60).toString().padStart(2, "0");
@@ -835,9 +850,11 @@ function updateReplayTimeLabel(sec) {
 function showReplayOverlayIfReady() {
   var overlay = document.getElementById("replay-overlay");
   if (!overlay) return;
-
-  if (getDurationSec() > 0 && gpsSamples.length > 1) overlay.style.display = "flex";
-  else overlay.style.display = "none";
+  if (getDurationSec() > 0 && gpsSamples.length >= 1) {
+    overlay.style.display = "flex";
+  } else {
+    overlay.style.display = "none";
+  }
 }
 
 function updateReplayUiBounds() {
@@ -856,11 +873,15 @@ function updateReplayUiBounds() {
 
 // ---- replay search helpers ----
 function upperBoundByTime(arr, tMs) {
-  var lo = 0, hi = arr.length;
+  var lo = 0,
+    hi = arr.length;
   while (lo < hi) {
     var mid = (lo + hi) >> 1;
-    if (arr[mid].t <= tMs) lo = mid + 1;
-    else hi = mid;
+    if (arr[mid].t <= tMs) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
   }
   return lo;
 }
@@ -870,7 +891,7 @@ function getInterpolatedGpsAtTime(tMs) {
   if (gpsSamples.length === 1) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
 
   var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx <= 0) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
+  if (idx === 0) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
   if (idx >= gpsSamples.length) {
     var last = gpsSamples[gpsSamples.length - 1];
     return { lat: last.lat, lng: last.lng };
@@ -878,7 +899,7 @@ function getInterpolatedGpsAtTime(tMs) {
 
   var a = gpsSamples[idx - 1];
   var b = gpsSamples[idx];
-  if (b.t <= a.t) return { lat: b.lat, lng: b.lng };
+  if (b.t === a.t) return { lat: b.lat, lng: b.lng };
 
   var alpha = clamp((tMs - a.t) / (b.t - a.t), 0, 1);
   return {
@@ -890,7 +911,7 @@ function getInterpolatedGpsAtTime(tMs) {
 function getBpmAtTime(tMs) {
   if (!bpmSamples.length) return null;
   var idx = upperBoundByTime(bpmSamples, tMs);
-  if (idx <= 0) return bpmSamples[0].bpm;
+  if (idx === 0) return bpmSamples[0].bpm;
   return bpmSamples[idx - 1].bpm;
 }
 
@@ -899,7 +920,7 @@ function getDistanceAtTime(tMs) {
   if (gpsSamples.length === 1) return gpsSamples[0].cumDistM || 0;
 
   var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx <= 0) return gpsSamples[0].cumDistM || 0;
+  if (idx === 0) return gpsSamples[0].cumDistM || 0;
   if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].cumDistM || 0;
 
   var a = gpsSamples[idx - 1];
@@ -908,7 +929,7 @@ function getDistanceAtTime(tMs) {
   var alpha = clamp((tMs - a.t) / dt, 0, 1);
 
   var da = a.cumDistM || 0;
-  var db = (b.cumDistM != null) ? b.cumDistM : da;
+  var db = b.cumDistM != null ? b.cumDistM : da;
   return da + (db - da) * alpha;
 }
 
@@ -917,7 +938,7 @@ function getSpeedAtTime(tMs) {
   if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
 
   var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx <= 0) return gpsSamples[0].speedKmh || 0;
+  if (idx === 0) return gpsSamples[0].speedKmh || 0;
   if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].speedKmh || 0;
 
   var a = gpsSamples[idx - 1];
@@ -926,7 +947,7 @@ function getSpeedAtTime(tMs) {
   var alpha = clamp((tMs - a.t) / dt, 0, 1);
 
   var sa = a.speedKmh || 0;
-  var sb = (b.speedKmh != null) ? b.speedKmh : sa;
+  var sb = b.speedKmh != null ? b.speedKmh : sa;
   return sa + (sb - sa) * alpha;
 }
 
@@ -941,7 +962,9 @@ function updateProgressRouteToTime(tMs) {
   idx = clamp(idx, 0, gpsSamples.length);
 
   var pts = [];
-  for (var i = 0; i < idx; i++) pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
+  for (var i = 0; i < idx; i++) {
+    pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
+  }
 
   if (idx > 0 && idx < gpsSamples.length) {
     var interp = getInterpolatedGpsAtTime(tMs);
@@ -951,33 +974,27 @@ function updateProgressRouteToTime(tMs) {
   progressRoute.setLatLngs(pts);
 }
 
-// ========================================
-// HELPER per trovare sample calzini al tempo tMs
-// ========================================
+// FUNZIONE HELPER PER TROVARE SAMPLE CALZINI
 function findSampleAtTime(samples, tMs) {
   if (!samples || samples.length === 0) return null;
   
-  // Se c'è solo un campione, restituiscilo
   if (samples.length === 1) return samples[0];
   
-  // Trova il campione più vicino al tempo richiesto
   let idx = upperBoundByTime(samples, tMs);
   
   if (idx === 0) return samples[0];
   if (idx >= samples.length) return samples[samples.length - 1];
   
-  // Restituisci il campione precedente (quello al tempo <= tMs)
   return samples[idx - 1];
 }
-
 
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
 
-  // modalita replay
+  // modalità replay
   isReplayMode = true;
 
-  // stop animazioni live marker (se presenti)
+  // stop animazioni live marker se presenti
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
@@ -1000,27 +1017,30 @@ function enterReplayAtSecond(sec) {
   }
   updateProgressRouteToTime(tMs);
 
-  // 4) BPM (step: ultimo noto <= tMs)
+  // 4) BPM: step ultimo noto a tMs
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
 
-  // 5) distanza (continua) + velocita (a scatti ogni secondo)
+  // 5) distanza continua + velocita a scatti ogni secondo
   const dist = getDistanceAtTime(tMs);
-
   const wholeSec = Math.max(0, Math.floor(clampedSec));
 
-  // velocita a scatti: se manca il valore per quel secondo, usa ultimo valore noto (no "flash a 0")
+  // velocita a scatti: se manca il valore per quel secondo, usa ultimo valore noto (no flash a 0)
   let speed = null;
   if (Array.isArray(speedBySec) && speedBySec.length) {
     if (speedBySec[wholeSec] != null) {
       speed = speedBySec[wholeSec];
     } else {
       for (let s = wholeSec - 1; s >= 0; s--) {
-        if (speedBySec[s] != null) { speed = speedBySec[s]; break; }
+        if (speedBySec[s] != null) {
+          speed = speedBySec[s];
+          break;
+        }
       }
     }
   }
-  if (speed == null || !isFinite(speed) || speed < 0) speed = 0;
+  if (speed == null || !isFinite(speed)) speed = 0;
+  speed = Math.max(0, speed);
 
   updateSpeedDistanceUI(speed, dist);
 
@@ -1029,25 +1049,33 @@ function enterReplayAtSecond(sec) {
   const tMin = Math.max(0, clampedSec - windowHalf);
   const tMax = tMin + windowHalf * 2;
 
-  if (sockCharts.left) sockCharts.left.setScale("x", { min: tMin, max: tMax });
-  if (sockCharts.right) sockCharts.right.setScale("x", { min: tMin, max: tMax });
+  if (sockCharts.left) {
+    sockCharts.left.setScale("x", { min: tMin, max: tMax });
+  }
+  if (sockCharts.right) {
+    sockCharts.right.setScale("x", { min: tMin, max: tMax });
+  }
 
+  // AGGIORNA VALORI ISTANTANEI CALZINI
   const lS = findSampleAtTime(leftSockSamples, tMs);
-  if (lS) updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, lS.bi);
+  if (lS) {
+    updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, lS.bi);
+  }
 
   const rS = findSampleAtTime(rightSockSamples, tMs);
-  if (rS) updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, rS.bi);
+  if (rS) {
+    updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, rS.bi);
+  }
 
   // 7) sync slider (solo se non stai trascinando in modo fine)
   const slider = document.getElementById("replay-slider");
   if (slider) {
-    const v = parseFloat(slider.value || "0");
+    const v = parseFloat(slider.value) || 0;
     if (!isFinite(v) || Math.abs(v - clampedSec) > 0.5) {
       slider.value = clampedSec.toFixed(1);
     }
   }
 }
-
 
 function goLive() {
   isReplayMode = false;
@@ -1057,53 +1085,64 @@ function goLive() {
     var lastG = gpsSamples[gpsSamples.length - 1];
     updateSpeedDistanceUI(lastG.speedKmh, lastG.cumDistM);
 
-    if (mapMarker) mapMarker.setLatLng([lastG.lat, lastG.lng]);
-    if (map) map.panTo([lastG.lat, lastG.lng], { animate: false });
+    if (mapMarker) {
+      mapMarker.setLatLng([lastG.lat, lastG.lng]);
+    }
+    if (map) {
+      map.panTo([lastG.lat, lastG.lng], { animate: false });
+    }
 
     updateProgressRouteToTime(getSessionEndMs());
   }
 
-  if (lastLiveBpm !== "--") updateBpmValue(lastLiveBpm);
+  if (lastLiveBpm !== "--") {
+    updateBpmValue(lastLiveBpm);
+  }
 }
 
 // ==========================================
-// SENSOR UPDATE parsing + calzini
+// SENSOR UPDATE (parsing calzini)
 // ==========================================
 function processIncomingData(data) {
-  var payload = (data && typeof data === "object" && data.data) ? data.data : data;
-  if (!payload || !payload.sensorname && !payload.name) return;
+  var payload = data && typeof data === "object" && data.data ? data.data : data;
+  if (!payload || (!payload.sensorname && !payload.name && !payload.sensor_name)) return;
 
-  const name = String(payload.sensorname ?? payload.name).toLowerCase();
+  // SUPPORTA: sensor_name, sensorname, name
+  const name = String(payload.sensor_name ?? payload.sensorname ?? payload.name ?? "unknown").toLowerCase();
   const tMs = getNowMs();
   ensureSessionStart(tMs);
 
   // Calzini: mapping campi flessibile
-  const p0 = Number(payload.pressure0 ?? payload.p0 ?? payload.pressure_0 ?? 0);
-  const p1 = Number(payload.pressure1 ?? payload.p1 ?? payload.pressure_1 ?? 0);
-  const p2 = Number(payload.pressure2 ?? payload.p2 ?? payload.pressure_2 ?? 0);
-
+  const p0 = Number(payload.pressure_0 ?? payload.p0 ?? payload.pressure0 ?? 0);
+  const p1 = Number(payload.pressure_1 ?? payload.p1 ?? payload.pressure1 ?? 0);
+  const p2 = Number(payload.pressure_2 ?? payload.p2 ?? payload.pressure2 ?? 0);
   const bi = calculateBI(payload);
 
   if (name.includes("sx") || name.includes("left")) {
     leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) updateSocksUI("left", { p0, p1, p2 }, bi);
+    if (!isReplayMode) {
+      updateSocksUI("left", { p0, p1, p2 }, bi);
+    }
   } else if (name.includes("dx") || name.includes("right")) {
     rightSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) updateSocksUI("right", { p0, p1, p2 }, bi);
+    if (!isReplayMode) {
+      updateSocksUI("right", { p0, p1, p2 }, bi);
+    }
   }
 
-  sensors[payload.sensorname ?? payload.name] = payload;
-  updateSensorCardUI(payload.sensorname ?? payload.name, payload);
+  sensors[payload.sensor_name ?? payload.sensorname ?? payload.name] = payload;
 
-  // charts (se selezionato)
-  updateChartsUI(payload.sensorname ?? payload.name, payload);
+  updateSensorCardUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
+  // charts: se selezionato
+  updateChartsUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
 }
 
 function calculateBI(payload) {
-  // supporta sia accelx/accel_x
-  const ax = payload.accelx ?? payload.accel_x;
-  const ay = payload.accely ?? payload.accel_y;
-  const az = payload.accelz ?? payload.accel_z;
+  // supporta sia accel_x/accelx
+  const ax = payload.accel_x ?? payload.accelx;
+  const ay = payload.accel_y ?? payload.accely;
+  const az = payload.accel_z ?? payload.accelz;
+
   if (ax == null || ay == null || az == null) return 0;
 
   const norm = Math.sqrt(ax * ax + ay * ay + az * az);
@@ -1133,10 +1172,15 @@ function initSockCharts() {
     cursor: { show: true, sync: { key: "socks" } }
   });
 
-  if (!sockCharts.left) sockCharts.left = new uPlot(makeOpts(leftEl, "SX"), sockChartData.left, leftEl);
-  if (!sockCharts.right) sockCharts.right = new uPlot(makeOpts(rightEl, "DX"), sockChartData.right, rightEl);
+  if (!sockCharts.left) {
+    sockCharts.left = new uPlot(makeOpts(leftEl, "SX"), sockChartData.left, leftEl);
+  }
+  if (!sockCharts.right) {
+    sockCharts.right = new uPlot(makeOpts(rightEl, "DX"), sockChartData.right, rightEl);
+  }
 }
 
+// FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
   const prefix = side === "left" ? "l" : "r";
   
@@ -1152,7 +1196,7 @@ function updateSocksUI(side, data, bi) {
   const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
   const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
 
-  // AGGIORNA CON I NUOVI ID: posteriore, sinistra, destra
+  // NUOVI ID: posteriore, sinistra, destra
   const el0 = document.getElementById(`${prefix}-posteriore`);
   const el1 = document.getElementById(`${prefix}-sinistra`);
   const el2 = document.getElementById(`${prefix}-destra`);
@@ -1160,16 +1204,6 @@ function updateSocksUI(side, data, bi) {
   if (el0) el0.textContent = Math.round(val0);
   if (el1) el1.textContent = Math.round(val1);
   if (el2) el2.textContent = Math.round(val2);
-
-  // Debug - verifica che stia trovando gli elementi
-  console.log(`updateSocksUI(${side}):`, {
-    val0: Math.round(val0),
-    val1: Math.round(val1),
-    val2: Math.round(val2),
-    el0Found: !!el0,
-    el1Found: !!el1,
-    el2Found: !!el2
-  });
 
   // aggiorna grafico live calzino
   if (!isReplayMode) {
@@ -1187,7 +1221,6 @@ function updateSocksUI(side, data, bi) {
     }
   }
 }
-
 
 // ==========================================
 // SENSOR CARDS UI (minimal)
@@ -1207,12 +1240,11 @@ function createSensorCard(name, data) {
       <div class="status-indicator active"></div>
     </div>
     <div class="sensor-data-section">
-      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure_0">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure_1">0</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure_2">0</span></div>
     </div>
   `;
-
   grid.appendChild(div);
 }
 
@@ -1223,22 +1255,24 @@ function updateSensorCardUI(name, data) {
   if (!card) {
     createSensorCard(name, data);
     card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-    if (!card) return;
   }
+  if (!card) return;
 
   // aggiorna valori noti
-  const p0 = data.pressure0 ?? data.p0 ?? data.pressure_0;
-  const p1 = data.pressure1 ?? data.p1 ?? data.pressure_1;
-  const p2 = data.pressure2 ?? data.p2 ?? data.pressure_2;
+  const p0 = data.pressure_0 ?? data.p0 ?? data.pressure0;
+  const p1 = data.pressure_1 ?? data.p1 ?? data.pressure1;
+  const p2 = data.pressure_2 ?? data.p2 ?? data.pressure2;
 
   const set = (key, val) => {
     const el = card.querySelector(`[data-key="${key}"]`);
-    if (el && val != null && isFinite(val)) el.textContent = String(Math.round(val));
+    if (el && val != null && isFinite(val)) {
+      el.textContent = String(Math.round(val));
+    }
   };
 
-  set("pressure0", p0);
-  set("pressure1", p1);
-  set("pressure2", p2);
+  set("pressure_0", p0);
+  set("pressure_1", p1);
+  set("pressure_2", p2);
 }
 
 // ==========================================
@@ -1257,6 +1291,7 @@ function initCharts() {
   var gyroDiv = document.getElementById("gyro-chart");
   var magDiv = document.getElementById("mag-chart");
   var pressureDiv = document.getElementById("pressure-chart");
+
   if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
 
   accelDiv.innerHTML = "";
@@ -1269,7 +1304,10 @@ function initCharts() {
     height: 200,
     cursor: { show: true, drag: { x: true, y: false } },
     scales: { x: { time: true }, y: { auto: true } },
-    axes: [{ stroke: SENSORIA_GREEN, grid: { stroke: "#333" } }, { stroke: SENSORIA_GREEN, grid: { stroke: "#333" } }]
+    axes: [
+      { stroke: SENSORIA_GREEN, grid: { stroke: "#333" } },
+      { stroke: SENSORIA_GREEN, grid: { stroke: "#333" } }
+    ]
   };
 
   function mkSeries(c1, c2, c3) {
@@ -1281,9 +1319,14 @@ function initCharts() {
     ];
   }
 
-  var o1 = Object.assign({}, commonOpts); o1.series = mkSeries("#ff6384", "#36a2eb", "#4bc0c0");
-  var o2 = Object.assign({}, commonOpts); o2.series = mkSeries("#ff9f40", "#9966ff", "#ffcd56");
-  var o3 = Object.assign({}, commonOpts); o3.series = mkSeries("#c9cbcf", "#4bc0c0", "#ff6384");
+  var o1 = Object.assign({}, commonOpts);
+  o1.series = mkSeries("#ff6384", "#36a2eb", "#4bc0c0");
+
+  var o2 = Object.assign({}, commonOpts);
+  o2.series = mkSeries("#ff9f40", "#9966ff", "#ffcd56");
+
+  var o3 = Object.assign({}, commonOpts);
+  o3.series = mkSeries("#c9cbcf", "#4bc0c0", "#ff6384");
 
   var o4 = Object.assign({}, commonOpts);
   o4.height = 250;
@@ -1308,9 +1351,9 @@ function initCharts() {
 
 function addInteraction(u) {
   if (!u || !u.over) return;
-  u.over.addEventListener("mousedown", () => isUserInteracting = true);
-  u.over.addEventListener("wheel", () => isUserInteracting = true);
-  u.over.addEventListener("dblclick", () => isUserInteracting = false);
+  u.over.addEventListener("mousedown", () => (isUserInteracting = true));
+  u.over.addEventListener("wheel", () => (isUserInteracting = true));
+  u.over.addEventListener("dblclick", () => (isUserInteracting = false));
 }
 
 function resetChartData() {
@@ -1323,10 +1366,11 @@ function resetChartData() {
   };
 
   if (!chartsInitialized) return;
-  charts.accel && charts.accel.setData(chartData.accel);
-  charts.gyro && charts.gyro.setData(chartData.gyro);
-  charts.mag && charts.mag.setData(chartData.mag);
-  charts.pressure && charts.pressure.setData(chartData.pressure);
+
+  if (charts.accel) charts.accel.setData(chartData.accel);
+  if (charts.gyro) charts.gyro.setData(chartData.gyro);
+  if (charts.mag) charts.mag.setData(chartData.mag);
+  if (charts.pressure) charts.pressure.setData(chartData.pressure);
 }
 
 function updateChartsUI(sensorName, data) {
@@ -1338,40 +1382,60 @@ function updateChartsUI(sensorName, data) {
   function push(arr, vals) {
     arr[0].push(timestamp);
     vals.forEach((v, i) => arr[i + 1].push(v ?? 0));
-    if (arr[0].length > 1000) arr.forEach(s => s.shift());
+    if (arr[0].length > 1000) arr.forEach((s) => s.shift());
   }
 
   // accel
-  if (data.accelx != null || data.accel_x != null) {
-    push(chartData.accel, [data.accelx ?? data.accel_x, data.accely ?? data.accel_y, data.accelz ?? data.accel_z]);
+  if (data.accel_x != null || data.accelx != null) {
+    push(chartData.accel, [
+      data.accel_x ?? data.accelx,
+      data.accel_y ?? data.accely,
+      data.accel_z ?? data.accelz
+    ]);
     charts.accel.setData(chartData.accel);
   }
 
   // gyro
-  if (data.gyrox != null || data.gyro_x != null) {
-    push(chartData.gyro, [data.gyrox ?? data.gyro_x, data.gyroy ?? data.gyro_y, data.gyroz ?? data.gyro_z]);
+  if (data.gyro_x != null || data.gyrox != null) {
+    push(chartData.gyro, [
+      data.gyro_x ?? data.gyrox,
+      data.gyro_y ?? data.gyroy,
+      data.gyro_z ?? data.gyroz
+    ]);
     charts.gyro.setData(chartData.gyro);
   }
 
   // mag
-  if (data.magx != null || data.mag_x != null) {
-    push(chartData.mag, [data.magx ?? data.mag_x, data.magy ?? data.mag_y, data.magz ?? data.mag_z]);
+  if (data.mag_x != null || data.magx != null) {
+    push(chartData.mag, [
+      data.mag_x ?? data.magx,
+      data.mag_y ?? data.magy,
+      data.mag_z ?? data.magz
+    ]);
     charts.mag.setData(chartData.mag);
   }
 
   // pressure
-  const p0 = data.pressure0 ?? data.p0 ?? data.pressure_0;
+  const p0 = data.pressure_0 ?? data.p0 ?? data.pressure0;
   if (p0 != null) {
-    push(chartData.pressure, [p0, data.pressure1 ?? data.p1 ?? data.pressure_1, data.pressure2 ?? data.p2 ?? data.pressure_2]);
+    push(chartData.pressure, [
+      p0,
+      data.pressure_1 ?? data.p1 ?? data.pressure1,
+      data.pressure_2 ?? data.p2 ?? data.pressure2
+    ]);
     charts.pressure.setData(chartData.pressure);
   }
 }
 
 // ==========================================
-// PAST ACTIVITY LOADER (modal + replay build)
+// PAST ACTIVITY LOADER (modal replay build)
 // ==========================================
 function initPastActivityLoader() {
-  const header = document.querySelector(".dashboard-info") || document.querySelector(".dashboard-header") || document.body;
+  const header =
+    document.querySelector(".dashboard-info") ||
+    document.querySelector(".dashboard-header") ||
+    document.body;
+
   if (document.getElementById("btn-load-activity")) return;
 
   const btn = document.createElement("button");
@@ -1389,7 +1453,6 @@ function initPastActivityLoader() {
     white-space:nowrap;
     margin-left:12px;
   `;
-
   btn.addEventListener("click", openLogsModal);
   header.appendChild(btn);
 }
@@ -1412,8 +1475,7 @@ async function openLogsModal() {
   `;
 
   modal.innerHTML = `
-    <div style="width:min(620px,96vw);background:#111;border:1px solid #333;border-radius:14px;
-                box-shadow:0 18px 48px rgba(0,0,0,0.65);overflow:hidden">
+    <div style="width:min(620px,96vw);background:#111;border:1px solid #333;border-radius:14px; box-shadow:0 18px 48px rgba(0,0,0,0.65);overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222">
         <div style="font-weight:900;color:#fff">Carica attività passata</div>
         <button id="logs-close" style="background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer">✕</button>
@@ -1438,9 +1500,9 @@ async function openLogsModal() {
   try {
     const resp = await fetch("/api/logs");
     const json = await resp.json();
-    const logs = Array.isArray(json) ? json : (json.logs || []);
+    const logs = Array.isArray(json) ? json : json.logs || [];
 
-    status.textContent = logs.length ? "Seleziona un log" : "Nessun log trovato.";
+    status.textContent = logs.length ? "Seleziona un log:" : "Nessun log trovato.";
     list.innerHTML = "";
 
     logs.forEach((item) => {
@@ -1456,11 +1518,12 @@ async function openLogsModal() {
         cursor:pointer;
       `;
 
-      const dt = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : "";
+      const dt = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : "--";
       const kb = item.size != null ? Math.round(item.size / 1024) : "--";
+
       row.innerHTML = `
         <div style="font-weight:800">${item.name}</div>
-        <div style="font-size:12px;color:#999;margin-top:2px">${dt} • ${kb} KB</div>
+        <div style="font-size:12px;color:#999;margin-top:2px">${dt} · ${kb} KB</div>
       `;
 
       row.onclick = async () => {
@@ -1482,20 +1545,22 @@ function resetReplayState() {
   bpmSamples = [];
   leftSockSamples = [];
   rightSockSamples = [];
+
   sockChartData.left = [[], [], [], []];
   sockChartData.right = [[], [], [], []];
+
   speedBySec = [];
   lastSpeedKmh = 0;
   lastSpeedSec = null;
   lastSecFix = null;
-
   lastLiveBpm = "--";
+
   sessionStartTimeMs = null;
   sessionEndTimeMs = null;
   isReplayMode = false;
 
-  _gpsTimeUnit = null;
-  _lastGpsTRaw = null;
+  gpsTimeUnit = null;
+  lastGpsTRaw = null;
 
   if (fullRoute) fullRoute.setLatLngs([]);
   if (progressRoute) progressRoute.setLatLngs([]);
@@ -1509,68 +1574,84 @@ async function loadPastActivity(logName) {
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
     const data = await resp.json();
 
-    // 1) Reset stati/array (come già facevi)
+    // 1) Reset stati/array
     gpsSamples = [];
     bpmSamples = [];
     speedBySec = [];
     secPos = [];
     leftSockSamples = [];
     rightSockSamples = [];
+
     sockChartData.left = [[], [], [], []];
     sockChartData.right = [[], [], [], []];
-
-    currentSmoothedSpeed = 0;
-    lastSpeedCalcPos = null;
 
     sessionStartTimeMs = null;
     sessionEndTimeMs = null;
     isReplayMode = false;
 
-    // 2) Sensori (calzini) - uguale alla tua logica (pre-render)
+    // 2) Sensori / calzini
     const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
-    if (sensorsData.length === 0) {
-      console.warn("Nessun dato sensore trovato nel log.");
-      // NON return: il log potrebbe avere solo GPS
-    } else {
+
+    if (sensorsData.length > 0) {
       const firstSensor = sensorsData[0];
-      const initialT = firstSensor.t ? firstSensor.t : (firstSensor.timestamp ? new Date(firstSensor.timestamp).getTime() : Date.now());
+      const initialT = firstSensor.t
+        ? firstSensor.t
+        : firstSensor.timestamp
+        ? new Date(firstSensor.timestamp).getTime()
+        : Date.now();
 
       sessionStartTimeMs = sensorsData.reduce((min, item) => {
-        const t = item.t ? item.t : (item.timestamp ? new Date(item.timestamp).getTime() : min);
+        const t = item.t
+          ? item.t
+          : item.timestamp
+          ? new Date(item.timestamp).getTime()
+          : min;
         return t < min ? t : min;
       }, initialT);
 
       sensorsData.forEach((sensorItem) => {
-        const tMs = sensorItem.t ? sensorItem.t : (sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() : null);
+        const tMs = sensorItem.t
+          ? sensorItem.t
+          : sensorItem.timestamp
+          ? new Date(sensorItem.timestamp).getTime()
+          : null;
         if (!tMs) return;
 
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
-        const name = String(sensorItem.sensorname || "").toLowerCase();
+
+        // SUPPORTA: sensor_name, sensorname, name
+        const name = String(sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown").toLowerCase();
+
+        console.log("🔵 Processing sensor:", name, sensorItem);
 
         const bi = calculateBI(sensorItem);
-        const p0 = Number(sensorItem.pressure0 ?? sensorItem.p0 ?? 0);
-        const p1 = Number(sensorItem.pressure1 ?? sensorItem.p1 ?? 0);
-        const p2 = Number(sensorItem.pressure2 ?? sensorItem.p2 ?? 0);
+
+        // SUPPORTA: pressure_0, p0, pressure0
+        const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
+        const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? sensorItem.pressure1 ?? 0);
+        const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? sensorItem.pressure2 ?? 0);
 
         const sample = { t: tMs, p0, p1, p2, bi };
 
-        if (name.includes("sx") || name.includes("left")) {
+        if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
           leftSockSamples.push(sample);
           sockChartData.left[0].push(tRelSec);
           sockChartData.left[1].push(p0);
           sockChartData.left[2].push(p1);
           sockChartData.left[3].push(p2);
-        } else if (name.includes("dx") || name.includes("right")) {
+          console.log("✅ Added LEFT sock sample:", sample);
+        } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
           rightSockSamples.push(sample);
           sockChartData.right[0].push(tRelSec);
           sockChartData.right[1].push(p0);
           sockChartData.right[2].push(p1);
           sockChartData.right[3].push(p2);
+          console.log("✅ Added RIGHT sock sample:", sample);
         }
       });
     }
 
-    // 3) GPS bulk-load: NO map/UI per ogni punto
+    // 3) GPS bulk-load (NO map/UI per ogni punto)
     const gpsArr = Array.isArray(data.gps) ? data.gps : [];
     if (gpsArr.length === 0) {
       console.warn("Nessun GPS nel log.");
@@ -1578,19 +1659,21 @@ async function loadPastActivity(logName) {
     }
 
     isBulkLoading = true;
-    for (let i = 0; i < gpsArr.length; i++) onGpsUpdate(gpsArr[i]);
+    for (let i = 0; i < gpsArr.length; i++) {
+      onGpsUpdate(gpsArr[i]);
+    }
     isBulkLoading = false;
 
     // 4) BPM
     if (Array.isArray(data.bpm)) {
       data.bpm.forEach((b) => {
-        const tMs = b.t ? b.t : (b.timestamp ? new Date(b.timestamp).getTime() : null);
+        const tMs = b.t ? b.t : b.timestamp ? new Date(b.timestamp).getTime() : null;
         if (!tMs) return;
         bpmSamples.push({ t: tMs, bpm: b.bpm ?? b.value ?? 0 });
       });
     }
 
-    // 5) UI/Grafici calzini (una volta)
+    // 5) UI/Grafici calzini una volta
     initSockCharts();
     if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
     if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
@@ -1600,7 +1683,7 @@ async function loadPastActivity(logName) {
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
 
-      // downsample route per Leaflet (grande boost): 1 punto ogni ~2m
+      // downsample route per Leaflet (grande boost: 1 punto ogni 2m)
       const pts = [];
       let last = null;
       const MIN_STEP_M = 2.0;
@@ -1621,20 +1704,19 @@ async function loadPastActivity(logName) {
 
       if (fullRoute) fullRoute.setLatLngs(pts);
       if (progressRoute) progressRoute.setLatLngs([]); // verrà ricostruita da enterReplayAtSecond
-
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
 
-    // 7) Bounds + overlay replay (una volta)
+    // 7) Bounds + overlay replay una volta
     sessionEndTimeMs = getSessionEndMs();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
     rebuildSpeedBySecFromGps();
 
-    // vai all’inizio attività
+    // vai all'inizio attività
     enterReplayAtSecond(0);
 
-    console.log("Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length);
+    console.log("✅ Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length, "Left socks:", leftSockSamples.length, "Right socks:", rightSockSamples.length);
   } catch (error) {
     isBulkLoading = false;
     console.error("Errore durante il caricamento dell'attività:", error);
@@ -1642,7 +1724,7 @@ async function loadPastActivity(logName) {
 }
 
 // ==========================================
-// OPTIONAL: clear API client
+// OPTIONAL: clear API (client)
 // ==========================================
 function clearAllData() {
   if (!confirm("Pulire tutto?")) return;
