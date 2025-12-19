@@ -340,6 +340,23 @@
     gap: 12px;
 }
 
+.activity-row {
+    background: #111;
+    border: 1px solid #333;
+    padding: 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    transition: 0.2s;
+}
+.activity-row:hover {
+    background: #1a1a1a;
+    border-color: #97c93e;
+}
+
+
 /* DISABILITA QUALSIASI ANIMAZIONE NEL BOX BPM */
 #bpm-display .heart-icon,
 #bpm-display .heart-icon * {
