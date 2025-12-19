@@ -11,6 +11,13 @@
   // Config
   // -----------------------------
   const SENSORIA_GREEN = "#97c93e";
+  const SPEED_BUCKET_SEC = 1;      // vogliamo speed a scatti ogni 1s
+  const MAX_SPEED_KMH = 60;        // running + pattinaggio (alzabile)
+  let speedBySec = [];             // speedBySec[sec] = km/h
+  let lastSpeedSec = null;         // ultimo secondo per cui abbiamo calcolato la speed
+  let lastSpeedKmh = 0;
+  let lastSpeedFix = null;         // fix usato come “punto di 1s fa”
+
 
   // Se la sessione sembra enorme per timestamp sballati, fallback 1s per punto
   const MAX_SESSION_MS = 6 * 60 * 60 * 1000;
@@ -140,6 +147,9 @@
 
     const lat = Number(raw.lat ?? raw.latitude ?? raw.Latitude);
     const lng = Number(raw.lng ?? raw.lon ?? raw.longitude ?? raw.Longitude);
+    const acc = Number(raw.accuracy ?? raw.acc ?? 999);
+    return { t: tMs, lat, lng, acc };
+
 
     // timestamp preferito: stringa ISO / Date -> ms epoch
     let tMs = null;
@@ -231,6 +241,12 @@
       prevFix = fix;
       cumDistM = 0;
 
+      // inizializza speed "a secondi"
+      lastSpeedSec = 0;
+      lastSpeedKmh = 0;
+      lastSpeedFix = fix;
+      speedBySec[0] = 0;
+
       const s0 = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM, speedKmh: 0 };
       gpsSamples.push(s0);
 
@@ -249,19 +265,38 @@
     const dtS = (fix.t - prevFix.t) / 1000;
     if (!isFinite(dtS) || dtS <= 0) return null;
 
-    // Distanza step (metri)
+    // distanza step (per cumDist)
     const stepM = haversineMeters(prevFix.lat, prevFix.lng, fix.lat, fix.lng);
     const validStepM = isFinite(stepM) && stepM >= 0 ? stepM : 0;
-
-    // Distanza cumulativa OK
     cumDistM += validStepM;
 
-    // Velocità richiesta: distanza tra fix corrente e precedente (1 Hz -> “metri in un secondo”)
-    // In pratica usiamo dt reale per robustezza: km/h = (m / s) * 3.6
-    const speedKmh = (validStepM / dtS) * 3.6;
+    // ---- SPEED A SCATTI (1 Hz logico) ----
+    const sec = Math.floor((fix.t - sessionStartTimeMs) / 1000);
 
+    if (lastSpeedSec == null) {
+      lastSpeedSec = sec;
+      lastSpeedFix = prevFix;
+      lastSpeedKmh = 0;
+      speedBySec[sec] = 0;
+    }
+
+    // aggiorna la speed SOLO quando cambia il secondo
+    if (sec > lastSpeedSec) {
+      const dM = haversineMeters(lastSpeedFix.lat, lastSpeedFix.lng, fix.lat, fix.lng);
+      const dtBucket = sec - lastSpeedSec; // secondi interi
+      const rawKmh = (Math.max(0, dM) / Math.max(1, dtBucket)) * 3.6;
+
+      lastSpeedKmh = Math.min(rawKmh, MAX_SPEED_KMH);
+      speedBySec[sec] = lastSpeedKmh;
+
+      lastSpeedSec = sec;
+      lastSpeedFix = fix;
+    }
+
+    const speedKmh = lastSpeedKmh;
+
+    // salva sample
     prevFix = fix;
-
     const sample = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM, speedKmh };
     gpsSamples.push(sample);
 
@@ -275,6 +310,7 @@
     showReplayOverlayIfReady();
     return sample;
   }
+
 
   function ingestBpmPoint(p, opts = {}) {
     const updateUi = opts.updateUi !== false;
@@ -642,13 +678,15 @@
 
     const maxSec = getDurationSec();
     slider.max = String(maxSec);
-    slider.step = "0.1";
+    slider.step = "1"; // <-- scatti da 1 secondo
 
     if (!isReplayMode) {
-      slider.value = maxSec.toFixed(1);
-      updateReplayTimeLabel(maxSec);
+      const whole = Math.round(maxSec);
+      slider.value = String(whole);
+      updateReplayTimeLabel(whole);
     }
   }
+
 
   // -----------------------------
   // Replay lookup (binary search + interpolazione)
@@ -760,31 +798,34 @@
     isReplayMode = true;
 
     const durationSec = getDurationSec();
-    const clampedSec = clamp(sec, 0, durationSec);
-    const tMs = sessionStartTimeMs + clampedSec * 1000;
+    const clamped = Math.max(0, Math.min(sec, durationSec));
+    const wholeSec = Math.round(clamped); // <-- scatto a 1s
 
-    updateReplayTimeLabel(clampedSec);
+    const tMs = sessionStartTimeMs + wholeSec * 1000;
 
+    updateReplayTimeLabel(wholeSec);
+
+    // MAPPA
     const pos = getInterpolatedGpsAtTime(tMs);
     if (pos && mapMarker) {
       mapMarker.setLatLng([pos.lat, pos.lng]);
       if (map) map.panTo([pos.lat, pos.lng], { animate: false });
     }
-
     updateProgressRouteToTime(tMs);
 
-    const speed = getSpeedAtTime(tMs);
+    // METRICHE: speed a scatti, distanza coerente al secondo
+    const speed = speedBySec[wholeSec] ?? 0;
     const dist = getDistanceAtTime(tMs);
     updateSpeedDistanceUI(speed, dist);
 
     const bpm = getBpmAtTime(tMs);
     if (bpm != null) updateBpmValue(bpm);
 
+    // Slider coerente (intero)
     const slider = document.getElementById("replay-slider");
-    if (slider && Math.abs(parseFloat(slider.value || "0") - clampedSec) > 0.5) {
-      slider.value = clampedSec.toFixed(1);
-    }
+    if (slider) slider.value = String(wholeSec);
   }
+
 
   function goLive() {
     isReplayMode = false;
