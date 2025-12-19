@@ -33,6 +33,11 @@ var isReplayMode = false;
 var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
 var lastLiveBpm = "--";
+var isBulkLoading = false;
+var speedBySec = [];
+var lastSpeedSec = null;
+var lastSecFix = null;
+var lastSpeedKmh = 0;
 
 // ==========================================
 // MAPPA
@@ -417,83 +422,115 @@ function normalizeGpsPoint(raw) {
 // ==========================================
 // GPS LIVE + REPLAY (CORE): onGpsUpdate
 // ==========================================
-function onGpsUpdate(data, opts = {}) {
-  const updateUi = opts.updateUi !== false;
-  const updateMap = opts.updateMap !== false;
+function onGpsUpdate(data) {
+  if (!data) return;
 
-  const fix = normalizeGpsPoint(data);
-  if (!fix) return;
+  const lat = Number(data.latitude ?? data.lat);
+  const lng = Number(data.longitude ?? data.lng ?? data.lon);
+  const acc = Number(data.accuracy ?? data.acc ?? 10);
 
-  ensureSessionStart(fix.t);
+  // timestamp: preferisci t, fallback timestamp ISO, fallback now
+  let tMs = null;
+  if (data.t != null) tMs = Number(data.t);
+  else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
+  else tMs = Date.now();
 
-  const prev = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
+  if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
+  if (!isFinite(tMs)) return;
 
-  // primo fix
-  if (!prev) {
-    gpsSamples.push({
-      t: fix.t,
-      lat: fix.lat,
-      lng: fix.lng,
-      acc: fix.acc,
-      cumDistM: 0,
-      speedKmh: 0
-    });
+  ensureSessionStart(tMs);
 
-    if (updateMap) {
-      ensureMapInitialized(fix.lat, fix.lng);
-      pushMapPoint(fix.lat, fix.lng);
+  // secondo logico dall'inizio (per scatti 1Hz)
+  const sec = Math.max(0, Math.floor((tMs - sessionStartTimeMs) / 1000));
+
+  const prevSample = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
+
+  // primo punto: speed 0
+  if (!prevSample) {
+    lastSpeedSec = sec;
+    lastSecFix = { lat, lng, t: tMs };
+    lastSpeedKmh = 0;
+    speedBySec[sec] = 0;
+
+    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
+
+    if (!isBulkLoading) {
+      ensureMapInitialized(lat, lng);
+      if (!isReplayMode) updateSpeedDistanceUI(0, 0);
+      updateReplayUiBounds();
+      showReplayOverlayIfReady();
     }
-    if (updateUi && !isReplayMode) updateSpeedDistanceUI(0, 0);
-
-    updateReplayUiBounds();
-    showReplayOverlayIfReady();
     return;
   }
 
-  // dt
-  let dtS = (fix.t - prev.t) / 1000;
-  if (!isFinite(dtS) || dtS <= 0) return;
+  // 1) distanza cumulativa (sempre tra fix consecutivi)
+  const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
-  // elimina duplicati / timestamp sporchi
-  if (dtS < GPS_MIN_DT_S) return;
-  dtS = Math.min(dtS, GPS_MAX_DT_S);
-
-  // step distanza
-  const stepM = haversineMeters(prev.lat, prev.lng, fix.lat, fix.lng);
-
-  // filtri minimi anti-jitter: accuracy e passo minimo
+  // filtri minimi anti-jitter (puoi toglierli, ma di solito aiutano)
   let usedStepM = 0;
-  if (isFinite(stepM) && stepM >= GPS_MIN_STEP_M && (fix.acc == null || fix.acc <= GPS_MAX_ACCURACY_FOR_DIST_M)) {
-    usedStepM = stepM;
+  if (isFinite(stepM) && stepM > 0.05 && acc <= 50) usedStepM = stepM;
+
+  const newCumDistM = (prevSample.cumDistM || 0) + usedStepM;
+
+  // 2) velocità a scatti: aggiorna SOLO quando cambia il secondo
+  // prendiamo come “fix del secondo” l'ULTIMO fix che arriva in quel secondo
+  if (lastSpeedSec == null) {
+    lastSpeedSec = sec;
+    lastSecFix = { lat: prevSample.lat, lng: prevSample.lng, t: prevSample.t };
+    lastSpeedKmh = 0;
+    speedBySec[sec] = 0;
   }
 
-  const newCumDistM = (prev.cumDistM || 0) + usedStepM;
+  if (sec > lastSpeedSec) {
+    const gapSec = sec - lastSpeedSec;
 
-  // speed = deltaDist/dt * 3.6 (come richiesto)
-  let speedKmh = (usedStepM / dtS) * 3.6;
-  if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
-  speedKmh = Math.min(speedKmh, MAX_SPEED_KMH);
+    // distanza tra fix del secondo precedente e fix del secondo corrente
+    const dM = haversineMeters(lastSecFix.lat, lastSecFix.lng, lat, lng);
 
+    // il TUO caso: se gapSec=1 => m/s = dM / 1
+    let kmh = (Math.max(0, dM) / Math.max(1, gapSec)) * 3.6;
+
+    // cap (evita picchi assurdi)
+    if (!isFinite(kmh) || kmh < 0) kmh = 0;
+    kmh = Math.min(kmh, 100);
+
+    lastSpeedKmh = kmh;
+
+    // riempi eventuali secondi saltati con lo stesso valore (scatti “continui”)
+    for (let s = lastSpeedSec + 1; s <= sec; s++) speedBySec[s] = kmh;
+
+    lastSpeedSec = sec;
+    lastSecFix = { lat, lng, t: tMs };
+  }
+
+  // salva sample (la speed rimane l’ultimo scatto calcolato)
   gpsSamples.push({
-    t: fix.t,
-    lat: fix.lat,
-    lng: fix.lng,
-    acc: fix.acc,
+    t: tMs,
+    lat,
+    lng,
+    acc,
     cumDistM: newCumDistM,
-    speedKmh: speedKmh
+    speedKmh: lastSpeedKmh
   });
 
-  // UI + mappa
-  if (updateUi && !isReplayMode) updateSpeedDistanceUI(speedKmh, newCumDistM);
+  // 3) UI/MAP: aggiorna solo se non bulk
+  if (isBulkLoading) return;
 
-  if (updateMap) {
-    ensureMapInitialized(fix.lat, fix.lng);
-    pushMapPoint(fix.lat, fix.lng);
+  if (!isReplayMode) updateSpeedDistanceUI(lastSpeedKmh, newCumDistM);
+
+  if (map && mapMarker) {
+    const pos = [lat, lng];
+    mapMarker.setLatLng(pos);
+    if (fullRoute) fullRoute.addLatLng(pos);
+    if (progressRoute) progressRoute.addLatLng(pos);
+    if (!isUserInteracting) map.panTo(pos);
   }
 
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
+
+
 
 // ==========================================
 // MAP INIT + push point
@@ -893,35 +930,73 @@ function updateProgressRouteToTime(tMs) {
 
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
-  if (!gpsSamples.length) return;
 
   isReplayMode = true;
 
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
+
+  // 1) tempo clamped
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
   const tMs = sessionStartTimeMs + clampedSec * 1000;
 
+  // 2) label mm:ss
   updateReplayTimeLabel(clampedSec);
 
+  // 3) MAPPA: marker + route progressiva interpolata
   const pos = getInterpolatedGpsAtTime(tMs);
   if (pos && mapMarker) {
     mapMarker.setLatLng([pos.lat, pos.lng]);
+    currentMapPos = { lat: pos.lat, lng: pos.lng };
     if (map) map.panTo([pos.lat, pos.lng], { animate: false });
   }
-
   updateProgressRouteToTime(tMs);
 
+  // 4) BPM (ok anche non a scatti)
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
 
-  const speed = getSpeedAtTime(tMs);
+  // 5) DIST (continua) + SPEED (A SCATTI)
   const dist = getDistanceAtTime(tMs);
+
+  const wholeSec = Math.max(0, Math.floor(clampedSec));
+  let speed = speedBySec[wholeSec];
+
+  // fallback robusto se mancano secondi (o slider oltre ultimi dati)
+  if (speed == null) {
+    // cerca indietro ultimo valore noto
+    for (let s = wholeSec; s >= 0; s--) {
+      if (speedBySec[s] != null) { speed = speedBySec[s]; break; }
+    }
+  }
+  if (speed == null) speed = 0;
+
   updateSpeedDistanceUI(speed, dist);
 
-  // sync slider
+  // 6) CALZINI: finestra + valori
+  const windowHalf = 5;
+  const tMin = Math.max(0, clampedSec - windowHalf);
+  const tMax = tMin + windowHalf * 2;
+
+  if (sockCharts.left) sockCharts.left.setScale("x", { min: tMin, max: tMax });
+  if (sockCharts.right) sockCharts.right.setScale("x", { min: tMin, max: tMax });
+
+  const lS = findSampleAtTime(leftSockSamples, tMs);
+  if (lS) updateSocksUI("left", { pressure0: lS.p0, pressure1: lS.p1, pressure2: lS.p2 }, lS.bi);
+
+  const rS = findSampleAtTime(rightSockSamples, tMs);
+  if (rS) updateSocksUI("right", { pressure0: rS.p0, pressure1: rS.p1, pressure2: rS.p2 }, rS.bi);
+
+  // 7) sync slider
   const slider = document.getElementById("replay-slider");
-  if (slider) slider.value = clampedSec.toFixed(1);
+  if (slider && Math.abs(parseFloat(slider.value) - clampedSec) > 0.5) {
+    slider.value = clampedSec.toFixed(1);
+  }
 }
+
 
 function goLive() {
   isReplayMode = false;
@@ -1343,6 +1418,10 @@ function resetReplayState() {
   rightSockSamples = [];
   sockChartData.left = [[], [], [], []];
   sockChartData.right = [[], [], [], []];
+  speedBySec = [];
+  lastSpeedKmh = 0;
+  lastSpeedSec = null;
+  lastSecFix = null;
 
   lastLiveBpm = "--";
   sessionStartTimeMs = null;
@@ -1361,32 +1440,49 @@ function resetReplayState() {
 
 async function loadPastActivity(logName) {
   try {
-    resetReplayState();
-
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
     const data = await resp.json();
 
-    // 1) Sensori (calzini) - se presenti
+    // 1) Reset stati/array (come già facevi)
+    gpsSamples = [];
+    bpmSamples = [];
+    leftSockSamples = [];
+    rightSockSamples = [];
+    sockChartData.left = [[], [], [], []];
+    sockChartData.right = [[], [], [], []];
+
+    currentSmoothedSpeed = 0;
+    lastSpeedCalcPos = null;
+
+    sessionStartTimeMs = null;
+    sessionEndTimeMs = null;
+    isReplayMode = false;
+
+    // 2) Sensori (calzini) - uguale alla tua logica (pre-render)
     const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
-    if (sensorsData.length) {
-      // sessionStartTimeMs = min sensori (se esistono)
-      const initialT = sensorsData[0].t || (sensorsData[0].timestamp ? new Date(sensorsData[0].timestamp).getTime() : Date.now());
+    if (sensorsData.length === 0) {
+      console.warn("Nessun dato sensore trovato nel log.");
+      // NON return: il log potrebbe avere solo GPS
+    } else {
+      const firstSensor = sensorsData[0];
+      const initialT = firstSensor.t ? firstSensor.t : (firstSensor.timestamp ? new Date(firstSensor.timestamp).getTime() : Date.now());
+
       sessionStartTimeMs = sensorsData.reduce((min, item) => {
-        const t = item.t || (item.timestamp ? new Date(item.timestamp).getTime() : min);
+        const t = item.t ? item.t : (item.timestamp ? new Date(item.timestamp).getTime() : min);
         return t < min ? t : min;
       }, initialT);
 
       sensorsData.forEach((sensorItem) => {
-        const tMs = sensorItem.t || (sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() : null);
+        const tMs = sensorItem.t ? sensorItem.t : (sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() : null);
         if (!tMs) return;
 
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
-        const name = String(sensorItem.sensorname || sensorItem.name || "").toLowerCase();
+        const name = String(sensorItem.sensorname || "").toLowerCase();
 
         const bi = calculateBI(sensorItem);
-        const p0 = Number(sensorItem.pressure0 ?? sensorItem.p0 ?? sensorItem.pressure_0 ?? 0);
-        const p1 = Number(sensorItem.pressure1 ?? sensorItem.p1 ?? sensorItem.pressure_1 ?? 0);
-        const p2 = Number(sensorItem.pressure2 ?? sensorItem.p2 ?? sensorItem.pressure_2 ?? 0);
+        const p0 = Number(sensorItem.pressure0 ?? sensorItem.p0 ?? 0);
+        const p1 = Number(sensorItem.pressure1 ?? sensorItem.p1 ?? 0);
+        const p2 = Number(sensorItem.pressure2 ?? sensorItem.p2 ?? 0);
 
         const sample = { t: tMs, p0, p1, p2, bi };
 
@@ -1406,49 +1502,72 @@ async function loadPastActivity(logName) {
       });
     }
 
-    // 2) GPS (normalizza + sort) -> onGpsUpdate con updateUi/map false
-    const rawGps = Array.isArray(data.gps) ? data.gps : [];
-    const fixes = rawGps
-      .map(normalizeGpsPoint)
-      .filter(Boolean)
-      .sort((a, b) => a.t - b.t);
-
-    if (!fixes.length) {
-      console.warn("Nessun GPS parsabile nel log:", logName);
+    // 3) GPS bulk-load: NO map/UI per ogni punto
+    const gpsArr = Array.isArray(data.gps) ? data.gps : [];
+    if (gpsArr.length === 0) {
+      console.warn("Nessun GPS nel log.");
       return;
     }
 
-    fixes.forEach((f) => onGpsUpdate(f, { updateUi: false, updateMap: false }));
+    isBulkLoading = true;
+    for (let i = 0; i < gpsArr.length; i++) onGpsUpdate(gpsArr[i]);
+    isBulkLoading = false;
 
-    // 3) BPM
+    // 4) BPM
     if (Array.isArray(data.bpm)) {
       data.bpm.forEach((b) => {
-        const tMs = b.t || (b.timestamp ? new Date(b.timestamp).getTime() : null);
+        const tMs = b.t ? b.t : (b.timestamp ? new Date(b.timestamp).getTime() : null);
         if (!tMs) return;
         bpmSamples.push({ t: tMs, bpm: b.bpm ?? b.value ?? 0 });
       });
     }
 
-    // 4) Init UI / map / charts calzini
+    // 5) UI/Grafici calzini (una volta)
     initSockCharts();
-    sockCharts.left && sockCharts.left.setData(sockChartData.left);
-    sockCharts.right && sockCharts.right.setData(sockChartData.right);
+    if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
+    if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
 
-    const first = gpsSamples[0];
-    ensureMapInitialized(first.lat, first.lng);
+    // 6) MAPPA: aggiorna UNA volta sola (route completa + marker)
+    if (gpsSamples.length) {
+      const first = gpsSamples[0];
+      ensureMapInitialized(first.lat, first.lng);
 
-    // set route completa
-    const pts = gpsSamples.map(s => [s.lat, s.lng]);
-    if (fullRoute) fullRoute.setLatLngs(pts);
+      // downsample route per Leaflet (grande boost): 1 punto ogni ~2m
+      const pts = [];
+      let last = null;
+      const MIN_STEP_M = 2.0;
 
+      for (let i = 0; i < gpsSamples.length; i++) {
+        const s = gpsSamples[i];
+        if (!last) {
+          pts.push([s.lat, s.lng]);
+          last = s;
+          continue;
+        }
+        const dm = haversineMeters(last.lat, last.lng, s.lat, s.lng);
+        if (dm >= MIN_STEP_M) {
+          pts.push([s.lat, s.lng]);
+          last = s;
+        }
+      }
+
+      if (fullRoute) fullRoute.setLatLngs(pts);
+      if (progressRoute) progressRoute.setLatLngs([]); // verrà ricostruita da enterReplayAtSecond
+
+      if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
+    }
+
+    // 7) Bounds + overlay replay (una volta)
+    sessionEndTimeMs = getSessionEndMs();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
 
-    // vai all'inizio
+    // vai all’inizio attività
     enterReplayAtSecond(0);
 
     console.log("Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length);
   } catch (error) {
+    isBulkLoading = false;
     console.error("Errore durante il caricamento dell'attività:", error);
   }
 }
