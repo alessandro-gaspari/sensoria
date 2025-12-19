@@ -1,28 +1,24 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sensoria Dashboard</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Sensoria Dashboard - GPS Only</title>
 
-  <!-- CSS Esterno -->
-  <link rel="stylesheet" href="/static/dashboard.css">
+  <!-- (Opzionale) Il tuo CSS -->
+  <link rel="stylesheet" href="/static/dashboard.css" />
 
-  <!-- Leaflet (Mappe) -->
+  <!-- Leaflet (mappa) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- Socket.IO -->
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-
   <style>
     body {
-      background-color: #0f0f0f;
+      background: #0f0f0f;
       color: #fff;
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     }
-
     .dashboard-header {
       background: #111;
       border-bottom: 1px solid #333;
@@ -30,75 +26,36 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 16px;
     }
-
+    #connection-status {
+      font-weight: 700;
+      color: #ddd;
+      white-space: nowrap;
+    }
+    .dot {
+      height: 10px;
+      width: 10px;
+      background: #97c93e;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
     .dashboard-container {
       max-width: 1400px;
       margin: 0 auto;
       padding: 25px;
     }
-
     #map-section {
       position: relative;
-      height: 500px;
+      height: 520px;
       width: 100%;
-      margin-bottom: 30px;
     }
-
     #map {
       height: 100%;
       width: 100%;
       border-radius: 20px;
       border: 2px solid #333;
-      z-index: 1;
-    }
-
-    /* Storico attività */
-    #past-activities-section {
-      margin-bottom: 40px;
-    }
-
-    .activity-row {
-      background: #111;
-      border: 1px solid #333;
-      padding: 12px;
-      border-radius: 10px;
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      transition: 0.2s;
-    }
-
-    .activity-row:hover {
-      background: #1a1a1a;
-      border-color: #97c93e;
-    }
-
-    /* Pulsante reset */
-    .reset-btn {
-      background: #222;
-      color: #eee;
-      border: 1px solid #444;
-      padding: 12px 30px;
-      border-radius: 10px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: 0.3s;
-    }
-
-    .reset-btn:hover {
-      background: #333;
-      border-color: #97c93e;
-    }
-
-    /* Marker pulsante (CSS usato da Leaflet divIcon) */
-    .pulsating-marker {
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: #97c93e;
-      box-shadow: 0 0 12px rgba(151, 201, 62, 0.9);
     }
   </style>
 </head>
@@ -106,74 +63,27 @@
 <body>
   <!-- HEADER -->
   <div class="dashboard-header">
-    <div style="display:flex;align-items:center;gap:20px;">
-      <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo"
-           style="height:40px;object-fit:contain;">
-      <div id="user-profile-display"
-           style="display:none;align-items:center;gap:12px;background:#1a1a1a;
-                  padding:6px 16px;border-radius:50px;border:1px solid #333;">
-        <span id="profile-avatar" style="font-size:24px;">👤</span>
-        <div style="display:flex;flex-direction:column;">
-          <span id="profile-name"
-                style="font-weight:900;color:#97c93e;font-size:14px;">--</span>
-          <span id="profile-details"
-                style="font-size:11px;color:#888;">--</span>
-        </div>
-      </div>
+    <div style="display:flex;align-items:center;gap:14px;">
+      <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo" style="height:40px;object-fit:contain;" />
+      <div style="font-weight:900;letter-spacing:0.5px;color:#97c93e;">SENSORIA</div>
     </div>
+
     <div id="connection-status">
-      <span class="dot"
-            style="height:10px;width:10px;background:#97c93e;border-radius:50%;
-                   display:inline-block;margin-right:8px;"></span>
-      Connesso
+      <span class="dot"></span> Disconnesso
     </div>
   </div>
 
   <div class="dashboard-container">
-
-    <!-- 1. MAPPA GPS + METRICHE -->
-    <div id="map-section" style="position: relative; height: 500px; width: 100%; margin-bottom: 30px;">
-        <div id="map" style="height: 100%; width: 100%; border-radius: 20px; border: 2px solid #333;"></div>
-        
-        <!-- BOX METRICHE (Aggiunti manualmente per sicurezza) -->
-        <div id="metrics-stack" style="position:absolute; top:16px; right:16px; z-index:20000; display:flex; flex-direction:column; gap:10px; pointer-events:none;">
-            <div class="metric-card" style="border-color:#ff4136; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
-                <div style="font-size:20px">❤️</div>
-                <div><div id="bpm-value" style="color:#fff; font-weight:bold;">--</div><div style="color:#ff4136; font-size:10px;">BPM LIVE</div></div>
-            </div>
-            <div class="metric-card" style="border-color:#ff9500; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
-                <div style="font-size:20px">⚡</div>
-                <div><div id="speed-value" style="color:#fff; font-weight:bold;">-- km/h</div><div style="color:#ff9500; font-size:10px;">VELOCITÀ</div></div>
-            </div>
-            <div class="metric-card" style="border-color:#ffd60a; background:rgba(0,0,0,0.6); padding:10px; border-radius:12px; border:1px solid; display:flex; align-items:center; gap:10px; width:180px;">
-                <div style="font-size:20px">📍</div>
-                <div><div id="distance-value" style="color:#fff; font-weight:bold;">-- km</div><div style="color:#ffd60a; font-size:10px;">DISTANZA</div></div>
-            </div>
-        </div>
+    <!-- MAPPA (il JS mette overlay metriche + slider replay sopra questa) -->
+    <div id="map-section">
+      <div id="map"></div>
     </div>
-
-
-    <!-- 2. STORICO ATTIVITÀ -->
-    <div id="past-activities-section">
-      <h3 style="color:#97c93e;font-size:14px;letter-spacing:1px;margin-bottom:15px;">
-        STORICO ATTIVITÀ
-      </h3>
-      <div id="past-activities-list"
-           style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
-        <!-- Popolato via JS -->
-      </div>
-    </div>
-
-    <!-- FOOTER -->
-    <div style="margin-top:40px;text-align:center;border-top:1px solid #222;padding-top:25px;">
-      <button class="reset-btn" onclick="clearAllData && clearAllData()">
-        🗑️ Resetta Tutto
-      </button>
-    </div>
-
   </div>
 
-  <!-- JS Dashboard -->
+  <!-- Socket.io -->
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+  <!-- Il tuo JS minimale -->
   <script src="/static/dashboard.js"></script>
 </body>
 </html>
