@@ -1147,11 +1147,12 @@ function updateSocksUI(side, data, bi) {
     biEl.style.color = bi > 40 ? "#ff4444" : SENSORIA_GREEN;
   }
 
+  // Estrai i valori con fallback multipli
   const val0 = data.p0 ?? data.pressure_0 ?? data.pressure0 ?? 0;
   const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
   const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
 
-  // Aggiorna i valori con le nuove label
+  // AGGIORNA CON I NUOVI ID: posteriore, sinistra, destra
   const el0 = document.getElementById(`${prefix}-posteriore`);
   const el1 = document.getElementById(`${prefix}-sinistra`);
   const el2 = document.getElementById(`${prefix}-destra`);
@@ -1159,6 +1160,16 @@ function updateSocksUI(side, data, bi) {
   if (el0) el0.textContent = Math.round(val0);
   if (el1) el1.textContent = Math.round(val1);
   if (el2) el2.textContent = Math.round(val2);
+
+  // Debug - verifica che stia trovando gli elementi
+  console.log(`updateSocksUI(${side}):`, {
+    val0: Math.round(val0),
+    val1: Math.round(val1),
+    val2: Math.round(val2),
+    el0Found: !!el0,
+    el1Found: !!el1,
+    el2Found: !!el2
+  });
 
   // aggiorna grafico live calzino
   if (!isReplayMode) {
@@ -1176,6 +1187,7 @@ function updateSocksUI(side, data, bi) {
     }
   }
 }
+
 
 // ==========================================
 // SENSOR CARDS UI (minimal)
