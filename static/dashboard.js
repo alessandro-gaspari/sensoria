@@ -782,3 +782,36 @@ function initPastActivityLoader() {
         updateReplayUiBounds();
     };
 }
+
+// ==========================================
+// FILE UPLOAD HANDLER (HTML Trigger)
+// ==========================================
+function handleFileUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    
+    reader.onload = function(e) {
+        const content = e.target.result;
+        // Chiama la funzione di logica interna che abbiamo già definito
+        if (window.loadActivityData) {
+            console.log("File caricato, avvio parsing...", file.name);
+            window.loadActivityData(content);
+            
+            // Feedback UI
+            alert(`Attività "${file.name}" caricata con successo!`);
+        }
+    };
+    
+    reader.onerror = function(e) {
+        console.error("Errore lettura file", e);
+        alert("Errore durante la lettura del file.");
+    };
+
+    reader.readAsText(file);
+    
+    // Reset input per permettere di ricaricare lo stesso file se necessario
+    input.value = ''; 
+}
+

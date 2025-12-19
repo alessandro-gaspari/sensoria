@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sensoria Dashboard - Pro</title>
     
-    <!-- CSS Esterno (Opzionale, ma consigliato per stili base) -->
-    <!-- <link rel="stylesheet" href="/static/dashboard.css"> -->
-    
     <!-- Librerie Grafici (uPlot) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.min.css">
     <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.24/dist/uPlot.iife.min.js"></script>
@@ -17,7 +14,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <style>
-        /* STILI CORE (Inclusi qui per garantire funzionamento immediato) */
+        /* STILI CORE */
         body { 
             background-color: #0f0f0f; 
             color: #fff; 
@@ -67,6 +64,10 @@
         #charts-container { display: none; margin-top: 30px; }
         #charts-container > div { background: #161616; padding: 15px; border-radius: 12px; border: 1px solid #333; margin-bottom: 20px; }
         .uplot { font-family: monospace; }
+        
+        /* Buttons hover */
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
     </style>
 </head>
 <body>
@@ -74,7 +75,6 @@
     <!-- HEADER -->
     <div class="dashboard-header">
         <div style="display: flex; align-items: center; gap: 20px;">
-            <!-- Logo (Sostituisci src se necessario) -->
             <h2 style="margin:0; font-weight:900; letter-spacing:-1px;">SENSORIA<span style="color:#97c93e;">.</span></h2>
             
             <!-- Profilo Utente (Nascosto finché non arrivano dati) -->
@@ -91,7 +91,7 @@
     
     <div class="dashboard-container" style="max-width: 1400px; margin: 0 auto; padding: 25px;">
 
-        <!-- 1. MAPPA (Le card BPM/Speed/Dist sono generate via JS qui sopra) -->
+        <!-- 1. MAPPA (Le card BPM/Speed/Dist sono generate via JS) -->
         <div id="map-section">
             <div id="map"></div>
         </div>
@@ -154,12 +154,25 @@
         <h4 style="margin: 40px 0 15px 0; color:#555; text-transform:uppercase; letter-spacing:1px; font-size:12px;">Connected Devices Status</h4>
         <div id="sensors-grid"></div>
 
-        <!-- FOOTER -->
+        <!-- FOOTER & CONTROLS -->
         <div style="margin-top: 60px; text-align: center; border-top: 1px solid #222; padding-top: 30px; padding-bottom:50px;">
-            <button onclick="if(confirm('Confermi reset dati?')) fetch('/api/clear',{method:'POST'});" style="background: #222; color: #888; border: 1px solid #333; padding: 10px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size:12px;">
-                Reset Session
-            </button>
-            <div style="margin-top:10px; font-size:10px; color:#444;">Sensoria Dashboard v3.0 - Pure Logic</div>
+            
+            <div style="display: flex; justify-content: center; gap: 15px; margin-bottom: 15px;">
+                <!-- Pulsante Upload -->
+                <button onclick="document.getElementById('file-upload-input').click()" style="background: #333; color: #fff; border: 1px solid #555; padding: 10px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size:12px; display:flex; align-items:center; gap:8px;">
+                    📂 Carica Attività (.log / .json)
+                </button>
+                
+                <!-- Pulsante Reset -->
+                <button onclick="if(confirm('Confermi reset dati?')) fetch('/api/clear',{method:'POST'});" style="background: #222; color: #ff6666; border: 1px solid #444; padding: 10px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size:12px;">
+                    🗑️ Reset Sessione
+                </button>
+            </div>
+
+            <!-- Input File Nascosto -->
+            <input type="file" id="file-upload-input" accept=".log,.json,.txt" style="display: none;" onchange="handleFileUpload(this)">
+
+            <div style="font-size:10px; color:#444;">Sensoria Dashboard v3.0 - Pure Logic</div>
         </div>
         
     </div>
@@ -167,7 +180,7 @@
     <!-- Socket.io Client -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     
-    <!-- IL TUO FILE JS (Assicurati che il percorso sia corretto) -->
+    <!-- IL TUO FILE JS -->
     <script src="/static/dashboard.js"></script>
 
 </body>
