@@ -493,23 +493,37 @@ function onGpsUpdate(data) {
     return;
   }
 
-  // CALCOLO VELOCITÀ SEMPLICE: tra fix consecutivi
+  // CALCOLO VELOCITÀ con SMOOTHING per GPS rumorosi
   const dtSec = (tMs - prevSample.t) / 1000;
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
-  // Filtri qualità
   let usedStepM = 0;
   let speedKmh = 0;
 
-  if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50 && stepM >= 0.2) {
-    usedStepM = stepM;
-    speedKmh = (stepM / dtSec) * 3.6; // m/s → km/h
+  // Filtri qualità GPS
+  if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50) {
     
-    // Cap realistico
-    if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
-    speedKmh = Math.min(speedKmh, 100);
+    // Se ti muovi pochissimo (< 1m), considera velocità ~0
+    if (stepM < 1.0) {
+      speedKmh = 0;
+      usedStepM = 0;
+    } 
+    // Movimento rilevato
+    else {
+      usedStepM = stepM;
+      const instantSpeed = (stepM / dtSec) * 3.6; // km/h istantaneo
+      
+      // Smoothing esponenziale (70% vecchio, 30% nuovo) per evitare oscillazioni
+      const prevSpeed = prevSample.speedKmh || 0;
+      speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
+      
+      // Cap realistico
+      if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
+      speedKmh = Math.min(speedKmh, 100);
+    }
+    
   } else {
-    // Fix troppo vicini, troppo distanti, o accuracy scarsa → mantieni velocità precedente
+    // Fix scadenti: mantieni velocità precedente
     speedKmh = prevSample.speedKmh || 0;
   }
 
