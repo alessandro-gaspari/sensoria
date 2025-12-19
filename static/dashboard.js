@@ -951,6 +951,26 @@ function updateProgressRouteToTime(tMs) {
   progressRoute.setLatLngs(pts);
 }
 
+// ========================================
+// HELPER per trovare sample calzini al tempo tMs
+// ========================================
+function findSampleAtTime(samples, tMs) {
+  if (!samples || samples.length === 0) return null;
+  
+  // Se c'è solo un campione, restituiscilo
+  if (samples.length === 1) return samples[0];
+  
+  // Trova il campione più vicino al tempo richiesto
+  let idx = upperBoundByTime(samples, tMs);
+  
+  if (idx === 0) return samples[0];
+  if (idx >= samples.length) return samples[samples.length - 1];
+  
+  // Restituisci il campione precedente (quello al tempo <= tMs)
+  return samples[idx - 1];
+}
+
+
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
 
@@ -1156,7 +1176,6 @@ function updateSocksUI(side, data, bi) {
     }
   }
 }
-
 
 // ==========================================
 // SENSOR CARDS UI (minimal)
