@@ -1,7 +1,8 @@
 /* =========================================================
-   SENSORIA Dashboard - GPS ONLY (Live + Replay)
+   SENSORIA Dashboard - GPS + BPM (Live + Replay)
    - Distanza: somma Haversine tra fix consecutivi
-   - Velocità: d/dt tra gli ultimi due fix (km/h)
+   - Velocità: Haversine(fix corrente, fix precedente) / dt -> km/h (aggiorna ad ogni fix ~1Hz)
+   - Metric cards: BPM, Velocità, Distanza con emoji
    - Replay: carica log da /api/logs e /api/logs/load?name=...
    ========================================================= */
 
@@ -11,12 +12,7 @@
   // -----------------------------
   const SENSORIA_GREEN = "#97c93e";
 
-  // Se dt è troppo piccolo o troppo grande, la speed diventa rumorosa/inutile.
-  // A GPS 1 Hz ci aspettiamo ~1s; teniamo una tolleranza.
-  const SPEED_DT_MIN_S = 0.5;
-  const SPEED_DT_MAX_S = 3.0;
-
-  // Se la durata sembra enorme per timestamp sballati, fallback 1s per punto
+  // Se la sessione sembra enorme per timestamp sballati, fallback 1s per punto
   const MAX_SESSION_MS = 6 * 60 * 60 * 1000;
 
   // -----------------------------
@@ -25,16 +21,24 @@
   let isReplayMode = false;
 
   let sessionStartTimeMs = null;
-  let sessionEndTimeMs = null;
 
-  // Canonico: usato per replay slider + metriche
+  // GPS canonical samples
   // { t, lat, lng, cumDistM, speedKmh }
   let gpsSamples = [];
 
-  // Stato calcolo
-  let prevFix = null;        // ultimo fix usato
+  // BPM timeline
+  // { t, bpm }
+  let bpmSamples = [];
+  let lastLiveBpm = "--";
+
+  // Stato calcolo GPS
+  let prevFix = null; // ultimo fix usato (per speed e distanza)
   let cumDistM = 0;
-  let lastSpeedKmh = 0;
+
+  // Heuristica unità tempo per raw.t numerico (alcuni server mandano ms relativi, altri secondi)
+  let gpsRawTimeUnit = null; // 'ms' | 's' | null (default ms)
+  let lastGpsRawT = null;
+  let timelineScaleApplied = 1; // 1 o 1000 (se scopriamo che era in secondi)
 
   // Map
   let map = null;
@@ -89,18 +93,43 @@
     if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
   }
 
-  function resetGpsState() {
+  function resetAllState() {
     sessionStartTimeMs = null;
-    sessionEndTimeMs = null;
+
     gpsSamples = [];
+    bpmSamples = [];
+    lastLiveBpm = "--";
 
     prevFix = null;
     cumDistM = 0;
-    lastSpeedKmh = 0;
 
-    // reset route layers (mappa resta)
+    gpsRawTimeUnit = null;
+    lastGpsRawT = null;
+    timelineScaleApplied = 1;
+
     if (fullRoute) fullRoute.setLatLngs([]);
     if (progressRoute) progressRoute.setLatLngs([]);
+
+    updateBpmValue("--");
+    updateSpeedDistanceUI(null, null);
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
+  }
+
+  function rescaleTimeline(factor) {
+    if (!factor || factor === 1) return;
+
+    // sessionStart
+    if (sessionStartTimeMs != null) sessionStartTimeMs *= factor;
+
+    // gps
+    gpsSamples.forEach((s) => (s.t *= factor));
+    if (prevFix && prevFix.t != null) prevFix.t *= factor;
+
+    // bpm
+    bpmSamples.forEach((b) => (b.t *= factor));
+
+    timelineScaleApplied *= factor;
   }
 
   // -----------------------------
@@ -112,65 +141,82 @@
     const lat = Number(raw.lat ?? raw.latitude ?? raw.Latitude);
     const lng = Number(raw.lng ?? raw.lon ?? raw.longitude ?? raw.Longitude);
 
+    // timestamp preferito: stringa ISO / Date -> ms epoch
     let tMs = null;
-    if (raw.tMs != null) tMs = Number(raw.tMs);
-    else if (raw.t != null) tMs = Number(raw.t);
-    else if (raw.time != null) tMs = Number(raw.time);
-    else if (raw.timestamp != null) {
-      if (typeof raw.timestamp === "number") tMs = raw.timestamp;
-      else {
-        const d = new Date(raw.timestamp);
-        if (!isNaN(d.getTime())) tMs = d.getTime();
+    if (raw.timestamp != null && typeof raw.timestamp !== "number") {
+      const d = new Date(raw.timestamp);
+      if (!isNaN(d.getTime())) tMs = d.getTime();
+    }
+    if (tMs == null) {
+      // numerico (può essere epoch ms oppure relativo ms oppure relativo s)
+      const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
+      if (!isFinite(tRaw)) return null;
+
+      if (tRaw >= 1e12) {
+        // epoch ms
+        tMs = tRaw;
+      } else {
+        // relativo: decide unità guardando delta (se disponibile)
+        if (gpsRawTimeUnit == null && lastGpsRawT != null) {
+          const d = tRaw - lastGpsRawT;
+
+          // Se incrementa di ~1, ~2, ~3 -> probabilmente secondi
+          if (d > 0 && d < 20) gpsRawTimeUnit = "s";
+
+          // Se incrementa di ~1000 -> probabilmente millisecondi
+          if (d >= 20 && d < 200000) gpsRawTimeUnit = "ms";
+
+          // Se scopriamo che erano secondi ma finora li avevamo trattati come ms, riscalo tutto
+          if (gpsRawTimeUnit === "s" && timelineScaleApplied === 1 && gpsSamples.length) {
+            rescaleTimeline(1000);
+          }
+        }
+
+        lastGpsRawT = tRaw;
+        tMs = gpsRawTimeUnit === "s" ? tRaw * 1000 : tRaw; // default: ms
       }
     }
 
     if (!isFinite(lat) || !isFinite(lng) || !isFinite(tMs)) return null;
     if (lat === 0 && lng === 0) return null;
 
-    // Se sembra in secondi (10 cifre), converto a millisecondi
-    if (tMs < 1e12) tMs = tMs * 1000;
-
     return { t: tMs, lat, lng };
   }
 
   // -----------------------------
-  // Ricerca GPS array “deep” (per log sconosciuti)
+  // Normalizzazione BPM (live+replay)
   // -----------------------------
-  function isLikelyGpsPoint(o) {
-    if (!o || typeof o !== "object") return false;
-    const hasLat = (o.lat ?? o.latitude ?? o.Latitude) != null;
-    const hasLng = (o.lng ?? o.lon ?? o.longitude ?? o.Longitude) != null;
-    const hasT = (o.t ?? o.tMs ?? o.time ?? o.timestamp) != null;
-    return hasLat && hasLng && hasT;
-  }
+  function normalizeBpmPoint(raw) {
+    if (raw == null) return null;
 
-  function findGpsArrayDeep(root) {
-    const q = [root];
-    const seen = new Set();
-    let steps = 0;
-    const MAX_STEPS = 2500;
-
-    while (q.length && steps++ < MAX_STEPS) {
-      const cur = q.shift();
-      if (!cur || typeof cur !== "object") continue;
-      if (seen.has(cur)) continue;
-      seen.add(cur);
-
-      if (Array.isArray(cur) && cur.length && isLikelyGpsPoint(cur[0])) return cur;
-
-      if (Array.isArray(cur)) {
-        for (const it of cur) q.push(it);
-        continue;
-      }
-
-      for (const k of Object.keys(cur)) q.push(cur[k]);
+    // Caso live: raw è numero
+    if (typeof raw === "number" || typeof raw === "string") {
+      const bpm = parseInt(raw, 10);
+      if (!isFinite(bpm) || bpm <= 0) return null;
+      return { t: getNowMs(), bpm };
     }
-    return null;
+
+    if (typeof raw !== "object") return null;
+
+    const bpm = parseInt(raw.bpm ?? raw.value ?? raw.hr ?? raw.heartRate, 10);
+    if (!isFinite(bpm) || bpm <= 0) return null;
+
+    let tMs = null;
+    if (raw.timestamp != null && typeof raw.timestamp !== "number") {
+      const d = new Date(raw.timestamp);
+      if (!isNaN(d.getTime())) tMs = d.getTime();
+    }
+    if (tMs == null) {
+      const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
+      if (!isFinite(tRaw)) tMs = getNowMs();
+      else tMs = tRaw >= 1e12 ? tRaw : tRaw; // default ms (coerente con GPS default)
+    }
+
+    return { t: tMs, bpm };
   }
 
   // -----------------------------
-  // CORE: ingest fix GPS (stessa logica per live e replay)
-  // opts: { updateUi: boolean, updateMap: boolean }
+  // CORE: ingest GPS fix (uguale per live e replay)
   // -----------------------------
   function ingestGpsFix(fix, opts = {}) {
     const updateUi = opts.updateUi !== false;
@@ -184,37 +230,35 @@
     if (!prevFix) {
       prevFix = fix;
       cumDistM = 0;
-      lastSpeedKmh = 0;
 
-      const s0 = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM, speedKmh: lastSpeedKmh };
+      const s0 = { t: fix.t, lat: fix.lat, lng: fix.lng, cumDistM, speedKmh: 0 };
       gpsSamples.push(s0);
 
       if (updateMap) {
         ensureMapInitialized(fix.lat, fix.lng);
         pushMapPoint(fix.lat, fix.lng, true);
       }
-      if (updateUi) updateSpeedDistanceUI(lastSpeedKmh, cumDistM);
+      if (updateUi) updateSpeedDistanceUI(0, cumDistM);
 
       updateReplayUiBounds();
       showReplayOverlayIfReady();
       return s0;
     }
 
-    // dt
+    // dt (secondi)
     const dtS = (fix.t - prevFix.t) / 1000;
     if (!isFinite(dtS) || dtS <= 0) return null;
 
-    // step distance
-    const dStep = haversineMeters(prevFix.lat, prevFix.lng, fix.lat, fix.lng);
-    const stepM = isFinite(dStep) && dStep >= 0 ? dStep : 0;
-    cumDistM += stepM;
+    // Distanza step (metri)
+    const stepM = haversineMeters(prevFix.lat, prevFix.lng, fix.lat, fix.lng);
+    const validStepM = isFinite(stepM) && stepM >= 0 ? stepM : 0;
 
-    // speed (solo se dt è plausibile)
-    let speedKmh = lastSpeedKmh;
-    if (dtS >= SPEED_DT_MIN_S && dtS <= SPEED_DT_MAX_S) {
-      speedKmh = (stepM / dtS) * 3.6;
-      lastSpeedKmh = speedKmh;
-    }
+    // Distanza cumulativa OK
+    cumDistM += validStepM;
+
+    // Velocità richiesta: distanza tra fix corrente e precedente (1 Hz -> “metri in un secondo”)
+    // In pratica usiamo dt reale per robustezza: km/h = (m / s) * 3.6
+    const speedKmh = (validStepM / dtS) * 3.6;
 
     prevFix = fix;
 
@@ -232,8 +276,24 @@
     return sample;
   }
 
+  function ingestBpmPoint(p, opts = {}) {
+    const updateUi = opts.updateUi !== false;
+    if (!p || !isFinite(p.t) || !isFinite(p.bpm)) return null;
+
+    ensureSessionStart(p.t);
+
+    bpmSamples.push(p);
+    lastLiveBpm = p.bpm;
+
+    if (updateUi && !isReplayMode) updateBpmValue(p.bpm);
+
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
+    return p;
+  }
+
   // -----------------------------
-  // UI Metriche (speed + distance)
+  // Metric Cards UI (emoji + BPM/SPEED/DIST)
   // -----------------------------
   function ensureMetricsCardsUI() {
     const mapDiv = document.getElementById("map");
@@ -259,7 +319,7 @@
       mapDiv.appendChild(wrap);
     }
 
-    function buildCard(id, label, color, valueId, unitText) {
+    function buildMetricCard({ id, emoji, label, labelColor, borderColor, valueId, unitText }) {
       const card = document.createElement("div");
       card.id = id;
       card.style.cssText = [
@@ -272,37 +332,80 @@
         "align-items:center",
         "gap:12px",
         "background:rgba(0,0,0,0.35)",
-        `border:1px solid ${color}`,
+        `border:1px solid ${borderColor}`,
         "box-shadow:0 10px 22px rgba(0,0,0,0.45)",
         "pointer-events:auto",
         "overflow:hidden"
       ].join(";");
 
       card.innerHTML = `
+        <div style="font-size:26px;line-height:1;width:34px;text-align:center">${emoji}</div>
         <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px">
           <div id="${valueId}" style="font-family:monospace;font-size:14px;font-weight:900;color:#fff">--</div>
-          <div style="font-size:10px;font-weight:900;letter-spacing:1px;color:${color}">
-            ${label} ${unitText ? `<span style="opacity:0.9">(${unitText})</span>` : ""}
+          <div style="font-size:10px;font-weight:900;letter-spacing:1px;color:${labelColor}">
+            ${label} ${unitText ? `<span style="opacity:0.9">${unitText}</span>` : ""}
           </div>
         </div>
       `;
       return card;
     }
 
+    if (!document.getElementById("metric-bpm")) {
+      wrap.appendChild(
+        buildMetricCard({
+          id: "metric-bpm",
+          emoji: "❤️",
+          label: "BPM LIVE",
+          labelColor: "rgba(255,65,54,0.95)",
+          borderColor: "rgba(255,65,54,0.70)",
+          valueId: "bpm-value",
+          unitText: ""
+        })
+      );
+    }
+
     if (!document.getElementById("metric-speed")) {
-      wrap.appendChild(buildCard("metric-speed", "VELOCITÀ", "rgba(255,149,0,0.75)", "speed-value", "km/h"));
+      wrap.appendChild(
+        buildMetricCard({
+          id: "metric-speed",
+          emoji: "⚡",
+          label: "VELOCITÀ",
+          labelColor: "rgba(255,149,0,0.95)",
+          borderColor: "rgba(255,149,0,0.70)",
+          valueId: "speed-value",
+          unitText: "km/h"
+        })
+      );
     }
+
     if (!document.getElementById("metric-dist")) {
-      wrap.appendChild(buildCard("metric-dist", "DISTANZA", "rgba(255,214,10,0.75)", "distance-value", "km"));
+      wrap.appendChild(
+        buildMetricCard({
+          id: "metric-dist",
+          emoji: "📍",
+          label: "DISTANZA",
+          labelColor: "rgba(255,214,10,0.95)",
+          borderColor: "rgba(255,214,10,0.70)",
+          valueId: "distance-value",
+          unitText: "km"
+        })
+      );
     }
+  }
+
+  function updateBpmValue(val) {
+    ensureMetricsCardsUI();
+    const el = document.getElementById("bpm-value");
+    if (!el) return;
+    el.textContent = val == null ? "--" : String(val);
   }
 
   function updateSpeedDistanceUI(speedKmh, distMeters) {
     ensureMetricsCardsUI();
     const sEl = document.getElementById("speed-value");
     const dEl = document.getElementById("distance-value");
-    if (sEl) sEl.textContent = formatKmh(speedKmh);
-    if (dEl) dEl.textContent = formatKmFromMeters(distMeters);
+    if (sEl) sEl.textContent = speedKmh == null ? "--" : formatKmh(speedKmh);
+    if (dEl) dEl.textContent = distMeters == null ? "--" : formatKmFromMeters(distMeters);
   }
 
   // -----------------------------
@@ -495,17 +598,29 @@
     lab.textContent = `${m}:${s}`;
   }
 
+  function getLastTimeMs(arr) {
+    if (!arr || !arr.length) return null;
+    return arr[arr.length - 1].t;
+  }
+
   function getSessionEndMs() {
-    if (!gpsSamples.length) return sessionStartTimeMs ?? getNowMs();
-    const last = gpsSamples[gpsSamples.length - 1].t;
+    const lastGps = getLastTimeMs(gpsSamples);
+    const lastBpm = getLastTimeMs(bpmSamples);
 
-    if (!sessionStartTimeMs) return last;
+    let end = null;
+    if (lastGps != null) end = lastGps;
+    if (lastBpm != null) end = end == null ? lastBpm : Math.max(end, lastBpm);
 
-    const diff = last - sessionStartTimeMs;
+    if (end == null) return sessionStartTimeMs ?? getNowMs();
+    if (sessionStartTimeMs == null) return end;
+
+    const diff = end - sessionStartTimeMs;
     if (diff < 0 || diff > MAX_SESSION_MS) {
-      return sessionStartTimeMs + gpsSamples.length * 1000;
+      // fallback: 1s per GPS campione (se presente)
+      if (gpsSamples.length) return sessionStartTimeMs + gpsSamples.length * 1000;
+      return end;
     }
-    return last;
+    return end;
   }
 
   function getDurationSec() {
@@ -536,7 +651,7 @@
   }
 
   // -----------------------------
-  // Replay lookup (interpolazione)
+  // Replay lookup (binary search + interpolazione)
   // -----------------------------
   function upperBoundByTime(arr, tMs) {
     let lo = 0, hi = arr.length;
@@ -608,6 +723,15 @@
     return sa + (sb - sa) * alpha;
   }
 
+  function getBpmAtTime(tMs) {
+    if (!bpmSamples.length) return null;
+    if (bpmSamples.length === 1) return bpmSamples[0].bpm;
+
+    const idx = upperBoundByTime(bpmSamples, tMs);
+    if (idx <= 0) return bpmSamples[0].bpm;
+    return bpmSamples[idx - 1].bpm;
+  }
+
   function updateProgressRouteToTime(tMs) {
     if (!progressRoute) return;
     if (!gpsSamples.length) {
@@ -653,6 +777,9 @@
     const dist = getDistanceAtTime(tMs);
     updateSpeedDistanceUI(speed, dist);
 
+    const bpm = getBpmAtTime(tMs);
+    if (bpm != null) updateBpmValue(bpm);
+
     const slider = document.getElementById("replay-slider");
     if (slider && Math.abs(parseFloat(slider.value || "0") - clampedSec) > 0.5) {
       slider.value = clampedSec.toFixed(1);
@@ -664,17 +791,19 @@
 
     updateReplayUiBounds();
 
-    if (!gpsSamples.length) return;
+    if (gpsSamples.length) {
+      const last = gpsSamples[gpsSamples.length - 1];
+      updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
 
-    const last = gpsSamples[gpsSamples.length - 1];
-    updateSpeedDistanceUI(last.speedKmh, last.cumDistM);
+      if (map && mapMarker) {
+        mapMarker.setLatLng([last.lat, last.lng]);
+        map.panTo([last.lat, last.lng], { animate: false });
+      }
 
-    if (map && mapMarker) {
-      mapMarker.setLatLng([last.lat, last.lng]);
-      map.panTo([last.lat, last.lng], { animate: false });
+      updateProgressRouteToTime(getSessionEndMs());
     }
 
-    updateProgressRouteToTime(getSessionEndMs());
+    if (lastLiveBpm !== "--") updateBpmValue(lastLiveBpm);
   }
 
   // -----------------------------
@@ -703,17 +832,28 @@
     socket.on("connect", () => setConnectionStatus(true));
     socket.on("disconnect", () => setConnectionStatus(false));
 
-    // Supporta più nomi evento (così non resti fermo se cambia lato server)
-    const handler = (data) => {
-      if (isReplayMode) return; // in replay, ignoro live
+    const gpsHandler = (data) => {
+      if (isReplayMode) return;
       const fix = normalizeGpsPoint(data);
       if (!fix) return;
       ingestGpsFix(fix, { updateUi: true, updateMap: true });
     };
 
-    socket.on("gps_update", handler);
-    socket.on("gpsupdate", handler);
-    socket.on("gps", handler);
+    const bpmHandler = (val) => {
+      if (isReplayMode) return;
+      const p = normalizeBpmPoint(val);
+      if (!p) return;
+      ingestBpmPoint(p, { updateUi: true });
+    };
+
+    // Supporta più nomi evento
+    socket.on("gps_update", gpsHandler);
+    socket.on("gpsupdate", gpsHandler);
+    socket.on("gps", gpsHandler);
+
+    socket.on("bpm_update", bpmHandler);
+    socket.on("bpmupdate", bpmHandler);
+    socket.on("bpm", bpmHandler);
   }
 
   // -----------------------------
@@ -730,7 +870,7 @@
     btn.style.cssText = [
       "padding:8px 12px",
       "border-radius:10px",
-      `border:1px solid rgba(151,201,62,0.8)`,
+      "border:1px solid rgba(151,201,62,0.8)",
       "background:rgba(151,201,62,0.12)",
       `color:${SENSORIA_GREEN}`,
       "font-weight:800",
@@ -779,7 +919,6 @@
     });
 
     document.body.appendChild(modal);
-
     document.getElementById("logs-close").onclick = () => modal.remove();
 
     const status = document.getElementById("logs-status");
@@ -827,20 +966,60 @@
     }
   }
 
+  // Find arrays without knowing exact key
+  function isLikelyGpsPoint(o) {
+    if (!o || typeof o !== "object") return false;
+    const hasLat = (o.lat ?? o.latitude ?? o.Latitude) != null;
+    const hasLng = (o.lng ?? o.lon ?? o.longitude ?? o.Longitude) != null;
+    const hasT = (o.t ?? o.tMs ?? o.time ?? o.timestamp) != null;
+    return hasLat && hasLng && hasT;
+  }
+
+  function isLikelyBpmPoint(o) {
+    if (!o || typeof o !== "object") return false;
+    const hasBpm = (o.bpm ?? o.value ?? o.hr ?? o.heartRate) != null;
+    const hasT = (o.t ?? o.tMs ?? o.time ?? o.timestamp) != null;
+    return hasBpm && hasT;
+  }
+
+  function findArrayDeep(root, predicate) {
+    const q = [root];
+    const seen = new Set();
+    let steps = 0;
+    const MAX_STEPS = 2500;
+
+    while (q.length && steps++ < MAX_STEPS) {
+      const cur = q.shift();
+      if (!cur || typeof cur !== "object") continue;
+      if (seen.has(cur)) continue;
+      seen.add(cur);
+
+      if (Array.isArray(cur) && cur.length && predicate(cur[0])) return cur;
+
+      if (Array.isArray(cur)) {
+        for (const it of cur) q.push(it);
+        continue;
+      }
+
+      for (const k of Object.keys(cur)) q.push(cur[k]);
+    }
+    return null;
+  }
+
   async function loadPastActivity(logName) {
     try {
-      resetGpsState();
+      resetAllState();
 
       const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
 
-      // Trova array GPS senza sapere il nome della chiave
+      // GPS
       const rawGps =
         (Array.isArray(data.gps) && data.gps.length ? data.gps : null) ||
         (Array.isArray(data.gpsSamples) && data.gpsSamples.length ? data.gpsSamples : null) ||
         (Array.isArray(data.GPS) && data.GPS.length ? data.GPS : null) ||
-        findGpsArrayDeep(data);
+        findArrayDeep(data, isLikelyGpsPoint);
 
       if (!rawGps || !rawGps.length) {
         console.warn("Nessun array GPS trovato nel log:", logName, data);
@@ -857,10 +1036,32 @@
         return;
       }
 
-      // Ingestione senza UI/map (prepara solo i vettori)
+      // Ingestione GPS (no UI/map durante build)
       fixes.forEach((f) => ingestGpsFix(f, { updateUi: false, updateMap: false }));
 
-      // Inizializza mappa e disegna route completa
+      // BPM (opzionale)
+      const rawBpm =
+        (Array.isArray(data.bpm) && data.bpm.length ? data.bpm : null) ||
+        (Array.isArray(data.hr) && data.hr.length ? data.hr : null) ||
+        findArrayDeep(data, isLikelyBpmPoint);
+
+      if (rawBpm && rawBpm.length) {
+        const bpms = rawBpm
+          .map(normalizeBpmPoint)
+          .filter(Boolean)
+          .sort((a, b) => a.t - b.t);
+
+        bpms.forEach((p) => ingestBpmPoint(p, { updateUi: false }));
+      }
+
+      // sessionStart = min tra primo gps e primo bpm (se presente)
+      const t0Gps = gpsSamples.length ? gpsSamples[0].t : null;
+      const t0Bpm = bpmSamples.length ? bpmSamples[0].t : null;
+      if (t0Gps != null && t0Bpm != null) sessionStartTimeMs = Math.min(t0Gps, t0Bpm);
+      else if (t0Gps != null) sessionStartTimeMs = t0Gps;
+      else if (t0Bpm != null) sessionStartTimeMs = t0Bpm;
+
+      // Mappa + route completa
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
 
@@ -871,14 +1072,13 @@
         try { map.fitBounds(fullRoute.getBounds(), { padding: [30, 30] }); } catch (_) {}
       }
 
-      sessionEndTimeMs = getSessionEndMs();
       updateReplayUiBounds();
       showReplayOverlayIfReady();
 
       // Vai a inizio replay
       enterReplayAtSecond(0);
 
-      console.log("Log caricato:", logName, "GPS samples:", gpsSamples.length);
+      console.log("Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length);
     } catch (err) {
       console.error("Errore caricamento log:", err);
       alert("Errore durante il caricamento dell'attività (vedi console).");
@@ -886,16 +1086,16 @@
   }
 
   // -----------------------------
-  // Compat: evita ReferenceError se rimane un vecchio bottone HTML
+  // Compat (se in HTML esiste un bottone vecchio)
   // -----------------------------
   window.clearAllData = window.clearAllData || function () {
-    // NO-OP volutamente
-    console.warn("clearAllData() disabilitato in versione GPS-only");
+    console.warn("clearAllData() disabilitato in questa versione");
   };
 
-  // Debug (utile in console)
-  window.__sensoriaGps = {
+  // Debug
+  window.__sensoria = {
     get gpsSamples() { return gpsSamples; },
+    get bpmSamples() { return bpmSamples; },
     get sessionStartTimeMs() { return sessionStartTimeMs; },
     get isReplayMode() { return isReplayMode; }
   };
@@ -905,6 +1105,9 @@
   // -----------------------------
   document.addEventListener("DOMContentLoaded", () => {
     ensureMetricsCardsUI();
+    updateBpmValue("--");
+    updateSpeedDistanceUI("--", "--");
+
     initPastActivityLoader();
     initSocket();
     setConnectionStatus(false);
