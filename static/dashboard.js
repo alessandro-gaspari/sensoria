@@ -478,18 +478,10 @@ function onGpsUpdate(data) {
 
   ensureSessionStart(tMs);
 
-  // secondo logico dall'inizio (per scatti 1Hz)
-  const sec = Math.max(0, Math.floor((tMs - sessionStartTimeMs) / 1000));
-
   const prevSample = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
 
   // primo punto: speed 0
   if (!prevSample) {
-    lastSpeedSec = sec;
-    lastSecFix = { lat, lng, t: tMs };
-    lastSpeedKmh = 0;
-    speedBySec[sec] = 0;
-
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
 
     if (!isBulkLoading) {
@@ -501,60 +493,42 @@ function onGpsUpdate(data) {
     return;
   }
 
-  // 1) distanza cumulativa (sempre tra fix consecutivi)
+  // CALCOLO VELOCITÀ SEMPLICE: tra fix consecutivi
+  const dtSec = (tMs - prevSample.t) / 1000;
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
-  // filtri minimi anti-jitter (puoi toglierli, ma di solito aiutano)
+  // Filtri qualità
   let usedStepM = 0;
-  if (isFinite(stepM) && stepM > 0.05 && acc <= 50) usedStepM = stepM;
+  let speedKmh = 0;
+
+  if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50 && stepM >= 0.2) {
+    usedStepM = stepM;
+    speedKmh = (stepM / dtSec) * 3.6; // m/s → km/h
+    
+    // Cap realistico
+    if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
+    speedKmh = Math.min(speedKmh, 100);
+  } else {
+    // Fix troppo vicini, troppo distanti, o accuracy scarsa → mantieni velocità precedente
+    speedKmh = prevSample.speedKmh || 0;
+  }
 
   const newCumDistM = (prevSample.cumDistM || 0) + usedStepM;
 
-  // 2) velocità a scatti: aggiorna SOLO quando cambia il secondo
-  // prendiamo come “fix del secondo” l'ULTIMO fix che arriva in quel secondo
-  if (lastSpeedSec == null) {
-    lastSpeedSec = sec;
-    lastSecFix = { lat: prevSample.lat, lng: prevSample.lng, t: prevSample.t };
-    lastSpeedKmh = 0;
-    speedBySec[sec] = 0;
-  }
-
-  if (sec > lastSpeedSec) {
-    const gapSec = sec - lastSpeedSec;
-
-    // distanza tra fix del secondo precedente e fix del secondo corrente
-    const dM = haversineMeters(lastSecFix.lat, lastSecFix.lng, lat, lng);
-
-    // il TUO caso: se gapSec=1 => m/s = dM / 1
-    let kmh = (Math.max(0, dM) / Math.max(1, gapSec)) * 3.6;
-
-    // cap (evita picchi assurdi)
-    if (!isFinite(kmh) || kmh < 0) kmh = 0;
-    kmh = Math.min(kmh, 100);
-
-    lastSpeedKmh = kmh;
-
-    // riempi eventuali secondi saltati con lo stesso valore (scatti “continui”)
-    for (let s = lastSpeedSec + 1; s <= sec; s++) speedBySec[s] = kmh;
-
-    lastSpeedSec = sec;
-    lastSecFix = { lat, lng, t: tMs };
-  }
-
-  // salva sample (la speed rimane l’ultimo scatto calcolato)
+  // Salva sample
   gpsSamples.push({
     t: tMs,
     lat,
     lng,
     acc,
     cumDistM: newCumDistM,
-    speedKmh: lastSpeedKmh
+    speedKmh: speedKmh
   });
 
-  // 3) UI/MAP: aggiorna solo se non bulk
+  // UI/MAP: aggiorna solo se non bulk
   if (isBulkLoading) return;
 
-  if (!isReplayMode) updateSpeedDistanceUI(lastSpeedKmh, newCumDistM);
+  if (!isReplayMode) updateSpeedDistanceUI(speedKmh, newCumDistM);
 
   if (map && mapMarker) {
     const pos = [lat, lng];
@@ -567,9 +541,6 @@ function onGpsUpdate(data) {
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
-
-
-
 // ==========================================
 // MAP INIT + push point
 // ==========================================
