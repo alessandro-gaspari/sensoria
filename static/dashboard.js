@@ -142,56 +142,62 @@
   // -----------------------------
   // Normalizzazione GPS (live+replay)
   // -----------------------------
+  // metti questi 2 state UNA SOLA VOLTA (fuori dalla funzione)
+  let gpsTimeUnit = null;   // 'ms' | 's' | null
+  let lastGpsTRaw = null;
+
   function normalizeGpsPoint(raw) {
     if (!raw || typeof raw !== "object") return null;
 
     const lat = Number(raw.lat ?? raw.latitude ?? raw.Latitude);
     const lng = Number(raw.lng ?? raw.lon ?? raw.longitude ?? raw.Longitude);
-    const acc = Number(raw.accuracy ?? raw.acc ?? 999);
-    return { t: tMs, lat, lng, acc };
+    const acc = Number(raw.accuracy ?? raw.acc ?? raw.hdop ?? 999);
 
+    if (!isFinite(lat) || !isFinite(lng)) return null;
+    if (lat === 0 && lng === 0) return null;
 
-    // timestamp preferito: stringa ISO / Date -> ms epoch
+    // --- TIME (ms) ---
     let tMs = null;
-    if (raw.timestamp != null && typeof raw.timestamp !== "number") {
-      const d = new Date(raw.timestamp);
-      if (!isNaN(d.getTime())) tMs = d.getTime();
-    }
-    if (tMs == null) {
-      // numerico (può essere epoch ms oppure relativo ms oppure relativo s)
-      const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
-      if (!isFinite(tRaw)) return null;
 
-      if (tRaw >= 1e12) {
-        // epoch ms
-        tMs = tRaw;
+    // 1) timestamp (string ISO o number)
+    const ts = raw.timestamp ?? raw.ts;
+    if (ts != null) {
+      if (typeof ts === "number") {
+        // se sembra epoch in secondi lo converto, altrimenti lo tratto come ms
+        tMs = ts > 1e12 ? ts : ts * 1000;
       } else {
-        // relativo: decide unità guardando delta (se disponibile)
-        if (gpsRawTimeUnit == null && lastGpsRawT != null) {
-          const d = tRaw - lastGpsRawT;
-
-          // Se incrementa di ~1, ~2, ~3 -> probabilmente secondi
-          if (d > 0 && d < 20) gpsRawTimeUnit = "s";
-
-          // Se incrementa di ~1000 -> probabilmente millisecondi
-          if (d >= 20 && d < 200000) gpsRawTimeUnit = "ms";
-
-          // Se scopriamo che erano secondi ma finora li avevamo trattati come ms, riscalo tutto
-          if (gpsRawTimeUnit === "s" && timelineScaleApplied === 1 && gpsSamples.length) {
-            rescaleTimeline(1000);
-          }
-        }
-
-        lastGpsRawT = tRaw;
-        tMs = gpsRawTimeUnit === "s" ? tRaw * 1000 : tRaw; // default: ms
+        const d = new Date(ts);
+        if (!isNaN(d.getTime())) tMs = d.getTime();
       }
     }
 
-    if (!isFinite(lat) || !isFinite(lng) || !isFinite(tMs)) return null;
-    if (lat === 0 && lng === 0) return null;
+    // 2) fallback: t / tMs / time (numerico relativo o epoch)
+    if (tMs == null) {
+      const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
+      if (!isFinite(tRaw)) return null;
 
-    return { t: tMs, lat, lng };
+      // epoch ms
+      if (tRaw > 1e12) {
+        tMs = tRaw;
+      } else {
+        // relativo: prova a capire se è in secondi o millisecondi guardando il delta
+        if (gpsTimeUnit == null && lastGpsTRaw != null) {
+          const d = tRaw - lastGpsTRaw;
+          if (d > 0 && d < 20) gpsTimeUnit = "s";      // tipico: 1,2,3...
+          else if (d >= 20) gpsTimeUnit = "ms";        // tipico: 1000, 2000...
+        }
+        lastGpsTRaw = tRaw;
+
+        // default: ms
+        tMs = gpsTimeUnit === "s" ? tRaw * 1000 : tRaw;
+      }
+    }
+
+    if (!isFinite(tMs)) return null;
+
+    return { t: tMs, lat, lng, acc };
   }
+
 
   // -----------------------------
   // Normalizzazione BPM (live+replay)
