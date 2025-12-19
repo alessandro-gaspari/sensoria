@@ -1196,14 +1196,22 @@ function updateSocksUI(side, data, bi) {
   const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
   const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
 
-  // NUOVI ID: posteriore, sinistra, destra
-  const el0 = document.getElementById(`${prefix}-posteriore`);
-  const el1 = document.getElementById(`${prefix}-sinistra`);
-  const el2 = document.getElementById(`${prefix}-destra`);
+  // MAPPING CORRETTO PER CALZINO SX E DX
+  const el_posteriore = document.getElementById(`${prefix}-posteriore`);
+  const el_sinistra = document.getElementById(`${prefix}-sinistra`);
+  const el_destra = document.getElementById(`${prefix}-destra`);
 
-  if (el0) el0.textContent = Math.round(val0);
-  if (el1) el1.textContent = Math.round(val1);
-  if (el2) el2.textContent = Math.round(val2);
+  if (side === "left") {
+    // CALZINO SX: posteriore=p2, sinistra=p0, destra=p1
+    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
+    if (el_sinistra) el_sinistra.textContent = Math.round(val0);
+    if (el_destra) el_destra.textContent = Math.round(val1);
+  } else {
+    // CALZINO DX: posteriore=p2, sinistra=p1, destra=p0
+    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
+    if (el_sinistra) el_sinistra.textContent = Math.round(val1);
+    if (el_destra) el_destra.textContent = Math.round(val0);
+  }
 
   // aggiorna grafico live calzino
   if (!isReplayMode) {
@@ -1221,6 +1229,7 @@ function updateSocksUI(side, data, bi) {
     }
   }
 }
+
 
 // ==========================================
 // SENSOR CARDS UI (minimal)
