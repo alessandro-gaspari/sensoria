@@ -35,6 +35,7 @@ var bpmSamples = []; // { t, bpm }
 var lastLiveBpm = "--";
 var isBulkLoading = false;
 var speedBySec = [];
+var secPos = [];
 var lastSpeedSec = null;
 var lastSecFix = null;
 var lastSpeedKmh = 0;
@@ -172,6 +173,43 @@ function ensureSessionStart(tMs) {
 
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
+}
+
+function rebuildSpeedBySecFromGps() {
+  speedBySec = [];
+  secPos = [];
+
+  if (sessionStartTimeMs == null || !gpsSamples.length) return;
+
+  // durata in secondi (ceil per coprire l’ultimo tratto)
+  const dur = Math.max(0, Math.ceil(getDurationSec()));
+
+  let prev = null;
+
+  for (let s = 0; s <= dur; s++) {
+    const tMs = sessionStartTimeMs + s * 1000;
+
+    const pos = getInterpolatedGpsAtTime(tMs);
+    if (!pos) continue;
+
+    secPos[s] = pos;
+
+    if (!prev) {
+      speedBySec[s] = 0;
+    } else {
+      const dM = haversineMeters(prev.lat, prev.lng, pos.lat, pos.lng);
+
+      // scatto “1 secondo”: m/s = dM / 1, km/h = m/s * 3.6
+      let kmh = dM * 3.6;
+
+      if (!isFinite(kmh) || kmh < 0) kmh = 0;
+      kmh = Math.min(kmh, 100);
+
+      speedBySec[s] = kmh;
+    }
+
+    prev = pos;
+  }
 }
 
 function getSessionEndMs() {
@@ -931,14 +969,16 @@ function updateProgressRouteToTime(tMs) {
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
 
+  // modalita replay
   isReplayMode = true;
 
+  // stop animazioni live marker (se presenti)
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
 
-  // 1) tempo clamped
+  // 1) clamp tempo
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
   const tMs = sessionStartTimeMs + clampedSec * 1000;
@@ -946,7 +986,7 @@ function enterReplayAtSecond(sec) {
   // 2) label mm:ss
   updateReplayTimeLabel(clampedSec);
 
-  // 3) MAPPA: marker + route progressiva interpolata
+  // 3) mappa: posizione interpolata + progress route
   const pos = getInterpolatedGpsAtTime(tMs);
   if (pos && mapMarker) {
     mapMarker.setLatLng([pos.lat, pos.lng]);
@@ -955,28 +995,31 @@ function enterReplayAtSecond(sec) {
   }
   updateProgressRouteToTime(tMs);
 
-  // 4) BPM (ok anche non a scatti)
+  // 4) BPM (step: ultimo noto <= tMs)
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
 
-  // 5) DIST (continua) + SPEED (A SCATTI)
+  // 5) distanza (continua) + velocita (a scatti ogni secondo)
   const dist = getDistanceAtTime(tMs);
 
   const wholeSec = Math.max(0, Math.floor(clampedSec));
-  let speed = speedBySec[wholeSec];
 
-  // fallback robusto se mancano secondi (o slider oltre ultimi dati)
-  if (speed == null) {
-    // cerca indietro ultimo valore noto
-    for (let s = wholeSec; s >= 0; s--) {
-      if (speedBySec[s] != null) { speed = speedBySec[s]; break; }
+  // velocita a scatti: se manca il valore per quel secondo, usa ultimo valore noto (no "flash a 0")
+  let speed = null;
+  if (Array.isArray(speedBySec) && speedBySec.length) {
+    if (speedBySec[wholeSec] != null) {
+      speed = speedBySec[wholeSec];
+    } else {
+      for (let s = wholeSec - 1; s >= 0; s--) {
+        if (speedBySec[s] != null) { speed = speedBySec[s]; break; }
+      }
     }
   }
-  if (speed == null) speed = 0;
+  if (speed == null || !isFinite(speed) || speed < 0) speed = 0;
 
   updateSpeedDistanceUI(speed, dist);
 
-  // 6) CALZINI: finestra + valori
+  // 6) calzini: finestra zoom + valori istantanei
   const windowHalf = 5;
   const tMin = Math.max(0, clampedSec - windowHalf);
   const tMax = tMin + windowHalf * 2;
@@ -985,15 +1028,18 @@ function enterReplayAtSecond(sec) {
   if (sockCharts.right) sockCharts.right.setScale("x", { min: tMin, max: tMax });
 
   const lS = findSampleAtTime(leftSockSamples, tMs);
-  if (lS) updateSocksUI("left", { pressure0: lS.p0, pressure1: lS.p1, pressure2: lS.p2 }, lS.bi);
+  if (lS) updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, lS.bi);
 
   const rS = findSampleAtTime(rightSockSamples, tMs);
-  if (rS) updateSocksUI("right", { pressure0: rS.p0, pressure1: rS.p1, pressure2: rS.p2 }, rS.bi);
+  if (rS) updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, rS.bi);
 
-  // 7) sync slider
+  // 7) sync slider (solo se non stai trascinando in modo fine)
   const slider = document.getElementById("replay-slider");
-  if (slider && Math.abs(parseFloat(slider.value) - clampedSec) > 0.5) {
-    slider.value = clampedSec.toFixed(1);
+  if (slider) {
+    const v = parseFloat(slider.value || "0");
+    if (!isFinite(v) || Math.abs(v - clampedSec) > 0.5) {
+      slider.value = clampedSec.toFixed(1);
+    }
   }
 }
 
@@ -1446,6 +1492,8 @@ async function loadPastActivity(logName) {
     // 1) Reset stati/array (come già facevi)
     gpsSamples = [];
     bpmSamples = [];
+    speedBySec = [];
+    secPos = [];
     leftSockSamples = [];
     rightSockSamples = [];
     sockChartData.left = [[], [], [], []];
@@ -1561,6 +1609,7 @@ async function loadPastActivity(logName) {
     sessionEndTimeMs = getSessionEndMs();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
+    rebuildSpeedBySecFromGps();
 
     // vai all’inizio attività
     enterReplayAtSecond(0);
