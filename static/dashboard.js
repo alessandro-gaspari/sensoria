@@ -1192,8 +1192,8 @@ function processIncomingData(data) {
 }
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
-const BI_LATERAL_AXIS = 'z';
-const BI_AVG_WINDOW_MS = 150;
+const BI_LATERAL_AXIS = 'x';
+const BI_AVG_WINDOW_MS = 850;
 
 const biAgg = {
   left: { sum: 0, n: 0, last: null },
