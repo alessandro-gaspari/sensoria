@@ -1208,16 +1208,20 @@ let biAvgTimer = null;
 
 
 function calculateBI(payload) {
-  const ax = payload.accelx ?? payload.ax ?? payload.accX ?? payload.AccelX;
-  const ay = payload.accely ?? payload.ay ?? payload.accY ?? payload.AccelY;
-  const az = payload.accelz ?? payload.az ?? payload.accZ ?? payload.AccelZ;
+  // prova più chiavi possibili
+  const ax = Number(payload.accelx ?? payload.ax ?? payload.accelX ?? payload.AccelX);
+  const ay = Number(payload.accely ?? payload.ay ?? payload.accelY ?? payload.AccelY);
+  const az = Number(payload.accelz ?? payload.az ?? payload.accelZ ?? payload.AccelZ);
 
-  if (ax == null || ay == null || az == null) return 0;
+  if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(az)) return 0;
 
   const norm = Math.sqrt(ax*ax + ay*ay + az*az);
-  return norm > 0.1 ? Math.abs(ax / norm) * 100 : 0;
-  if (ax == null || ay == null || az == null) console.log("BI=0 missing accel", payload);
+  if (!Number.isFinite(norm) || norm < 0.1) return 0;
+
+  // BI: percentuale del contributo di X (come avevi impostato tu)
+  return Math.abs(ax / norm) * 100;
 }
+
 
 function initSockCharts() {
   const leftEl = document.getElementById("chart-left-p");
