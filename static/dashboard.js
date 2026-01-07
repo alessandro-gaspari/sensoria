@@ -19,7 +19,6 @@ var socket = io({
 // UI colors
 // ==========================================
 const SENSORIA_GREEN = "#97c93e";
-const payload = sensorItem;
 
 // ==========================================
 // SENSORI / DATI

@@ -14,48 +14,57 @@
   <!-- Socket.io -->
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 
-  <!-- uPlot (se già incluso da qualche parte, rimuovi questi 2) -->
+  <!-- uPlot -->
   <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css" />
   <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
 </head>
 
 <body>
-  <header class="dashboard-header">
-    <div class="dashboard-title">sensoria</div>
+  <header class="dashboard-header" role="banner">
+    <!-- LOGO (sostituisce il testo) -->
+    <div class="dashboard-title" aria-label="Sensoria">
+      <img
+        src="/static/assets/logo_Clean.png"
+        alt="Sensoria"
+        style="height: 34px; width: auto; display: block;"
+      />
+    </div>
 
-    <div class="dashboard-info">
-      <div id="connection-status">
+    <div class="dashboard-info" role="status" aria-live="polite">
+      <div id="connection-status" aria-label="Stato connessione">
         <span class="dot"></span>
         <span>Disconnesso</span>
       </div>
-      <div id="sensor-count">--</div>
-      <div id="fps-counter">--</div>
-      <!-- Il bottone "Carica attività passata" lo aggiunge già il tuo JS -->
+
+      <div id="sensor-count" aria-label="Numero sensori">--</div>
+      <div id="fps-counter" aria-label="FPS">--</div>
+
+      <!-- Il bottone "Carica attività passata" viene aggiunto dal JS -->
     </div>
   </header>
 
-  <main class="dashboard-container">
-    <section class="top-layout">
+  <main class="dashboard-container" role="main">
+    <section class="top-layout" aria-label="Vista principale">
       <!-- GPS -->
-      <div id="map" class="gps-panel"></div>
+      <div id="map" class="gps-panel" aria-label="Mappa GPS"></div>
 
       <!-- Destra: 2 colonne x 3 card -->
-      <div class="right-panels">
+      <div class="right-panels" aria-label="Pannelli metriche">
         <div class="right-col">
           <div class="panel-card">
             <div class="panel-title">Pressioni piede sx</div>
             <div class="panel-subtitle">(solo grafici)</div>
-            <div id="chart-left-p" class="pressure-mini-chart"></div>
+            <div id="chart-left-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede sinistro"></div>
           </div>
 
           <div class="panel-card">
             <div class="panel-title">Angolo ginocchio</div>
-            <div class="panel-placeholder">--</div>
+            <div class="panel-placeholder" aria-label="Angolo ginocchio non disponibile">--</div>
           </div>
 
           <div class="panel-card">
             <div class="panel-title">Bongiorno index sx</div>
-            <div class="panel-value" id="bi-val-left">--</div>
+            <div class="panel-value" id="bi-val-left" aria-label="BI sinistro">--</div>
           </div>
         </div>
 
@@ -63,26 +72,27 @@
           <div class="panel-card">
             <div class="panel-title">Pressioni piede dx</div>
             <div class="panel-subtitle">(solo grafici)</div>
-            <div id="chart-right-p" class="pressure-mini-chart"></div>
+            <div id="chart-right-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede destro"></div>
           </div>
 
           <div class="panel-card">
             <div class="panel-title">Angolo tibia</div>
-            <div class="panel-placeholder">--</div>
+            <div class="panel-placeholder" aria-label="Angolo tibia non disponibile">--</div>
           </div>
 
           <div class="panel-card">
             <div class="panel-title">Bongiorno index dx</div>
-            <div class="panel-value" id="bi-val-right">--</div>
+            <div class="panel-value" id="bi-val-right" aria-label="BI destro">--</div>
           </div>
         </div>
       </div>
     </section>
 
     <!-- DATI RAW -->
-    <section class="raw-section">
+    <section class="raw-section" aria-label="Dati raw sensori">
       <div class="raw-title">DATI RAW</div>
-      <div id="sensors-grid"></div>
+
+      <div id="sensors-grid" aria-label="Griglia sensori"></div>
 
       <div id="empty-state">
         <h2>Nessun sensore connesso</h2>
