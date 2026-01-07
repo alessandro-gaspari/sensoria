@@ -21,9 +21,9 @@
     body { 
       background: #0f0f0f; 
       color: #fff; 
-      margin: 0; 
+      margin: 0;
+      padding-top: 60px;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; 
-      /* RIMOSSO overflow: hidden per permettere lo scroll */
       overflow-y: auto; 
     }
     
@@ -36,9 +36,11 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      position: sticky;
+      position: fixed;
       top: 0;
-      z-index: 1000;
+      left: 0;
+      right: 0;
+      z-index: 50000;
     }
     
     .header-left { display: flex; align-items: center; gap: 20px; }
@@ -59,7 +61,6 @@
     .dashboard-container {
       display: flex;
       width: 100%;
-      /* Altezza minima viewport, ma può crescere */
       min-height: calc(100vh - 60px); 
       padding: 12px;
       box-sizing: border-box;
@@ -68,23 +69,21 @@
 
     /* 1. SEZIONE MAPPA (Sinistra - 60%) */
     #map-section {
-      flex: 6; /* Proporzione 6 */
+      flex: 6;
       position: relative;
       background: #111;
       border: 2px solid #333;
       border-radius: 16px;
       overflow: hidden;
-      /* Altezza minima per la mappa, importante! */
       min-height: 600px; 
     }
     #map { width: 100%; height: 100%; }
 
     /* 2. SEZIONE GRIGLIA DATI (Destra - 40%) */
     #socks-container {
-      flex: 4; /* Proporzione 4 */
+      flex: 4;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      /* Righe automatiche ma con altezza minima */
       grid-template-rows: minmax(250px, 1fr) 140px 140px; 
       gap: 12px;
     }
@@ -117,7 +116,7 @@
       background: rgba(0,0,0,0.2);
       border-radius: 8px;
       min-height: 0;
-      position: relative; /* Per contenere uPlot */
+      position: relative;
     }
 
     /* Valori Numerici */
@@ -135,26 +134,24 @@
     .txt-orange { color: #ff9500; }
     .txt-blue { color: #4facfe; }
 
-    /* ========================================== */
-    /* RESPONSIVE (Mobile / Tablet / Finestre piccole) */
-    /* ========================================== */
+    /* RESPONSIVE */
     @media (max-width: 1200px) {
       .dashboard-container {
-        flex-direction: column; /* Impila verticale */
-        height: auto; /* Lascia che il contenuto definisca l'altezza */
+        flex-direction: column;
+        height: auto;
       }
 
       #map-section {
         flex: none;
         width: 100%;
-        height: 500px; /* Altezza fissa su mobile */
+        height: 500px;
         min-height: 500px;
       }
 
       #socks-container {
         flex: none;
         width: 100%;
-        grid-template-rows: 250px 120px 120px; /* Righe fisse */
+        grid-template-rows: 250px 120px 120px;
       }
     }
   </style>
@@ -175,8 +172,9 @@
     </div>
 
     <div class="header-right">
-      <div id="connection-status" class="disconnected">
-        <span class="dot"></span> Disconnesso
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div id="connection-status"></div>
+        <div id="session-user-name" style="color:#999;">Caricamento live session...</div>
       </div>
       <!-- Pulsante per caricare attività passate -->
       <button class="btn-load" onclick="if(window.openPastActivityModal) openPastActivityModal()">Carica attività passata</button>
@@ -197,11 +195,11 @@
       <!-- Riga 1: Grafici (più alti) -->
       <div class="grid-card">
         <div class="card-label">Pressioni Piede SX</div>
-        <div id="chart-l-sock" class="chart-box"></div>
+        <div id="sock-chart-left" class="chart-box"></div>
       </div>
       <div class="grid-card">
         <div class="card-label">Pressioni Piede DX</div>
-        <div id="chart-r-sock" class="chart-box"></div>
+        <div id="sock-chart-right" class="chart-box"></div>
       </div>
 
       <!-- Riga 2: Angoli -->

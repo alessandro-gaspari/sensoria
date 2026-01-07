@@ -67,8 +67,6 @@ var animationStartTime = null;
 var animationFrameId = null;
 const ANIMATION_DURATION = 700;
 
-var mapRotationDeg = 0;
-
 // ==========================================
 // METRIC CARDS (BPM/SPEED/DIST)
 // ==========================================
@@ -286,7 +284,7 @@ function ensureMetricsCardsUI() {
       position:absolute;
       top:16px;
       right:16px;
-      z-index:20000;
+      z-index:10;
       display:flex;
       flex-direction:column;
       gap:10px;
@@ -686,41 +684,16 @@ function createRotateControl() {
     font-size:16px;
     line-height:1;
     cursor:pointer;
-    z-index:20000;
+    z-index:10;
     display:flex;
     align-items:center;
     justify-content:center;
   `;
 
   btn.addEventListener("click", () => {
-    mapRotationDeg = (mapRotationDeg + 90) % 360;
-    applyMapRotation(mapRotationDeg);
   });
 
   mapDiv.appendChild(btn);
-}
-
-function applyMapRotation(deg) {
-  if (!map) return;
-
-  const container = map.getContainer();
-  const mapPane = container.querySelector(".leaflet-map-pane");
-  if (!mapPane) return;
-
-  const style = window.getComputedStyle(mapPane);
-  const current = style.transform !== "none" ? style.transform : "";
-  const cleaned = current.replace(/rotate\([^)]+\)/g, "").trim();
-  const next = `${cleaned} rotate(${deg}deg)`.trim();
-
-  mapPane.style.transformOrigin = "50% 50%";
-  mapPane.style.transition = "transform 0.25s ease-out";
-  mapPane.style.transform = next;
-
-  setTimeout(() => {
-    map.invalidateSize(true);
-    const c = map.getCenter();
-    map.panTo(c, { animate: false });
-  }, 260);
 }
 
 // ==========================================
@@ -738,7 +711,7 @@ function createReplayOverlayControls() {
     left:16px;
     right:16px;
     bottom:16px;
-    z-index:30000;
+    z-index:20;
     display:none;
     align-items:center;
     gap:12px;
@@ -1188,8 +1161,6 @@ function processIncomingData(data) {
   }
 }
 
-
-
 function calculateBI(payload) {
   // supporta sia accel_x/accelx
   const ax = payload.accel_x ?? payload.accelx;
@@ -1353,12 +1324,12 @@ function updateSensorCardUI(name, data) {
 // PROFILE UI (placeholder)
 // ==========================================
 function updateProfileUI(data) {
-  if (!data) return;
-  const elName = document.getElementById("user-name-display");
-  if (elName && data.name) {
-    elName.textContent = data.name + " " + (data.surname || "");
+  const nameEl = document.getElementById("session-user-name");
+  if (nameEl && data && data.name) {
+    nameEl.textContent = data.name;
   }
 }
+
 
 
 // ==========================================
