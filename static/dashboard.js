@@ -1114,53 +1114,43 @@ function goLive() {
 // ==========================================
 // PROCESSO DATI SENSORI (CORE)
 // ==========================================
+// ==========================================
+// PROCESSO DATI
+// ==========================================
 function processIncomingData(data) {
   if (!data) return;
 
-  // 1. Parsing del Tempo (Tenta t, timestamp o Date.now)
+  // Tempo
   let tMs = data.t != null ? Number(data.t) : (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
   const now = Date.now();
 
   const sName = data.sensor_name || "Unknown";
-  
-  // Cache per uso generico
-  sensors[sName] = data;
+  sensors[sName] = data; // Cache
 
-  // Identifica Lato
   const isLeft = (sName === "Calzino SX");
   const isRight = (sName === "Calzino DX" || sName === "RightSock");
 
   if (isLeft || isRight) {
     const side = isLeft ? "left" : "right";
     
-    // ------------------------------------------
-    // A. AGGIORNAMENTO GRAFICI PRESSIONE
-    // ------------------------------------------
+    // 1. Aggiorna Grafici
     const chartArr = uData[side];
-    
-    // Manteniamo buffer limitato (es. ultimi 100 punti) per fluidità
-    if (chartArr[0].length > 100) {
+    if (chartArr[0].length > 100) { // Tieni solo ultimi 100 punti
       for (let i = 0; i < 4; i++) chartArr[i].shift();
     }
     
-    // Push nuovi dati: [TempoSec, P0, P1, P2]
-    // uPlot vuole il tempo in secondi per l'asse X
     chartArr[0].push(tMs / 1000); 
     chartArr[1].push(data.pressure_0 || 0);
     chartArr[2].push(data.pressure_1 || 0);
     chartArr[3].push(data.pressure_2 || 0);
 
-    // Se il grafico è inizializzato, ridisegna
     if (uCharts[side]) {
       uCharts[side].setData(chartArr);
     } else {
-      // Primo pacchetto: prova a inizializzare
-      initSockChart(side);
+      initSockCharts(); // Prova a inizializzare se serve
     }
 
-    // ------------------------------------------
-    // B. BONGIORNO INDEX (Throttled 150ms)
-    // ------------------------------------------
+    // 2. Bongiorno Index (Ogni 150ms)
     if (now - lastBongiornoTime > BONGIORNO_INTERVAL_MS) {
       const ax = data.accel_x || 0;
       const ay = data.accel_y || 0;
@@ -1169,49 +1159,35 @@ function processIncomingData(data) {
       const totalAcc = Math.sqrt(ax*ax + ay*ay + az*az);
       let bIndex = 0;
       
-      // Calcola solo se c'è movimento (>50 unità arbitrarie)
       if (totalAcc > 50) { 
-        // Formula: % accelerazione laterale su totale
         bIndex = (Math.abs(ax) / totalAcc) * 100;
       }
       
-      // Aggiorna DOM
       const elB = document.getElementById("val-bongiorno");
       if (elB) elB.textContent = bIndex.toFixed(0);
       
       lastBongiornoTime = now;
     }
 
-    // ------------------------------------------
-    // C. JERK INDEX (Opzionale: ogni pacchetto)
-    // ------------------------------------------
+    // 3. Jerk Index
     const last = lastSensorState[sName];
     if (last && last.t && tMs > last.t) {
-       const dt = (tMs - last.t) / 1000; // Secondi
-       
-       // Filtro dt valido (evita divisioni per zero o salti enormi)
+       const dt = (tMs - last.t) / 1000;
        if (dt > 0.0001 && dt < 1.0) {
-         // Jerk medio = media delle derivate sui 3 assi
          const jx = Math.abs((data.accel_x || 0) - last.ax) / dt;
          const jy = Math.abs((data.accel_y || 0) - last.ay) / dt;
          const jz = Math.abs((data.accel_z || 0) - last.az) / dt;
          const jMean = (jx + jy + jz) / 3;
 
-         // Aggiorna DOM (scalato /1000 per leggibilità, es "12.5k")
          const elJ = document.getElementById("val-jerk");
          if (elJ) elJ.textContent = (jMean / 1000).toFixed(1) + "k";
        }
     }
     
-    // Salva stato per il prossimo calcolo Jerk
-    lastSensorState[sName] = { 
-      t: tMs, 
-      ax: data.accel_x||0, 
-      ay: data.accel_y||0, 
-      az: data.accel_z||0 
-    };
+    lastSensorState[sName] = { t: tMs, ax: data.accel_x||0, ay: data.accel_y||0, az: data.accel_z||0 };
   }
 }
+
 
 
 function calculateBI(payload) {
@@ -1233,35 +1209,34 @@ function initSockChart(side) {
   const divId = side === "left" ? "chart-l-sock" : "chart-r-sock";
   const el = document.getElementById(divId);
   
-  // Se il div non esiste o grafico già creato, esci
-  if (!el || uCharts[side]) return;
+  if (!el) return; // Se il div non esiste, esci
+  if (uCharts[side]) return; // Se già esiste, non ricreare
 
-  // Opzioni Grafico (Leggero, senza assi visibili per pulizia)
+  // Configurazione Grafico
   const opts = {
     width: el.clientWidth,
     height: el.clientHeight || 150,
     title: "",
-    cursor: { show: false }, // Disabilita cursore per performance
+    cursor: { show: false },
     select: { show: false },
     legend: { show: false },
-    scales: { x: { time: false } }, // Asse X è il tempo
+    scales: { x: { time: false } }, // X è tempo in secondi
     series: [
-      {}, // Asse X (Tempo)
-      { stroke: "#ff4136", width: 2, fill: "rgba(255, 65, 54, 0.1)", points: { show: false } }, // P0 (Rosso)
-      { stroke: "#2ecc40", width: 2, fill: "rgba(46, 204, 64, 0.1)", points: { show: false } }, // P1 (Verde)
-      { stroke: "#0074d9", width: 2, fill: "rgba(0, 116, 217, 0.1)", points: { show: false } }, // P2 (Blu)
+      {}, // Asse X
+      { stroke: "#ff4136", width: 2, fill: "rgba(255, 65, 54, 0.1)", points: { show: false } }, // P0
+      { stroke: "#2ecc40", width: 2, fill: "rgba(46, 204, 64, 0.1)", points: { show: false } }, // P1
+      { stroke: "#0074d9", width: 2, fill: "rgba(0, 116, 217, 0.1)", points: { show: false } }, // P2
     ],
     axes: [
-      { show: false }, // Nascondi griglia X
-      { show: false }  // Nascondi griglia Y
+      { show: false }, // Niente assi visibili
+      { show: false }
     ],
     padding: [0, 0, 0, 0]
   };
 
-  // Crea istanza uPlot
   uCharts[side] = new uPlot(opts, uData[side], el);
 
-  // Observer per resize automatico (Responsive)
+  // Resize automatico
   new ResizeObserver(() => {
     if (uCharts[side] && el) {
       uCharts[side].setSize({ width: el.clientWidth, height: el.clientHeight });
@@ -1825,6 +1800,16 @@ async function loadPastActivity(logName) {
     console.error("Errore durante il caricamento dell'attività:", error);
   }
 }
+
+// ==========================================
+// FUNZIONE CHE FIXA L'ERRORE (Wrapper)
+// ==========================================
+function initSockCharts() {
+  console.log("Initializing Sock Charts...");
+  initSockChart("left");
+  initSockChart("right");
+}
+
 
 // ==========================================
 // OPTIONAL: clear API (client)
