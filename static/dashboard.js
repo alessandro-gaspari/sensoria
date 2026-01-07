@@ -1229,7 +1229,7 @@ function initSockCharts() {
     height: 130,
     scales: {
       x: { time: false }, // secondi dall'inizio attività
-      y: { auto: false, range: [0, 1100] }
+      y: { auto: true }
     },
     series: [
       {},

@@ -395,6 +395,24 @@ html, body {
   height: 130px;
 }
 
+/* Mini-chart pressioni: mostra anche P0 nella legenda */
+.pressure-mini-chart .u-legend .u-series:first-child {
+  display: inline-flex !important;
+}
+
+/* Mini-chart: label legenda col colore della serie */
+.pressure-mini-chart .u-legend .u-label {
+  color: inherit !important; /* uPlot mette il colore inline */
+}
+
+/* Mini-chart: legenda più in alto e più compatta */
+.pressure-mini-chart .u-legend {
+  margin-top: -6px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+
 /* DATI RAW sotto */
 .raw-section{ margin-top: 18px; padding-top: 14px; }
 
@@ -410,6 +428,8 @@ html, body {
 #sensors-grid{
   grid-template-columns: repeat(2, minmax(420px, 1fr));
 }
+
+
 
 /* Responsive */
 @media (max-width: 1100px){
