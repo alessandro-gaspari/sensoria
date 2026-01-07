@@ -1202,22 +1202,18 @@ const biAgg = {
 
 let biAvgTimer = null;
 
+
 function calculateBI(payload) {
-  const ax = Number(payload.accelx);
-  const ay = Number(payload.accely);
-  const az = Number(payload.accelz);
-  if (!isFinite(ax) || !isFinite(ay) || !isFinite(az)) return 0;
+  const ax = payload.accelx ?? payload.ax ?? payload.accX ?? payload.AccelX;
+  const ay = payload.accely ?? payload.ay ?? payload.accY ?? payload.AccelY;
+  const az = payload.accelz ?? payload.az ?? payload.accZ ?? payload.AccelZ;
+
+  if (ax == null || ay == null || az == null) return 0;
 
   const norm = Math.sqrt(ax*ax + ay*ay + az*az);
-  if (!isFinite(norm) || norm < 1e-9) return 0;
-
-  const lateral =
-    BI_LATERAL_AXIS === 'x' ? ax :
-    BI_LATERAL_AXIS === 'y' ? ay : az;
-
-  return Math.abs(lateral) / norm * 100;
+  return norm > 0.1 ? Math.abs(ax / norm) * 100 : 0;
+  if (ax == null || ay == null || az == null) console.log("BI=0 missing accel", payload);
 }
-
 
 function initSockCharts() {
   const leftEl = document.getElementById("chart-left-p");
