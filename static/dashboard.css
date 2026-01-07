@@ -1,4 +1,17 @@
-/* Header superiore */
+/* =========================
+   Base page
+   ========================= */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0f0f0f;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* =========================
+   Header superiore
+   ========================= */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
@@ -58,7 +71,7 @@
 #fps-counter {
   font-size: 14px;
   color: #666;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   white-space: nowrap;
 }
 
@@ -67,23 +80,18 @@
   50% { opacity: 0.5; }
 }
 
-/* Base page */
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #0f0f0f;
-  color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-}
-
-/* Container principale */
+/* =========================
+   Container principale
+   ========================= */
 .dashboard-container {
   padding: 24px;
   max-width: 1600px;
   margin: 0 auto;
 }
 
-/* Griglia sensori - OTTIMIZZATA PER PIÙ DATI */
+/* =========================
+   Griglia sensori
+   ========================= */
 #sensors-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -91,6 +99,7 @@ html, body {
   margin-top: 20px;
 }
 
+/* vecchi id (se li usi ancora) */
 #pressure-chart {
   min-width: 320px;
   width: 100%;
@@ -107,21 +116,22 @@ html, body {
   box-sizing: border-box;
 }
 
-/* ========================================
-   LEGENDA uPlot - Quadrati con tick perfetti
-   ======================================== */
+/* =========================
+   uPlot - legenda/checkbox
+   ========================= */
+
+/* Contenitore legenda */
 .u-legend {
   display: flex !important;
   flex-wrap: nowrap !important;
   gap: 20px !important;
   padding: 8px 0 !important;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif !important;
   font-size: 13px !important;
   overflow-x: auto;
 }
 
-.u-legend .u-series:first-child { display: none !important; }
-
+/* Ogni voce */
 .u-legend .u-series {
   display: inline-flex !important;
   align-items: center !important;
@@ -130,40 +140,40 @@ html, body {
   gap: 8px !important;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
+  opacity: 1 !important; /* no dimming */
 }
 
-.u-legend .u-marker,
-.u-legend .u-series.u-off .u-marker {
+/* Testo legenda = colore serie (ON + OFF) */
+.u-legend .u-series .u-label,
+.u-legend .u-series .u-value,
+.u-legend .u-series.u-off .u-label,
+.u-legend .u-series.u-off .u-value {
+  opacity: 1 !important;
+  color: var(--u-stroke) !important;
+  font-weight: 600 !important;
+}
+
+/* Checkbox (quadretto) = colore serie */
+.u-legend .u-marker {
   width: 16px !important;
   height: 16px !important;
   border-radius: 3px !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  border: 2px solid #fff !important;
-  background: transparent !important;
-  color: #fff !important;
   position: relative !important;
-  font-size: 16px !important;
   box-sizing: border-box !important;
-  opacity: 1 !important;
+
+  border: 2px solid var(--u-stroke) !important;
+  background: var(--u-stroke) !important;
 }
 
-
-
-.u-legend .u-series.u-off { opacity: 1 !important; }
-.u-legend .u-series.u-off > * { opacity: 1 !important; }
-
-.u-legend .u-series.u-off .u-label,
-.u-legend .u-series.u-off .u-value,
-.u-legend .u-series.u-off .u-color,
-.u-legend .u-series.u-off .u-border { opacity: 1 !important; }
-
+/* Tick solo quando la serie è ON */
 .u-legend .u-series:not(.u-off) .u-marker::after {
-  content: '✓' !important;
+  content: "✓" !important;
   color: #fff !important;
   font-size: 13px !important;
-  font-weight: bold !important;
+  font-weight: 900 !important;
   display: block;
   position: absolute !important;
   left: 50%;
@@ -173,22 +183,23 @@ html, body {
   pointer-events: none;
 }
 
-.u-legend .u-series.u-off .u-marker::after { content: none !important; }
-
-.u-legend .u-series .u-label,
-.u-legend .u-series .u-value,
-.u-legend .u-series.u-off .u-label,
-.u-legend .u-series.u-off .u-value {
-  opacity: 1 !important;
-  color: #97c93e !important;
-  font-weight: 600 !important;
+.u-legend .u-series.u-off .u-marker::after {
+  content: none !important;
 }
 
-/* Disabilita il dimming automatico */
+/* Quando OFF: quadretto vuoto ma col bordo serie */
+.u-legend .u-series.u-off .u-marker {
+  background: transparent !important;
+  border-color: var(--u-stroke) !important;
+}
+
+/* Disabilita eventuale dimming automatico uPlot */
 .uplot .u-series:not(.u-off) { opacity: 1 !important; }
 .uplot .u-series.u-off ~ .u-series { opacity: 1 !important; }
 
-/* Card sensore */
+/* =========================
+   Card sensore
+   ========================= */
 .sensor-col {
   background-color: #1a1a1a;
   border: 1px solid #333;
@@ -254,7 +265,7 @@ html, body {
 }
 
 .sensor-value {
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   color: #97c93e;
   font-weight: 600;
   text-align: right;
@@ -303,7 +314,9 @@ html, body {
   color: #999;
 }
 
-/* MARKER VERDE PULSANTE */
+/* =========================
+   Marker verde pulsante
+   ========================= */
 .pulsating-marker {
   width: 20px;
   height: 20px;
@@ -320,36 +333,38 @@ html, body {
   100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
 }
 
-/* ====== LAYOUT SCREENSHOT (aggiunta) ====== */
-.top-layout{
+/* =========================
+   Layout screenshot (GPS + pannelli a destra)
+   ========================= */
+.top-layout {
   display: grid;
   grid-template-columns: 1.45fr 1fr;
   gap: 18px;
   align-items: stretch;
 }
 
-.gps-panel{
+.gps-panel {
   min-height: 520px;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.10);
   overflow: hidden;
   background: #0f0f0f;
-  position: relative; /* serve per overlay replay e metric cards */
+  position: relative; /* overlay replay e metric cards */
 }
 
-.right-panels{
+.right-panels {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
 
-.right-col{
+.right-col {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-.panel-card{
+.panel-card {
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(0,0,0,0.22);
@@ -361,7 +376,7 @@ html, body {
   justify-content: center;
 }
 
-.panel-title{
+.panel-title {
   font-weight: 900;
   letter-spacing: 0.5px;
   color: #ff6a3d;
@@ -369,14 +384,14 @@ html, body {
   font-size: 16px;
 }
 
-.panel-subtitle{
+.panel-subtitle {
   margin-top: 4px;
   color: rgba(255,255,255,0.55);
   font-size: 12px;
   font-weight: 700;
 }
 
-.panel-placeholder{
+.panel-placeholder {
   margin-top: 14px;
   font-family: "Courier New", monospace;
   font-size: 28px;
@@ -384,7 +399,7 @@ html, body {
   color: rgba(255,255,255,0.65);
 }
 
-.panel-value{
+.panel-value {
   margin-top: 12px;
   font-family: "Courier New", monospace;
   font-size: 34px;
@@ -392,32 +407,31 @@ html, body {
   color: #97c93e;
 }
 
-.pressure-mini-chart{
+/* mini chart (uPlot) */
+.pressure-mini-chart {
   margin-top: 10px;
   height: 130px;
 }
 
-/* Mini-chart pressioni: mostra anche P0 nella legenda */
+/* Nel mini-chart NON nascondere la prima serie (uPlot spesso ha una serie "x"). 
+   Se nel tuo caso la prima serie è davvero "tempo" e non la vuoi in legenda, questa regola va rimossa. */
 .pressure-mini-chart .u-legend .u-series:first-child {
   display: inline-flex !important;
 }
 
-/* Mini-chart: label legenda col colore della serie */
-.pressure-mini-chart .u-legend .u-series.u-off .u-label { color: var(--u-stroke) !important; }
-
-
-/* Mini-chart: legenda più in alto e più compatta */
+/* Mini-chart: legenda più compatta */
 .pressure-mini-chart .u-legend {
   margin-top: -6px !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
 
+/* =========================
+   Dati raw
+   ========================= */
+.raw-section { margin-top: 18px; padding-top: 14px; }
 
-/* DATI RAW sotto */
-.raw-section{ margin-top: 18px; padding-top: 14px; }
-
-.raw-title{
+.raw-title {
   text-align: center;
   font-weight: 900;
   letter-spacing: 1.2px;
@@ -425,41 +439,14 @@ html, body {
   margin: 10px 0 14px 0;
 }
 
-/* Colora il testo della legenda col colore della serie */
-.u-legend .u-series .u-label {
-  color: var(--u-stroke) !important;
-}
-
-.u-legend .u-marker {
-  border-color: var(--u-stroke) !important;
-  background: var(--u-stroke) !important;
-}
-
-/* Testo legenda = colore della serie */
-.u-legend .u-series .u-label,
-.u-legend .u-series .u-value {
-  color: var(--u-stroke) !important;
-}
-
-/* Anche quando la serie è spenta (u-off), resta del suo colore */
-.u-legend .u-series.u-off .u-label,
-.u-legend .u-series.u-off .u-value {
-  color: var(--u-stroke) !important;
-}
-
-
-/* come screenshot: 2 colonne sotto */
-#sensors-grid{
-  grid-template-columns: repeat(2, minmax(420px, 1fr));
-}
-
-/* Il box del grafico deve contenere canvas + legenda */
+/* =========================
+   Fix overflow legenda grafici calzini
+   ========================= */
 #chart-left-p, #chart-right-p {
   position: relative;
   overflow: hidden;
 }
 
-/* La legenda non deve “uscire” e deve andare a capo se serve */
 #chart-left-p .u-legend,
 #chart-right-p .u-legend {
   flex-wrap: wrap !important;
@@ -467,22 +454,25 @@ html, body {
   max-width: 100% !important;
 }
 
-/* Evita che ogni item “scappi” fuori */
 #chart-left-p .u-legend .u-series,
 #chart-right-p .u-legend .u-series {
   max-width: 100% !important;
 }
 
-
-
-/* Responsive */
-@media (max-width: 1100px){
-  .top-layout{ grid-template-columns: 1fr; }
-  .gps-panel{ min-height: 420px; }
-  #sensors-grid{ grid-template-columns: 1fr; }
+/* come screenshot: 2 colonne sotto */
+#sensors-grid {
+  grid-template-columns: repeat(2, minmax(420px, 1fr));
 }
 
-/* Responsive originali */
+/* =========================
+   Responsive
+   ========================= */
+@media (max-width: 1100px) {
+  .top-layout { grid-template-columns: 1fr; }
+  .gps-panel { min-height: 420px; }
+  #sensors-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 1024px) {
   #sensors-grid { grid-template-columns: 1fr; }
 }
