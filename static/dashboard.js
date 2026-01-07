@@ -1172,6 +1172,10 @@ function processIncomingData(data) {
   const p2 = Number(payload.pressure_2 ?? payload.p2 ?? payload.pressure2 ?? 0);
   const bi = calculateBI(payload);
 
+  if (name.includes("sx") || name.includes("dx")) {
+  console.log("SOCK PAYLOAD", name, "ax=", payload.accelx, "ay=", payload.accely, "az=", payload.accelz, "bi=", bi);  
+  }
+
   if (name.includes("sx") || name.includes("left")) {
     leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
     if (!isReplayMode) {
@@ -1248,6 +1252,7 @@ function initSockCharts() {
 
 // FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
+  console.log("updateSocksUI called", side, bi, data);
   const prefix = side === "left" ? "l" : "r";
   
   // BI (Balance Index) - se hai questo dato
