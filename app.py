@@ -132,6 +132,27 @@ def _extract_json_from_line(line: str):
     except:
         return None
 
+def _normalize_sensor_fields(d: dict) -> dict:
+    if not isinstance(d, dict):
+        return d
+    out = dict(d)
+
+    # accel (underscore -> no underscore)
+    if "accel_x" in out: out["accelx"] = out.get("accel_x")
+    if "accel_y" in out: out["accely"] = out.get("accel_y")
+    if "accel_z" in out: out["accelz"] = out.get("accel_z")
+
+    # gyro
+    if "gyro_x" in out: out["gyrox"] = out.get("gyro_x")
+    if "gyro_y" in out: out["gyroy"] = out.get("gyro_y")
+    if "gyro_z" in out: out["gyroz"] = out.get("gyro_z")
+
+    # mag
+    if "mag_x" in out: out["magx"] = out.get("mag_x")
+    if "mag_y" in out: out["magy"] = out.get("mag_y")
+    if "mag_z" in out: out["magz"] = out.get("mag_z")
+
+    return out
 
 def create_ssh_client():
     print("🔄 [SSH] Connessione...", flush=True)
@@ -298,7 +319,7 @@ def api_logs_load():
 
             # Sensori (accel / gyro / mag / pressure)
             if ("accel_x" in data) or ("gyro_x" in data) or ("mag_x" in data) or ("pressure_0" in data):
-                item = dict(data)
+                item = _normalize_sensor_fields(dict(data))
                 if tms is not None:
                     item["t"] = tms
                 sensors.append(item)
@@ -432,8 +453,9 @@ def background_watcher():
                             # 2) Sensori
                             if ("accel_x" in data) or ("gyro_x" in data) or ("mag_x" in data) or ("pressure_0" in data):
                                 s_name = data.get("sensor_name", "Unknown")
-                                sensors_data[s_name] = data
-                                socketio.emit("sensor_update", {"sensor_name": s_name, "data": data})
+                                norm = _normalize_sensor_fields(data)
+                                sensors_data[s_name] = norm
+                                socketio.emit("sensor_update", {"sensor_name": s_name, "data": norm})
                                 continue
 
                             # 3) GPS
