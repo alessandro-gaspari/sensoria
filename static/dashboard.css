@@ -149,6 +149,8 @@ html, body {
   opacity: 1 !important;
 }
 
+
+
 .u-legend .u-series.u-off { opacity: 1 !important; }
 .u-legend .u-series.u-off > * { opacity: 1 !important; }
 
@@ -423,6 +425,17 @@ html, body {
   color: #ff6a3d;
   margin: 10px 0 14px 0;
 }
+
+/* Colora il testo della legenda col colore della serie */
+.u-legend .u-series .u-label {
+  color: var(--u-stroke) !important;
+}
+
+.u-legend .u-marker {
+  border-color: var(--u-stroke) !important;
+  background: var(--u-stroke) !important;
+}
+
 
 /* come screenshot: 2 colonne sotto */
 #sensors-grid{

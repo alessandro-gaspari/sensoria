@@ -1237,9 +1237,9 @@ function initSockCharts() {
     },
     series: [
       {},
-      { label: "P0", stroke: "#ffb74d", width: 2, points: { show: false } },
-      { label: "P1", stroke: "#e91e63", width: 2, points: { show: false } },
-      { label: "P2", stroke: "#4fc3f7", width: 2, points: { show: false } }
+      { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
+      { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
+      { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
     ],
     axes: [{ show: false }, { show: false }],
     legend: { show: true, live: false },
