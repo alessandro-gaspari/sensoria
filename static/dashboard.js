@@ -41,6 +41,7 @@ var secPos = [];
 var lastSpeedSec = null;
 var lastSecFix = null;
 var lastSpeedKmh = 0;
+var lastSensorState = {};
 
 // ==========================================
 // MAPPA
@@ -1103,39 +1104,94 @@ function goLive() {
 // ==========================================
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
+// ==========================================
+// DATA PROCESSING (Core Logic)
+// ==========================================
 function processIncomingData(data) {
-  var payload = data && typeof data === "object" && data.data ? data.data : data;
-  if (!payload || (!payload.sensorname && !payload.name && !payload.sensor_name)) return;
+  if (!data) return;
 
-  // SUPPORTA: sensor_name, sensorname, name
-  const name = String(payload.sensor_name ?? payload.sensorname ?? payload.name ?? "unknown").toLowerCase();
-  const tMs = getNowMs();
-  ensureSessionStart(tMs);
+  // 1. Parsing Time (ISO string o timestamp numerico)
+  let tMs = null;
+  if (data.t != null) tMs = Number(data.t);
+  else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
+  else tMs = Date.now();
 
-  // Calzini: mapping campi flessibile
-  const p0 = Number(payload.pressure_0 ?? payload.p0 ?? payload.pressure0 ?? 0);
-  const p1 = Number(payload.pressure_1 ?? payload.p1 ?? payload.pressure1 ?? 0);
-  const p2 = Number(payload.pressure_2 ?? payload.p2 ?? payload.pressure2 ?? 0);
-  const bi = calculateBI(payload);
+  const sName = data.sensor_name || "Unknown";
+  
+  // Salva dati raw nel dizionario sensori globale
+  sensors[sName] = data;
 
-  if (name.includes("sx") || name.includes("left")) {
-    leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) {
-      updateSocksUI("left", { p0, p1, p2 }, bi);
+  // Se non è un calzino, usciamo (o gestiamo altri sensori qui)
+  // Nota: i nomi JSON sono "Calzino SX" e presumibilmente "Calzino DX"
+  const isLeft = (sName === "Calzino SX");
+  const isRight = (sName === "Calzino DX");
+  
+  if (isLeft || isRight) {
+    const prefix = isLeft ? "l-" : "r-";
+    
+    // ------------------------------------------
+    // A. PRESSIONI (P0, P1, P2)
+    // ------------------------------------------
+    if (data.pressure_0 != null) updateText(prefix + "posteriore", data.pressure_0.toFixed(0));
+    if (data.pressure_1 != null) updateText(prefix + "sinistra", data.pressure_1.toFixed(0));
+    if (data.pressure_2 != null) updateText(prefix + "destra", data.pressure_2.toFixed(0));
+
+    // Dati accelerometro (default 0 se mancano)
+    const ax = data.accel_x || 0;
+    const ay = data.accel_y || 0;
+    const az = data.accel_z || 0;
+
+    // ------------------------------------------
+    // B. BONGIORNO INDEX
+    // Formula: (Accelerazione Laterale / Totale) * 100
+    // Assumiamo che Accel X sia l'asse laterale.
+    // ------------------------------------------
+    const totalAcc = Math.sqrt(ax*ax + ay*ay + az*az);
+    let bongiornoIdx = 0;
+    
+    if (totalAcc > 0) {
+      // Calcolo percentuale contributo laterale
+      bongiornoIdx = (Math.abs(ax) / totalAcc) * 100;
     }
-  } else if (name.includes("dx") || name.includes("right")) {
-    rightSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) {
-      updateSocksUI("right", { p0, p1, p2 }, bi);
+    updateText(prefix + "bongiorno", bongiornoIdx.toFixed(1) + "%");
+
+    // ------------------------------------------
+    // C. JERK INDEX (Derivata Accelerazione)
+    // Formula: (Acc_new - Acc_old) / dt
+    // ------------------------------------------
+    let jx = 0, jy = 0, jz = 0;
+    
+    // Recupera stato precedente per questo sensore
+    const last = lastSensorState[sName];
+
+    if (last && last.t && tMs > last.t) {
+      // Calcolo delta time in SECONDI
+      const dt = (tMs - last.t) / 1000;
+
+      // Filtro per evitare picchi assurdi se perdiamo pacchetti (dt > 0.5s)
+      if (dt > 0.0001 && dt < 0.5) {
+        jx = Math.abs(ax - last.ax) / dt;
+        jy = Math.abs(ay - last.ay) / dt;
+        jz = Math.abs(az - last.az) / dt;
+      }
     }
+
+    // Aggiorna UI Jerk
+    updateText(prefix + "jerk-x", jx.toFixed(0));
+    updateText(prefix + "jerk-y", jy.toFixed(0));
+    updateText(prefix + "jerk-z", jz.toFixed(0));
+
+    // Salva stato attuale per il prossimo ciclo
+    lastSensorState[sName] = { t: tMs, ax: ax, ay: ay, az: az };
   }
-
-  sensors[payload.sensor_name ?? payload.sensorname ?? payload.name] = payload;
-
-  updateSensorCardUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
-  // charts: se selezionato
-  updateChartsUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
 }
+
+// Helper per aggiornare testo in sicurezza
+function updateText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
 
 function calculateBI(payload) {
   // supporta sia accel_x/accelx

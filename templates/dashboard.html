@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Sensoria Dashboard - GPS Only</title>
+  <title>Sensoria Dashboard - GPS + IMU</title>
 
-  <!-- (Opzionale) Il tuo CSS -->
+  <!-- CSS -->
   <link rel="stylesheet" href="/static/dashboard.css" />
 
   <!-- Leaflet (mappa) -->
@@ -13,204 +13,35 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
-    body {
-      background: #0f0f0f;
-      color: #fff;
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-    }
-    .dashboard-header {
-      background: #111;
-      border-bottom: 1px solid #333;
-      padding: 12px 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-    }
-    #connection-status {
-      font-weight: 700;
-      color: #ddd;
-      white-space: nowrap;
-    }
-    .dot {
-      height: 10px;
-      width: 10px;
-      background: #97c93e;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 8px;
-    }
-    .dashboard-container {
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 25px;
-    }
-    #map-section {
-      position: relative;
-      height: 520px;
-      width: 100%;
-    }
-    #map {
-      height: 100%;
-      width: 100%;
-      border-radius: 20px;
-      border: 2px solid #333;
-    }
+    /* Stili Inline per rapidità (puoi spostarli nel CSS) */
+    body { background: #0f0f0f; color: #fff; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+    .dashboard-header { background: #111; border-bottom: 1px solid #333; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+    #connection-status { font-weight: 700; color: #ddd; white-space: nowrap; }
+    .dot { height: 10px; width: 10px; background: #97c93e; border-radius: 50%; display: inline-block; margin-right: 8px; }
+    .disconnected .dot { background: #ff4136; }
+    .dashboard-container { max-width: 1400px; margin: 0 auto; padding: 25px; }
+    #map-section { position: relative; height: 520px; width: 100%; margin-bottom: 30px;}
+    #map { height: 100%; width: 100%; border-radius: 20px; border: 2px solid #333; }
     
-    /* ========================================== */
     /* RIQUADRI CALZINI */
-    /* ========================================== */
-    #socks-container {
-      display: flex;
-      gap: 20px;
-      padding: 25px 0;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
+    #socks-container { display: flex; gap: 20px; padding: 0; justify-content: center; flex-wrap: wrap; }
+    .sock-card { background: linear-gradient(145deg, #1a1a1a, #0f0f0f); border: 2px solid #333; border-radius: 20px; padding: 24px; width: 340px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
+    .sock-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; padding-bottom: 14px; border-bottom: 2px solid #333; }
+    .sock-emoji { font-size: 36px; line-height: 1; }
+    .sock-title h3 { font-size: 19px; font-weight: 800; color: #fff; margin: 0 0 5px 0; }
+    .sock-title p { font-size: 11px; font-weight: 700; color: #97c93e; text-transform: uppercase; margin: 0; letter-spacing: 1.2px; }
     
-    .sock-card {
-      background: linear-gradient(145deg, #1a1a1a, #0f0f0f);
-      border: 2px solid #333;
-      border-radius: 20px;
-      padding: 24px;
-      width: 340px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
+    .sock-metrics { display: flex; flex-direction: column; gap: 8px; }
+    .metric-group { margin-bottom: 12px; }
+    .metric-group-title { font-size: 10px; font-weight: 700; color: #666; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 1px; }
+
+    .pressure-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 4px;}
+    .pressure-label { font-size: 12px; font-weight: 700; color: #aaa; text-transform: uppercase; }
+    .pressure-value { font-family: 'SF Mono', Monaco, monospace; font-size: 18px; font-weight: 900; color: #97c93e; min-width: 50px; text-align: right; }
     
-    .sock-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 32px rgba(151, 201, 62, 0.2);
-    }
-    
-    .sock-card-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 18px;
-      padding-bottom: 14px;
-      border-bottom: 2px solid #333;
-    }
-    
-    .sock-emoji {
-      font-size: 36px;
-      line-height: 1;
-    }
-    
-    .sock-title {
-      flex: 1;
-    }
-    
-    .sock-title h3 {
-      font-size: 19px;
-      font-weight: 800;
-      color: #fff;
-      margin-bottom: 5px;
-      letter-spacing: 0.3px;
-    }
-    
-    .sock-title p {
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 1.2px;
-      color: #97c93e;
-      text-transform: uppercase;
-    }
-    
-    .sock-pressures {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    
-    .pressure-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 14px;
-      background: rgba(255,255,255,0.03);
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.05);
-      transition: background 0.2s ease;
-    }
-    
-    .pressure-row:hover {
-      background: rgba(255,255,255,0.06);
-    }
-    
-    .pressure-label {
-      font-size: 13px;
-      font-weight: 700;
-      color: #aaa;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .pressure-value {
-      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-      font-size: 22px;
-      font-weight: 900;
-      color: #97c93e;
-      min-width: 60px;
-      text-align: right;
-    }
-    
-    /* ========================================== */
-    /* PULSATING MARKER ANIMATION */
-    /* ========================================== */
-    .pulsating-marker {
-      width: 24px;
-      height: 24px;
-      background: #97c93e;
-      border-radius: 50%;
-      position: relative;
-      box-shadow: 0 0 12px rgba(151, 201, 62, 0.8);
-    }
-    
-    .pulsating-marker::before {
-      content: '';
-      position: absolute;
-      width: 100%;
-      height: 100%;
-      border-radius: 50%;
-      background: rgba(151, 201, 62, 0.6);
-      animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-      0% { 
-        transform: scale(1); 
-        opacity: 1; 
-      }
-      100% { 
-        transform: scale(2.5); 
-        opacity: 0; 
-      }
-    }
-    
-    /* ========================================== */
-    /* RESPONSIVE */
-    /* ========================================== */
-    @media (max-width: 768px) {
-      #map-section {
-        height: 400px;
-      }
-      
-      .dashboard-container {
-        padding: 15px;
-      }
-      
-      #socks-container {
-        padding: 15px 0;
-        gap: 15px;
-      }
-      
-      .sock-card {
-        width: 100%;
-        max-width: 400px;
-      }
-    }
+    /* Colore diverso per Jerk e Bongiorno */
+    .metric-secondary .pressure-value { color: #4facfe; } 
+    .metric-bongiorno .pressure-value { color: #ff9500; }
   </style>
 </head>
 
@@ -218,43 +49,57 @@
   <!-- HEADER -->
   <div class="dashboard-header">
     <div style="display:flex;align-items:center;gap:14px;">
-      <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo" style="height:40px;object-fit:contain;" />
+      <!-- Sostituisci con il tuo logo se presente -->
+      <h2 style="margin:0; font-weight:800; letter-spacing:-0.5px;">SENSORIA <span style="color:#97c93e">LIVE</span></h2>
     </div>
-
-    <div id="connection-status">
+    <div id="connection-status" class="disconnected">
       <span class="dot"></span> Disconnesso
     </div>
   </div>
 
   <div class="dashboard-container">
-    <!-- MAPPA (il JS mette overlay metriche + slider replay sopra questa) -->
+    <!-- MAPPA -->
     <div id="map-section">
       <div id="map"></div>
     </div>
     
     <!-- RIQUADRI CALZINI -->
     <div id="socks-container">
+      
       <!-- CALZINO SINISTRO -->
       <div class="sock-card">
         <div class="sock-card-header">
           <div class="sock-emoji">👟</div>
           <div class="sock-title">
             <h3>Piede Sinistro</h3>
-            <p>Pressioni</p>
+            <p>Real-time Metrics</p>
           </div>
         </div>
-        <div class="sock-pressures">
-          <div class="pressure-row">
-            <span class="pressure-label">Posteriore</span>
-            <span class="pressure-value" id="l-posteriore">--</span>
+
+        <div class="sock-metrics">
+          <!-- Pressioni -->
+          <div class="metric-group">
+            <div class="metric-group-title">Pressioni</div>
+            <div class="pressure-row"><span class="pressure-label">Posteriore</span><span class="pressure-value" id="l-posteriore">--</span></div>
+            <div class="pressure-row"><span class="pressure-label">Sinistra</span><span class="pressure-value" id="l-sinistra">--</span></div>
+            <div class="pressure-row"><span class="pressure-label">Destra</span><span class="pressure-value" id="l-destra">--</span></div>
           </div>
-          <div class="pressure-row">
-            <span class="pressure-label">Sinistra</span>
-            <span class="pressure-value" id="l-sinistra">--</span>
+
+          <!-- Bongiorno Index -->
+          <div class="metric-group">
+            <div class="metric-group-title">Indici</div>
+            <div class="pressure-row metric-bongiorno">
+              <span class="pressure-label">Bongiorno Idx (Lat %)</span>
+              <span class="pressure-value" id="l-bongiorno">--</span>
+            </div>
           </div>
-          <div class="pressure-row">
-            <span class="pressure-label">Destra</span>
-            <span class="pressure-value" id="l-destra">--</span>
+
+          <!-- Jerk -->
+          <div class="metric-group">
+            <div class="metric-group-title">Jerk (m/s³)</div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse X</span><span class="pressure-value" id="l-jerk-x">--</span></div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse Y</span><span class="pressure-value" id="l-jerk-y">--</span></div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse Z</span><span class="pressure-value" id="l-jerk-z">--</span></div>
           </div>
         </div>
       </div>
@@ -265,24 +110,38 @@
           <div class="sock-emoji">👟</div>
           <div class="sock-title">
             <h3>Piede Destro</h3>
-            <p>Pressioni</p>
+            <p>Real-time Metrics</p>
           </div>
         </div>
-        <div class="sock-pressures">
-          <div class="pressure-row">
-            <span class="pressure-label">Posteriore</span>
-            <span class="pressure-value" id="r-posteriore">--</span>
+        
+        <div class="sock-metrics">
+          <!-- Pressioni -->
+          <div class="metric-group">
+            <div class="metric-group-title">Pressioni</div>
+            <div class="pressure-row"><span class="pressure-label">Posteriore</span><span class="pressure-value" id="r-posteriore">--</span></div>
+            <div class="pressure-row"><span class="pressure-label">Sinistra</span><span class="pressure-value" id="r-sinistra">--</span></div>
+            <div class="pressure-row"><span class="pressure-label">Destra</span><span class="pressure-value" id="r-destra">--</span></div>
           </div>
-          <div class="pressure-row">
-            <span class="pressure-label">Sinistra</span>
-            <span class="pressure-value" id="r-sinistra">--</span>
+
+          <!-- Bongiorno Index -->
+          <div class="metric-group">
+            <div class="metric-group-title">Indici</div>
+            <div class="pressure-row metric-bongiorno">
+              <span class="pressure-label">Bongiorno Idx (Lat %)</span>
+              <span class="pressure-value" id="r-bongiorno">--</span>
+            </div>
           </div>
-          <div class="pressure-row">
-            <span class="pressure-label">Destra</span>
-            <span class="pressure-value" id="r-destra">--</span>
+
+          <!-- Jerk -->
+          <div class="metric-group">
+            <div class="metric-group-title">Jerk (m/s³)</div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse X</span><span class="pressure-value" id="r-jerk-x">--</span></div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse Y</span><span class="pressure-value" id="r-jerk-y">--</span></div>
+            <div class="pressure-row metric-secondary"><span class="pressure-label">Asse Z</span><span class="pressure-value" id="r-jerk-z">--</span></div>
           </div>
         </div>
       </div>
+
     </div>
   </div>
 
