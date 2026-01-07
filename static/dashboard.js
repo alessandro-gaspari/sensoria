@@ -19,6 +19,7 @@ var socket = io({
 // UI colors
 // ==========================================
 const SENSORIA_GREEN = "#97c93e";
+const payload = sensorItem;
 
 // ==========================================
 // SENSORI / DATI
@@ -1650,6 +1651,13 @@ function resetReplayState() {
 
 async function loadPastActivity(logName) {
   try {
+    // --- helper UI status (se la modale è aperta) ---
+    const statusEl = document.getElementById("logs-status");
+    const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+
+    setStatus(`Caricamento ${logName}...`);
+
+    // --- fetch log ---
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
     const data = await resp.json();
 
@@ -1658,9 +1666,9 @@ async function loadPastActivity(logName) {
     bpmSamples = [];
     speedBySec = [];
     secPos = [];
+
     leftSockSamples = [];
     rightSockSamples = [];
-
     sockChartData.left = [[], [], [], []];
     sockChartData.right = [[], [], [], []];
 
@@ -1668,71 +1676,62 @@ async function loadPastActivity(logName) {
     sessionEndTimeMs = null;
     isReplayMode = false;
 
-    // 2) Sensori / calzini
+    gpsTimeUnit = null;
+    lastGpsTRaw = null;
+
+    lastSpeedKmh = 0;
+    lastSpeedSec = null;
+    lastSecFix = null;
+    lastLiveBpm = "--";
+
+    if (fullRoute) fullRoute.setLatLngs([]);
+    if (progressRoute) progressRoute.setLatLngs([]);
+
+    updateBpmValue("--");
+    updateSpeedDistanceUI(null, null);
+
+    // 2) Sensori calzini
+    setStatus("Parsing sensori...");
     const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
 
     if (sensorsData.length > 0) {
+      // calcola sessionStartTimeMs robusto
       const firstSensor = sensorsData[0];
-      const initialT = firstSensor.t
-        ? firstSensor.t
-        : firstSensor.timestamp
-        ? new Date(firstSensor.timestamp).getTime()
-        : Date.now();
+      const initialT =
+        firstSensor.t ? Number(firstSensor.t) :
+        firstSensor.timestamp ? new Date(firstSensor.timestamp).getTime() :
+        Date.now();
 
       sessionStartTimeMs = sensorsData.reduce((min, item) => {
-        const t = item.t
-          ? item.t
-          : item.timestamp
-          ? new Date(item.timestamp).getTime()
-          : min;
+        const t =
+          item.t ? Number(item.t) :
+          item.timestamp ? new Date(item.timestamp).getTime() :
+          null;
+        if (!t || !isFinite(t)) return min;
         return t < min ? t : min;
       }, initialT);
 
       sensorsData.forEach((sensorItem) => {
-        const tMs = sensorItem.t
-          ? sensorItem.t
-          : sensorItem.timestamp
-          ? new Date(sensorItem.timestamp).getTime()
-          : null;
-        if (!tMs) return;
+        const tMs =
+          sensorItem.t ? Number(sensorItem.t) :
+          sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() :
+          null;
+        if (!tMs || !isFinite(tMs)) return;
 
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
 
         // SUPPORTA: sensor_name, sensorname, name
-        const name = String(sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown").toLowerCase();
+        const name = String(
+          sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown"
+        ).toLowerCase();
 
-        console.log("🔵 Processing sensor:", name, sensorItem);
-
-        const biInst = calculateBI(payload);
-
-        if (name.includes('sx') || name.includes('left')) {
-          leftSockSamples.push({ t: tMs, p0, p1, p2, bi: biInst });
-
-          // accumulo per media 150ms (solo live)
-          if (!isReplayMode) {
-            biAgg.left.sum += biInst;
-            biAgg.left.n += 1;
-          }
-
-          if (!isReplayMode) updateSocksUI('left', { p0, p1, p2 }, biAgg.left.last ?? biInst);
-        }
-        else if (name.includes('dx') || name.includes('right')) {
-          rightSockSamples.push({ t: tMs, p0, p1, p2, bi: biInst });
-
-          if (!isReplayMode) {
-            biAgg.right.sum += biInst;
-            biAgg.right.n += 1;
-          }
-
-          if (!isReplayMode) updateSocksUI('right', { p0, p1, p2 }, biAgg.right.last ?? biInst);
-        }
-
-        // SUPPORTA: pressure_0, p0, pressure0
+        // SUPPORTA: pressure_0, p0, pressure0 (ecc.)
         const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
         const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? sensorItem.pressure1 ?? 0);
         const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? sensorItem.pressure2 ?? 0);
 
-        const sample = { t: tMs, p0, p1, p2, bi };
+        const biInst = calculateBI(sensorItem);
+        const sample = { t: tMs, p0, p1, p2, bi: biInst };
 
         if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
           leftSockSamples.push(sample);
@@ -1740,51 +1739,68 @@ async function loadPastActivity(logName) {
           sockChartData.left[1].push(p0);
           sockChartData.left[2].push(p1);
           sockChartData.left[3].push(p2);
-          console.log("✅ Added LEFT sock sample:", sample);
         } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
           rightSockSamples.push(sample);
           sockChartData.right[0].push(tRelSec);
           sockChartData.right[1].push(p0);
           sockChartData.right[2].push(p1);
           sockChartData.right[3].push(p2);
-          console.log("✅ Added RIGHT sock sample:", sample);
         }
       });
     }
 
     // 3) GPS bulk-load (NO map/UI per ogni punto)
+    setStatus("Parsing GPS...");
     const gpsArr = Array.isArray(data.gps) ? data.gps : [];
     if (gpsArr.length === 0) {
       console.warn("Nessun GPS nel log.");
+      setStatus("Nessun GPS nel log.");
       return;
     }
 
     isBulkLoading = true;
-    for (let i = 0; i < gpsArr.length; i++) {
-      onGpsUpdate(gpsArr[i]);
+
+    // Chunking per non freezare (log grandi)
+    const CHUNK = 1000;
+    for (let i = 0; i < gpsArr.length; i += CHUNK) {
+      const end = Math.min(i + CHUNK, gpsArr.length);
+      setStatus(`Parsing GPS... ${end}/${gpsArr.length}`);
+      for (let j = i; j < end; j++) {
+        // usa la tua onGpsUpdate già robusta (accetta più formati)
+        onGpsUpdate(gpsArr[j]);
+      }
+      // yield UI
+      await new Promise((r) => setTimeout(r, 0));
     }
+
     isBulkLoading = false;
 
     // 4) BPM
+    setStatus("Parsing BPM...");
     if (Array.isArray(data.bpm)) {
       data.bpm.forEach((b) => {
-        const tMs = b.t ? b.t : b.timestamp ? new Date(b.timestamp).getTime() : null;
-        if (!tMs) return;
+        const tMs =
+          b.t ? Number(b.t) :
+          b.timestamp ? new Date(b.timestamp).getTime() :
+          null;
+        if (!tMs || !isFinite(tMs)) return;
         bpmSamples.push({ t: tMs, bpm: b.bpm ?? b.value ?? 0 });
       });
     }
 
     // 5) UI/Grafici calzini una volta
+    setStatus("Rendering grafici calzini...");
     initSockCharts();
     if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
     if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
 
     // 6) MAPPA: aggiorna UNA volta sola (route completa + marker)
+    setStatus("Rendering mappa...");
     if (gpsSamples.length) {
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
 
-      // downsample route per Leaflet (grande boost: 1 punto ogni 2m)
+      // downsample route per Leaflet (boost: 1 punto ogni 2m)
       const pts = [];
       let last = null;
       const MIN_STEP_M = 2.0;
@@ -1804,11 +1820,12 @@ async function loadPastActivity(logName) {
       }
 
       if (fullRoute) fullRoute.setLatLngs(pts);
-      if (progressRoute) progressRoute.setLatLngs([]); // verrà ricostruita da enterReplayAtSecond
+      if (progressRoute) progressRoute.setLatLngs([]); // ricostruita da enterReplayAtSecond
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
 
     // 7) Bounds + overlay replay una volta
+    setStatus("Finalizzazione replay...");
     sessionEndTimeMs = getSessionEndMs();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
@@ -1817,10 +1834,20 @@ async function loadPastActivity(logName) {
     // vai all'inizio attività
     enterReplayAtSecond(0);
 
-    console.log("✅ Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length, "Left socks:", leftSockSamples.length, "Right socks:", rightSockSamples.length);
+    setStatus("Caricato.");
+    console.log(
+      "✅ Log caricato:",
+      logName,
+      "GPS:", gpsSamples.length,
+      "BPM:", bpmSamples.length,
+      "Left socks:", leftSockSamples.length,
+      "Right socks:", rightSockSamples.length
+    );
   } catch (error) {
     isBulkLoading = false;
     console.error("Errore durante il caricamento dell'attività:", error);
+    const statusEl = document.getElementById("logs-status");
+    if (statusEl) statusEl.textContent = "Errore durante il caricamento dell'attività.";
   }
 }
 
