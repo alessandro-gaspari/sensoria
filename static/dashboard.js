@@ -1,54 +1,57 @@
 // ==========================================
-// dashboard.js (Sensoria Dashboard) - FULL
-// GPS core: onGpsUpdate (live + replay)
+// dashboard.js (Sensoria Dashboard) - NUOVO LAYOUT
 // ==========================================
 
-// ---- VERSION marker (per capire subito se il browser sta usando questo file) ----
-console.log("dashboard.js loaded - VERSION 2025-12-19 17:20 PRESSIONI FIX");
+console.log("dashboard.js loaded - VERSION 2026-01-07 NEW LAYOUT");
 
 // ==========================================
 // Socket
 // ==========================================
 var socket = io({
-  transports: ["websocket"],
-  reconnection: true,
-  reconnectionDelay: 500
+    transports: ["websocket"],
+    reconnection: true,
+    reconnectionDelay: 500
 });
 
 // ==========================================
 // UI colors
 // ==========================================
 const SENSORIA_GREEN = "#97c93e";
+const PURPLE_COLOR = "#c77dff";
+const RED_COLOR = "#ff6b6b";
+const YELLOW_COLOR = "#ffd93d";
+const GREEN_COLOR = "#6bcf7f";
 
 // ==========================================
 // SENSORI / DATI
 // ==========================================
 var sensors = {};
 
-// --- TIMELINE (time-based) ---
+// Timeline
 var sessionStartTimeMs = null;
 var sessionEndTimeMs = null;
 var isReplayMode = false;
 
-var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
-var bpmSamples = []; // { t, bpm }
-var lastLiveBpm = "--";
-
-var isBulkLoading = false;
-
-var speedBySec = [];
-var secPos = [];
-var lastSpeedSec = null;
-var lastSecFix = null;
+// GPS
+var gpsSamples = [];
 var lastSpeedKmh = 0;
-var lastSensorState = {};
-var uCharts = {left: null, right: null};
-var uData = {
-  left: [[], [], [], []],
-  right: [[], [], [], []]
-};
-var lastBongiornoTime = 0;
-const BONGIORNO_INTERVAL_MS = 150;
+var lastDistanceM = 0;
+
+// Pressure (calzini)
+var leftSockSamples = [];
+var rightSockSamples = [];
+
+// Accelerometro per Bongiorno Index
+var leftAccelSamples = [];  // { t, ax, ay, az }
+var rightAccelSamples = []; // { t, ax, ay, az }
+
+// Angoli (placeholder per ora)
+var kneeAngle = 0;
+var tibiaAngle = 0;
+
+// Bongiorno Index
+var bongiornoIndexSX = 0;
+var bongiornoIndexDX = 0;
 
 // ==========================================
 // MAPPA
@@ -56,1737 +59,609 @@ const BONGIORNO_INTERVAL_MS = 150;
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
-var fullRoute = null; // polilinea intera
-var progressRoute = null; // polilinea fino al tempo (replay/live)
-
-// (opzionale) stato marker animato / rotazione
-var currentMapPos = null;
-var targetMapPos = null;
-var startMapPos = null;
-var animationStartTime = null;
-var animationFrameId = null;
-const ANIMATION_DURATION = 700;
-
-// ==========================================
-// METRIC CARDS (BPM/SPEED/DIST)
-// ==========================================
-const METRIC_CARD_W = 190;
-const METRIC_CARD_H = 64;
+var fullRoute = null;
+var progressRoute = null;
 
 // ==========================================
 // GRAFICI (uPlot)
 // ==========================================
-var charts = {
-  accel: null,
-  gyro: null,
-  mag: null,
-  pressure: null
-};
+var pressureChartLeft = null;
+var pressureChartRight = null;
+var rawChartLeft = null;
+var rawChartRight = null;
 
-var chartData = {
-  accel: [[], [], [], []],
-  gyro: [[], [], [], []],
-  mag: [[], [], [], []],
-  pressure: [[], [], [], []]
-};
+var pressureDataLeft = [[], [], [], []];
+var pressureDataRight = [[], [], [], []];
+var rawDataLeft = [[], [], [], []];
+var rawDataRight = [[], [], [], []];
 
-var selectedSensor = null;
-var chartsInitialized = false;
-var isUserInteracting = false;
-var MIN_ZOOM_RANGE = 0.5;
-
-// ==========================================
-// Calzini (pressure)
-// ==========================================
-var leftSockSamples = [];
-var rightSockSamples = [];
-var sockCharts = { left: null, right: null };
-var sockChartData = {
-  left: [[], [], [], []],
-  right: [[], [], [], []]
-};
-
-// ==========================================
-// GPS SPEED config (anti picchi)
-// ==========================================
-const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanza
-const GPS_MIN_DT_S = 0.30; // se dt < 0.30s ignora fix (timestamp duplicati)
-const GPS_MAX_DT_S = 10.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
-const GPS_MIN_STEP_M = 0.20; // sotto 20cm = jitter (non sommare, non dare speed)
-const MAX_SPEED_KMH = 100; // cap (alzabile per pattinaggio veloce)
+var currentTab = "left";
 
 // ==========================================
 // INIZIALIZZAZIONE
 // ==========================================
 document.addEventListener("DOMContentLoaded", function () {
-  initSocket();
-  ensureMapDomOverlay();
-  ensureMetricsCardsUI();
-  initPastActivityLoader();
-
-  var sel = document.getElementById("chart-sensor-select");
-  if (sel) {
-    sel.addEventListener("change", function (e) {
-      selectedSensor = e.target.value || null;
-      resetChartData();
-      var container = document.getElementById("charts-container");
-      if (selectedSensor) {
-        container.style.display = "block";
-        if (!chartsInitialized) {
-          initCharts();
-          chartsInitialized = true;
-        }
-      } else {
-        container.style.display = "none";
-      }
-    });
-  }
+    console.log("DOM loaded, initializing dashboard...");
+    
+    initSocket();
+    initMap();
+    initPressureCharts();
+    initRawCharts();
+    initTabs();
+    initReplayControls();
+    
+    // Load activity button
+    const loadBtn = document.getElementById("load-activity-btn");
+    if (loadBtn) {
+        loadBtn.addEventListener("click", loadPastActivity);
+    }
+    
+    console.log("Dashboard initialization complete ✓");
 });
 
 // ==========================================
 // SOCKET
 // ==========================================
 function initSocket() {
-  socket.on("connect", () => {
-    var el = document.getElementById("connection-status");
-    if (el) {
-      el.className = "";
-      el.innerHTML = '<span class="dot"></span> Connesso';
-    }
-  });
+    socket.on("connect", () => {
+        console.log("Socket connected");
+        updateConnectionStatus(true);
+    });
 
-  socket.on("disconnect", () => {
-    var el = document.getElementById("connection-status");
-    if (el) {
-      el.className = "disconnected";
-      el.innerHTML = '<span class="dot"></span> Disconnesso';
-    }
-  });
+    socket.on("disconnect", () => {
+        console.log("Socket disconnected");
+        updateConnectionStatus(false);
+    });
 
-  socket.on("sensor_update", (data) => processIncomingData(data));
-  socket.on("bpm_update", (val) => onBpmUpdate(val));
-  socket.on("profile_update", (data) => updateProfileUI(data));
-  socket.on("gps_update", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
+    socket.on("sensor_update", (data) => {
+        processIncomingData(data);
+    });
 
-  socket.on("data_cleared", () => {
-    if (sessionStartTimeMs != null) {
-      sessionEndTimeMs = getNowMs();
-      updateReplayUiBounds();
-      showReplayOverlayIfReady();
-    }
-  });
-}
+    socket.on("gps_update", (data) => {
+        onGpsUpdate(data);
+    });
 
-// ==========================================
-// TIME + UTILS
-// ==========================================
-function getNowMs() {
-  return Date.now();
-}
+    socket.on("pressure_update", (data) => {
+        onPressureUpdate(data);
+    });
 
-function ensureSessionStart(tMs) {
-  if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
-}
-
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-
-function rebuildSpeedBySecFromGps() {
-  speedBySec = [];
-  secPos = [];
-  if (sessionStartTimeMs == null || !gpsSamples.length) return;
-
-  // durata in secondi (ceil per coprire l'ultimo tratto)
-  const dur = Math.max(0, Math.ceil(getDurationSec()));
-  let prev = null;
-
-  for (let s = 0; s <= dur; s++) {
-    const tMs = sessionStartTimeMs + s * 1000;
-    const pos = getInterpolatedGpsAtTime(tMs);
-    if (!pos) continue;
-
-    secPos[s] = pos;
-
-    if (!prev) {
-      speedBySec[s] = 0;
-    } else {
-      const dM = haversineMeters(prev.lat, prev.lng, pos.lat, pos.lng);
-      // scatto "1 secondo": m/s = dM / 1, km/h = m/s * 3.6
-      let kmh = dM * 3.6;
-      if (!isFinite(kmh) || kmh < 0) kmh = 0;
-      kmh = Math.min(kmh, 100);
-      speedBySec[s] = kmh;
-    }
-    prev = pos;
-  }
-}
-
-function getSessionEndMs() {
-  if (!gpsSamples.length) return sessionStartTimeMs || Date.now();
-  const lastGps = gpsSamples[gpsSamples.length - 1].t;
-
-  // guard-rail: se durata enorme, probabile timestamp errato -> fallback 1s per campione
-  const diff = lastGps - sessionStartTimeMs;
-  if (diff > 7200000) {
-    console.warn("Rilevato timestamp anomalo, tronco la durata.");
-    return sessionStartTimeMs + gpsSamples.length * 1000;
-  }
-  return lastGps;
-}
-
-function getDurationSec() {
-  if (!sessionStartTimeMs) return 0;
-  return Math.max(0, (getSessionEndMs() - sessionStartTimeMs) / 1000);
-}
-
-// ==========================================
-// HAVERSINE + FORMAT
-// ==========================================
-function haversineMeters(lat1, lon1, lat2, lon2) {
-  const R = 6371e3;
-  const φ1 = (lat1 * Math.PI) / 180;
-  const φ2 = (lat2 * Math.PI) / 180;
-  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
-  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
-
-  const a =
-    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c;
-}
-
-function formatKmh(v) {
-  if (v == null || !isFinite(v)) return "--";
-  return Math.max(0, v).toFixed(1);
-}
-
-function formatKmFromMeters(m) {
-  if (m == null || !isFinite(m)) return "--";
-  return Math.max(0, m / 1000).toFixed(2);
-}
-
-// ==========================================
-// METRIC CARDS UI
-// ==========================================
-function ensureMetricsCardsUI() {
-  // Nascondi vecchio bpm-display se esiste
-  var oldBpm = document.getElementById("bpm-display");
-  if (oldBpm) oldBpm.style.display = "none";
-
-  let wrap = document.getElementById("metrics-stack");
-  if (!wrap) {
-    wrap = document.createElement("div");
-    wrap.id = "metrics-stack";
-    wrap.style.cssText = `
-      position:absolute;
-      top:16px;
-      right:16px;
-      z-index:10;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-      align-items:flex-end;
-      pointer-events:none;
-    `;
-    const mapDiv = document.getElementById("map");
-    (mapDiv || document.body).appendChild(wrap);
-  } else {
-    const mapDiv = document.getElementById("map");
-    if (mapDiv && wrap.parentElement !== mapDiv) mapDiv.appendChild(wrap);
-  }
-
-  if (!document.getElementById("metric-bpm")) {
-    wrap.appendChild(
-      buildMetricCard({
-        id: "metric-bpm",
-        emoji: "❤️",
-        label: "BPM LIVE",
-        labelColor: "rgba(255, 65, 54, 0.95)",
-        borderColor: "rgba(255, 65, 54, 0.70)",
-        valueId: "bpm-value",
-        unitText: ""
-      })
-    );
-  }
-
-  if (!document.getElementById("metric-speed")) {
-    wrap.appendChild(
-      buildMetricCard({
-        id: "metric-speed",
-        emoji: "⚡",
-        label: "VELOCITÀ",
-        labelColor: "rgba(255, 149, 0, 0.95)",
-        borderColor: "rgba(255, 149, 0, 0.70)",
-        valueId: "speed-value",
-        unitText: "km/h"
-      })
-    );
-  }
-
-  if (!document.getElementById("metric-dist")) {
-    wrap.appendChild(
-      buildMetricCard({
-        id: "metric-dist",
-        emoji: "📍",
-        label: "DISTANZA",
-        labelColor: "rgba(255, 214, 10, 0.95)",
-        borderColor: "rgba(255, 214, 10, 0.70)",
-        valueId: "distance-value",
-        unitText: "km"
-      })
-    );
-  }
-}
-
-function buildMetricCard({ id, emoji, label, labelColor, borderColor, valueId, unitText }) {
-  const card = document.createElement("div");
-  card.id = id;
-  card.style.cssText = `
-    width:${METRIC_CARD_W}px;
-    height:${METRIC_CARD_H}px;
-    box-sizing:border-box;
-    border-radius:12px;
-    padding:10px 12px;
-    display:flex;
-    align-items:center;
-    gap:12px;
-    background: rgba(0,0,0,0.35);
-    border: 1px solid ${borderColor};
-    box-shadow: 0 10px 22px rgba(0,0,0,0.45);
-    pointer-events:auto;
-    overflow:hidden;
-  `;
-
-  card.innerHTML = `
-    <div style="font-size:26px;line-height:1;width:34px;text-align:center">${emoji}</div>
-    <div style="flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:2px">
-      <div id="${valueId}" style="font-family:monospace;font-size:14px;font-weight:900;color:#fff">--</div>
-      <div style="font-size:10px;font-weight:900;letter-spacing:1px;color:${labelColor}">
-        ${label}
-        ${unitText ? `<span style="opacity:0.9">${unitText}</span>` : ""}
-      </div>
-    </div>
-  `;
-
-  return card;
-}
-
-function updateBpmValue(val) {
-  ensureMetricsCardsUI();
-  const el = document.getElementById("bpm-value");
-  if (!el) return;
-  el.textContent = val == null ? "--" : String(val);
-}
-
-function updateSpeedDistanceUI(speedKmh, distMeters) {
-  ensureMetricsCardsUI();
-  const sEl = document.getElementById("speed-value");
-  const dEl = document.getElementById("distance-value");
-  if (sEl) sEl.textContent = speedKmh == null ? "--" : formatKmh(speedKmh);
-  if (dEl) dEl.textContent = distMeters == null ? "--" : formatKmFromMeters(distMeters);
-}
-
-// ==========================================
-// BPM (LIVE / TIMELINE)
-// ==========================================
-function onBpmUpdate(val) {
-  var bpmInt = parseInt(val, 10);
-  if (isNaN(bpmInt) || bpmInt <= 0) return;
-
-  var tMs = getNowMs();
-  ensureSessionStart(tMs);
-
-  lastLiveBpm = bpmInt;
-  bpmSamples.push({ t: tMs, bpm: bpmInt });
-
-  if (!isReplayMode) {
-    updateBpmValue(bpmInt);
-  }
-
-  updateReplayUiBounds();
-  showReplayOverlayIfReady();
-}
-
-// ==========================================
-// GPS NORMALIZATION (live + replay)
-// ==========================================
-let gpsTimeUnit = null; // "ms" / "s" / null
-let lastGpsTRaw = null;
-
-function normalizeGpsPoint(raw) {
-  if (!raw || typeof raw !== "object") return null;
-
-  // già normalizzato?
-  if (raw.t != null && raw.lat != null && raw.lng != null) {
-    const tMs = Number(raw.t);
-    const lat = Number(raw.lat);
-    const lng = Number(raw.lng);
-    const acc = Number(raw.acc ?? raw.accuracy ?? 999);
-    if (!isFinite(tMs) || !isFinite(lat) || !isFinite(lng)) return null;
-    if (lat === 0 && lng === 0) return null;
-    return { t: tMs, lat, lng, acc };
-  }
-
-  const lat = Number(raw.lat ?? raw.latitude ?? raw.Latitude);
-  const lng = Number(raw.lng ?? raw.lon ?? raw.longitude ?? raw.Longitude);
-  const acc = Number(raw.accuracy ?? raw.acc ?? raw.hdop ?? 999);
-
-  if (!isFinite(lat) || !isFinite(lng)) return null;
-  if (lat === 0 && lng === 0) return null;
-
-  let tMs = null;
-
-  // 1) timestamp string ISO o number
-  const ts = raw.timestamp ?? raw.ts;
-  if (ts != null) {
-    if (typeof ts === "number") {
-      tMs = ts > 1e12 ? ts : ts * 1000;
-    } else {
-      const d = new Date(ts);
-      if (!isNaN(d.getTime())) tMs = d.getTime();
-    }
-  }
-
-  // 2) fallback: t / tMs / time numerico relativo o epoch
-  if (tMs == null) {
-    const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
-    if (!isFinite(tRaw)) return null;
-
-    if (tRaw > 1e12) {
-      tMs = tRaw;
-    } else {
-      // capisci unit dal delta
-      if (gpsTimeUnit == null && lastGpsTRaw != null) {
-        const d = tRaw - lastGpsTRaw;
-        if (d > 0 && d < 20) {
-          gpsTimeUnit = "s";
-        } else if (d >= 20) {
-          gpsTimeUnit = "ms";
+    socket.on("data_cleared", () => {
+        console.log("Data cleared, session ended");
+        if (sessionStartTimeMs != null) {
+            sessionEndTimeMs = Date.now();
+            showReplayOverlay();
         }
-      }
-      lastGpsTRaw = tRaw;
-      tMs = gpsTimeUnit === "s" ? tRaw * 1000 : tRaw;
-    }
-  }
-
-  if (!isFinite(tMs)) return null;
-
-  return { t: tMs, lat, lng, acc };
+    });
 }
 
-// ==========================================
-// GPS (LIVE / REPLAY CORE: onGpsUpdate)
-// ==========================================
-function onGpsUpdate(data) {
-  if (!data) return;
-
-  const lat = Number(data.latitude ?? data.lat);
-  const lng = Number(data.longitude ?? data.lng ?? data.lon);
-  const acc = Number(data.accuracy ?? data.acc ?? 10);
-
-  // timestamp: preferisci t, fallback timestamp ISO, fallback now
-  let tMs = null;
-  if (data.t != null) {
-    tMs = Number(data.t);
-  } else if (data.timestamp) {
-    tMs = new Date(data.timestamp).getTime();
-  } else {
-    tMs = Date.now();
-  }
-
-  if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
-  if (!isFinite(tMs)) return;
-
-  ensureSessionStart(tMs);
-
-  const prevSample = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
-
-  // primo punto: speed = 0
-  if (!prevSample) {
-    gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
-
-    if (!isBulkLoading) {
-      ensureMapInitialized(lat, lng);
-      if (!isReplayMode) {
-        updateSpeedDistanceUI(0, 0);
-      }
-    }
-
-    updateReplayUiBounds();
-    showReplayOverlayIfReady();
-    return;
-  }
-
-  // CALCOLO VELOCITÀ (con SMOOTHING per GPS rumorosi)
-  const dtSec = (tMs - prevSample.t) / 1000;
-  const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
-
-  let usedStepM = 0;
-  let speedKmh = 0;
-
-  // Filtri qualità GPS
-  if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50) {
-    // Se ti muovi pochissimo (<1m), considera velocità = 0
-    if (stepM < 1.0) {
-      speedKmh = 0;
-      usedStepM = 0;
-    }
-    // Movimento rilevato
-    else {
-      usedStepM = stepM;
-      const instantSpeed = (stepM / dtSec) * 3.6; // km/h istantaneo
-
-      // Smoothing esponenziale: 70% vecchio, 30% nuovo per evitare oscillazioni
-      const prevSpeed = prevSample.speedKmh || 0;
-      speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
-
-      // Cap realistico
-      if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
-      speedKmh = Math.min(speedKmh, 100);
-    }
-  } else {
-    // Fix scadenti: mantieni velocità precedente
-    speedKmh = prevSample.speedKmh || 0;
-  }
-
-  const newCumDistM = (prevSample.cumDistM || 0) + usedStepM;
-
-  // Salva sample
-  gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh });
-
-  // UI/MAP: aggiorna solo se non bulk
-  if (isBulkLoading) return;
-
-  if (!isReplayMode) {
-    updateSpeedDistanceUI(speedKmh, newCumDistM);
-  }
-
-  if (map && mapMarker) {
-    const pos = [lat, lng];
-    mapMarker.setLatLng(pos);
-    if (fullRoute) fullRoute.addLatLng(pos);
-    if (progressRoute) progressRoute.addLatLng(pos);
-    if (!isUserInteracting) map.panTo(pos);
-  }
-
-  updateReplayUiBounds();
-  showReplayOverlayIfReady();
-}
-
-// ==========================================
-// MAP INIT + push point
-// ==========================================
-function ensureMapDomOverlay() {
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv) return;
-  mapDiv.style.position = "relative";
-}
-
-function ensureMapInitialized(lat, lng) {
-  if (isMapInitialized) return;
-
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv) return;
-  mapDiv.style.position = "relative";
-
-  map = L.map("map", {
-    attributionControl: false,
-    zoomControl: true
-  }).setView([lat, lng], 19);
-
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
-    maxZoom: 20
-  }).addTo(map);
-
-  // pane ordering
-  map.createPane("routePane");
-  map.getPane("routePane").style.zIndex = 450;
-
-  map.createPane("markerPane");
-  map.getPane("markerPane").style.zIndex = 650;
-
-  var pulseIcon = L.divIcon({
-    className: "custom-div-icon",
-    html: '<div class="pulsating-marker"></div>',
-    iconSize: [24, 24],
-    iconAnchor: [12, 12]
-  });
-
-  mapMarker = L.marker([lat, lng], {
-    icon: pulseIcon,
-    pane: "markerPane"
-  }).addTo(map);
-
-  fullRoute = L.polyline([], {
-    pane: "routePane",
-    color: SENSORIA_GREEN,
-    weight: 4,
-    opacity: 0.45,
-    lineJoin: "round",
-    lineCap: "round"
-  }).addTo(map);
-
-  progressRoute = L.polyline([], {
-    pane: "routePane",
-    color: SENSORIA_GREEN,
-    weight: 7,
-    opacity: 0.95,
-    lineJoin: "round",
-    lineCap: "round"
-  }).addTo(map);
-
-  createReplayOverlayControls();
-  createRotateControl();
-  ensureMetricsCardsUI();
-
-  isMapInitialized = true;
-
-  setTimeout(() => {
-    map.invalidateSize();
-  }, 120);
-}
-
-function pushMapPoint(lat, lng) {
-  if (!map || !mapMarker) return;
-
-  const pos = [lat, lng];
-  mapMarker.setLatLng(pos);
-  if (fullRoute) fullRoute.addLatLng(pos);
-  if (progressRoute) progressRoute.addLatLng(pos);
-  if (!isUserInteracting) map.panTo(pos);
-}
-
-// ==========================================
-// ROTATE CONTROL
-// ==========================================
-function createRotateControl() {
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv) return;
-  if (document.getElementById("rotate-btn")) return;
-
-  const btn = document.createElement("button");
-  btn.id = "rotate-btn";
-  btn.innerHTML = "🧭";
-  btn.title = "Ruota mappa";
-  btn.style.cssText = `
-    position:absolute;
-    top:90px;
-    left:10px;
-    width:28px;
-    height:28px;
-    border-radius:4px;
-    border:none;
-    background:rgba(0,0,0,0.7);
-    color:#fff;
-    font-size:16px;
-    line-height:1;
-    cursor:pointer;
-    z-index:10;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-  `;
-
-  btn.addEventListener("click", () => {
-  });
-
-  mapDiv.appendChild(btn);
-}
-
-// ==========================================
-// REPLAY OVERLAY + LOOKUP
-// ==========================================
-function createReplayOverlayControls() {
-  var mapDiv = document.getElementById("map");
-  if (!mapDiv) return;
-  if (document.getElementById("replay-overlay")) return;
-
-  var overlay = document.createElement("div");
-  overlay.id = "replay-overlay";
-  overlay.style.cssText = `
-    position:absolute;
-    left:16px;
-    right:16px;
-    bottom:16px;
-    z-index:20;
-    display:none;
-    align-items:center;
-    gap:12px;
-    padding:10px 12px;
-    border-radius:12px;
-    background: rgba(10,10,10,0.85);
-    border: 1px solid rgba(255,255,255,0.10);
-    backdrop-filter: blur(6px);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
-  `;
-
-  overlay.innerHTML = `
-    <div style="min-width:64px;display:flex;flex-direction:column;gap:2px">
-      <div style="font-size:10px;letter-spacing:1px;color:#9aa;font-weight:700">TIME</div>
-      <div id="replay-time-label" style="font-family:monospace;font-size:13px;color:#fff;font-weight:700">00:00</div>
-    </div>
-    <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1" style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
-    <button id="btn-live" type="button" style="padding:6px 12px;border-radius:8px;border:1px solid ${SENSORIA_GREEN};background:rgba(151,201,62,0.18);color:${SENSORIA_GREEN}; font-weight:800;font-size:11px;letter-spacing:1px;cursor:pointer">
-      LIVE
-    </button>
-  `;
-
-  mapDiv.appendChild(overlay);
-
-  var slider = document.getElementById("replay-slider");
-  var btnLive = document.getElementById("btn-live");
-
-  // blocca propagazione verso Leaflet
-  if (window.L && L.DomEvent) {
-    L.DomEvent.disableClickPropagation(overlay);
-    L.DomEvent.disableScrollPropagation(overlay);
-  }
-
-  let scrubbing = false;
-
-  function lockMapInteractions(lock) {
-    if (!map) return;
-    if (lock) {
-      if (map.dragging) map.dragging.disable();
-      if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
-      if (map.doubleClickZoom) map.doubleClickZoom.disable();
-      if (map.touchZoom) map.touchZoom.disable();
-      if (map.boxZoom) map.boxZoom.disable();
-      if (map.keyboard) map.keyboard.disable();
+function updateConnectionStatus(connected) {
+    const el = document.getElementById("connection-status");
+    if (!el) return;
+    
+    if (connected) {
+        el.className = "";
+        el.innerHTML = '<div class="status-dot"></div><span>Connesso</span>';
     } else {
-      if (map.dragging) map.dragging.enable();
-      if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
-      if (map.doubleClickZoom) map.doubleClickZoom.enable();
-      if (map.touchZoom) map.touchZoom.enable();
-      if (map.boxZoom) map.boxZoom.enable();
-      if (map.keyboard) map.keyboard.enable();
-    }
-  }
-
-  function seekToSliderValue() {
-    const sec = parseFloat(slider.value) || 0;
-    enterReplayAtSecond(sec);
-  }
-
-  function setSliderFromClientX(clientX) {
-    const rect = slider.getBoundingClientRect();
-    const x = clamp(clientX - rect.left, 0, rect.width);
-    const pct = rect.width > 0 ? x / rect.width : 0;
-    const min = parseFloat(slider.min) || 0;
-    const max = parseFloat(slider.max) || 0;
-    const val = min + pct * (max - min);
-    slider.value = val.toFixed(1);
-    seekToSliderValue();
-  }
-
-  slider.addEventListener("input", () => {
-    if (!scrubbing) seekToSliderValue();
-  });
-
-  slider.addEventListener("pointerdown", (e) => {
-    scrubbing = true;
-    slider.setPointerCapture(e.pointerId);
-    lockMapInteractions(true);
-    setSliderFromClientX(e.clientX);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  slider.addEventListener("pointermove", (e) => {
-    if (!scrubbing) return;
-    setSliderFromClientX(e.clientX);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  function endScrub(e) {
-    if (!scrubbing) return;
-    scrubbing = false;
-    lockMapInteractions(false);
-    if (e) e.stopPropagation();
-  }
-
-  slider.addEventListener("pointerup", endScrub);
-  slider.addEventListener("pointercancel", endScrub);
-
-  // fallback anti-pan
-  slider.addEventListener("mousedown", (e) => e.stopPropagation());
-  slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
-
-  btnLive.addEventListener("click", goLive);
-}
-
-function updateReplayTimeLabel(sec) {
-  var lab = document.getElementById("replay-time-label");
-  if (!lab) return;
-  var whole = Math.max(0, Math.round(sec));
-  var m = Math.floor(whole / 60).toString().padStart(2, "0");
-  var s = (whole % 60).toString().padStart(2, "0");
-  lab.textContent = `${m}:${s}`;
-}
-
-function showReplayOverlayIfReady() {
-  var overlay = document.getElementById("replay-overlay");
-  if (!overlay) return;
-  if (getDurationSec() > 0 && gpsSamples.length >= 1) {
-    overlay.style.display = "flex";
-  } else {
-    overlay.style.display = "none";
-  }
-}
-
-function updateReplayUiBounds() {
-  var slider = document.getElementById("replay-slider");
-  if (!slider) return;
-
-  var maxSec = getDurationSec();
-  slider.max = String(maxSec);
-  slider.step = "0.1";
-
-  if (!isReplayMode) {
-    slider.value = maxSec.toFixed(1);
-    updateReplayTimeLabel(maxSec);
-  }
-}
-
-// ---- replay search helpers ----
-function upperBoundByTime(arr, tMs) {
-  var lo = 0,
-    hi = arr.length;
-  while (lo < hi) {
-    var mid = (lo + hi) >> 1;
-    if (arr[mid].t <= tMs) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
-}
-
-function getInterpolatedGpsAtTime(tMs) {
-  if (!gpsSamples.length) return null;
-  if (gpsSamples.length === 1) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
-
-  var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx === 0) return { lat: gpsSamples[0].lat, lng: gpsSamples[0].lng };
-  if (idx >= gpsSamples.length) {
-    var last = gpsSamples[gpsSamples.length - 1];
-    return { lat: last.lat, lng: last.lng };
-  }
-
-  var a = gpsSamples[idx - 1];
-  var b = gpsSamples[idx];
-  if (b.t === a.t) return { lat: b.lat, lng: b.lng };
-
-  var alpha = clamp((tMs - a.t) / (b.t - a.t), 0, 1);
-  return {
-    lat: a.lat + (b.lat - a.lat) * alpha,
-    lng: a.lng + (b.lng - a.lng) * alpha
-  };
-}
-
-function getBpmAtTime(tMs) {
-  if (!bpmSamples.length) return null;
-  var idx = upperBoundByTime(bpmSamples, tMs);
-  if (idx === 0) return bpmSamples[0].bpm;
-  return bpmSamples[idx - 1].bpm;
-}
-
-function getDistanceAtTime(tMs) {
-  if (!gpsSamples.length) return 0;
-  if (gpsSamples.length === 1) return gpsSamples[0].cumDistM || 0;
-
-  var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx === 0) return gpsSamples[0].cumDistM || 0;
-  if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].cumDistM || 0;
-
-  var a = gpsSamples[idx - 1];
-  var b = gpsSamples[idx];
-  var dt = Math.max(1, b.t - a.t);
-  var alpha = clamp((tMs - a.t) / dt, 0, 1);
-
-  var da = a.cumDistM || 0;
-  var db = b.cumDistM != null ? b.cumDistM : da;
-  return da + (db - da) * alpha;
-}
-
-function getSpeedAtTime(tMs) {
-  if (!gpsSamples.length) return 0;
-  if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
-
-  var idx = upperBoundByTime(gpsSamples, tMs);
-  if (idx === 0) return gpsSamples[0].speedKmh || 0;
-  if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].speedKmh || 0;
-
-  var a = gpsSamples[idx - 1];
-  var b = gpsSamples[idx];
-  var dt = Math.max(1, b.t - a.t);
-  var alpha = clamp((tMs - a.t) / dt, 0, 1);
-
-  var sa = a.speedKmh || 0;
-  var sb = b.speedKmh != null ? b.speedKmh : sa;
-  return sa + (sb - sa) * alpha;
-}
-
-function updateProgressRouteToTime(tMs) {
-  if (!progressRoute) return;
-  if (!gpsSamples.length) {
-    progressRoute.setLatLngs([]);
-    return;
-  }
-
-  var idx = upperBoundByTime(gpsSamples, tMs);
-  idx = clamp(idx, 0, gpsSamples.length);
-
-  var pts = [];
-  for (var i = 0; i < idx; i++) {
-    pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
-  }
-
-  if (idx > 0 && idx < gpsSamples.length) {
-    var interp = getInterpolatedGpsAtTime(tMs);
-    if (interp) pts.push([interp.lat, interp.lng]);
-  }
-
-  progressRoute.setLatLngs(pts);
-}
-
-// FUNZIONE HELPER PER TROVARE SAMPLE CALZINI
-function findSampleAtTime(samples, tMs) {
-  if (!samples || samples.length === 0) return null;
-  
-  if (samples.length === 1) return samples[0];
-  
-  let idx = upperBoundByTime(samples, tMs);
-  
-  if (idx === 0) return samples[0];
-  if (idx >= samples.length) return samples[samples.length - 1];
-  
-  return samples[idx - 1];
-}
-
-function enterReplayAtSecond(sec) {
-  if (sessionStartTimeMs == null) return;
-
-  // modalità replay
-  isReplayMode = true;
-
-  // stop animazioni live marker se presenti
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-    animationFrameId = null;
-  }
-
-  // 1) clamp tempo
-  const durationSec = getDurationSec();
-  const clampedSec = Math.max(0, Math.min(sec, durationSec));
-  const tMs = sessionStartTimeMs + clampedSec * 1000;
-
-  // 2) label mm:ss
-  updateReplayTimeLabel(clampedSec);
-
-  // 3) mappa: posizione interpolata + progress route
-  const pos = getInterpolatedGpsAtTime(tMs);
-  if (pos && mapMarker) {
-    mapMarker.setLatLng([pos.lat, pos.lng]);
-    currentMapPos = { lat: pos.lat, lng: pos.lng };
-    if (map) map.panTo([pos.lat, pos.lng], { animate: false });
-  }
-  updateProgressRouteToTime(tMs);
-
-  // 4) BPM: step ultimo noto a tMs
-  const bpm = getBpmAtTime(tMs);
-  if (bpm != null) updateBpmValue(bpm);
-
-  // 5) distanza continua + velocita a scatti ogni secondo
-  const dist = getDistanceAtTime(tMs);
-  const wholeSec = Math.max(0, Math.floor(clampedSec));
-
-  // velocita a scatti: se manca il valore per quel secondo, usa ultimo valore noto (no flash a 0)
-  let speed = null;
-  if (Array.isArray(speedBySec) && speedBySec.length) {
-    if (speedBySec[wholeSec] != null) {
-      speed = speedBySec[wholeSec];
-    } else {
-      for (let s = wholeSec - 1; s >= 0; s--) {
-        if (speedBySec[s] != null) {
-          speed = speedBySec[s];
-          break;
+        el.className = "disconnected";
+        const dot = el.querySelector('.status-dot');
+        if (dot) {
+            dot.style.background = "#ff4136";
+            dot.style.boxShadow = "0 0 10px #ff4136";
         }
-      }
+        const span = el.querySelector('span');
+        if (span) span.textContent = "Disconnesso";
     }
-  }
-  if (speed == null || !isFinite(speed)) speed = 0;
-  speed = Math.max(0, speed);
-
-  updateSpeedDistanceUI(speed, dist);
-
-  // 6) calzini: finestra zoom + valori istantanei
-  const windowHalf = 5;
-  const tMin = Math.max(0, clampedSec - windowHalf);
-  const tMax = tMin + windowHalf * 2;
-
-  if (sockCharts.left) {
-    sockCharts.left.setScale("x", { min: tMin, max: tMax });
-  }
-  if (sockCharts.right) {
-    sockCharts.right.setScale("x", { min: tMin, max: tMax });
-  }
-
-  // AGGIORNA VALORI ISTANTANEI CALZINI
-  const lS = findSampleAtTime(leftSockSamples, tMs);
-  if (lS) {
-    updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, lS.bi);
-  }
-
-  const rS = findSampleAtTime(rightSockSamples, tMs);
-  if (rS) {
-    updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, rS.bi);
-  }
-
-  // 7) sync slider (solo se non stai trascinando in modo fine)
-  const slider = document.getElementById("replay-slider");
-  if (slider) {
-    const v = parseFloat(slider.value) || 0;
-    if (!isFinite(v) || Math.abs(v - clampedSec) > 0.5) {
-      slider.value = clampedSec.toFixed(1);
-    }
-  }
-}
-
-function goLive() {
-  isReplayMode = false;
-  updateReplayUiBounds();
-
-  if (gpsSamples.length) {
-    var lastG = gpsSamples[gpsSamples.length - 1];
-    updateSpeedDistanceUI(lastG.speedKmh, lastG.cumDistM);
-
-    if (mapMarker) {
-      mapMarker.setLatLng([lastG.lat, lastG.lng]);
-    }
-    if (map) {
-      map.panTo([lastG.lat, lastG.lng], { animate: false });
-    }
-
-    updateProgressRouteToTime(getSessionEndMs());
-  }
-
-  if (lastLiveBpm !== "--") {
-    updateBpmValue(lastLiveBpm);
-  }
 }
 
 // ==========================================
-// SENSOR UPDATE (parsing calzini)
-// ==========================================
-// ==========================================
-// PROCESSO DATI SENSORI (CORE)
-// ==========================================
-// ==========================================
-// PROCESSO DATI
+// PROCESS INCOMING DATA
 // ==========================================
 function processIncomingData(data) {
-  if (!data) return;
+    if (!data || !data.device_id) return;
 
-  // Tempo
-  let tMs = data.t != null ? Number(data.t) : (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
-  const now = Date.now();
+    const tMs = data.timestamp || Date.now();
+    ensureSessionStart(tMs);
 
-  const sName = data.sensor_name || "Unknown";
-  sensors[sName] = data; // Cache
+    sensors[data.device_id] = data;
 
-  const isLeft = (sName === "Calzino SX");
-  const isRight = (sName === "Calzino DX" || sName === "RightSock");
+    // Identifica piede sinistro/destro in base al device_id
+    const isLeft = data.device_id.toLowerCase().includes("left") || 
+                   data.device_id.toLowerCase().includes("sx") ||
+                   data.device_id.toLowerCase().includes("sinistro");
+    const isRight = data.device_id.toLowerCase().includes("right") || 
+                    data.device_id.toLowerCase().includes("dx") ||
+                    data.device_id.toLowerCase().includes("destro");
 
-  if (isLeft || isRight) {
-    const side = isLeft ? "left" : "right";
-    
-    // 1. Aggiorna Grafici
-    const chartArr = uData[side];
-    if (chartArr[0].length > 100) { // Tieni solo ultimi 100 punti
-      for (let i = 0; i < 4; i++) chartArr[i].shift();
+    // Accelerometro per Bongiorno Index
+    if (data.accelerometer) {
+        const { x, y, z } = data.accelerometer;
+        const sample = { t: tMs, ax: x, ay: y, az: z };
+        
+        if (isLeft) {
+            leftAccelSamples.push(sample);
+            if (leftAccelSamples.length > 1000) leftAccelSamples.shift();
+            updateBongiornoIndex("left");
+            updateRawCharts();
+        } else if (isRight) {
+            rightAccelSamples.push(sample);
+            if (rightAccelSamples.length > 1000) rightAccelSamples.shift();
+            updateBongiornoIndex("right");
+            updateRawCharts();
+        }
     }
-    
-    chartArr[0].push(tMs / 1000); 
-    chartArr[1].push(data.pressure_0 || 0);
-    chartArr[2].push(data.pressure_1 || 0);
-    chartArr[3].push(data.pressure_2 || 0);
 
-    if (uCharts[side]) {
-      uCharts[side].setData(chartArr);
+    // Pressure data
+    if (data.pressure || data.sensors) {
+        const pressureData = data.pressure || data.sensors || {};
+        onPressureUpdate({
+            timestamp: tMs,
+            device_id: data.device_id,
+            foot: isLeft ? "left" : "right",
+            sensor1: pressureData.s1 || pressureData.sensor1 || 0,
+            sensor2: pressureData.s2 || pressureData.sensor2 || 0,
+            sensor3: pressureData.s3 || pressureData.sensor3 || 0
+        });
+    }
+
+    // Aggiorna UI
+    updateDashboardUI();
+}
+
+// ==========================================
+// GPS UPDATE
+// ==========================================
+function onGpsUpdate(data) {
+    if (!data) return;
+
+    const tMs = data.timestamp || Date.now();
+    ensureSessionStart(tMs);
+
+    const sample = {
+        t: tMs,
+        lat: data.latitude,
+        lng: data.longitude,
+        acc: data.accuracy || 999,
+        speedKmh: data.speed || 0,
+        cumDistM: data.distance || 0
+    };
+
+    gpsSamples.push(sample);
+    
+    lastSpeedKmh = sample.speedKmh;
+    lastDistanceM = sample.cumDistM;
+
+    // Aggiorna mappa
+    updateMapPosition(sample.lat, sample.lng);
+    
+    // Aggiorna UI
+    updateDashboardUI();
+}
+
+// ==========================================
+// PRESSURE UPDATE
+// ==========================================
+function onPressureUpdate(data) {
+    if (!data) return;
+
+    const tMs = data.timestamp || Date.now();
+    ensureSessionStart(tMs);
+
+    const isLeft = data.foot === "left" || 
+                   data.device_id?.toLowerCase().includes("left") ||
+                   data.device_id?.toLowerCase().includes("sx");
+
+    const sample = {
+        t: tMs,
+        s1: data.sensor1 || 0,
+        s2: data.sensor2 || 0,
+        s3: data.sensor3 || 0
+    };
+
+    if (isLeft) {
+        leftSockSamples.push(sample);
+        if (leftSockSamples.length > 1000) leftSockSamples.shift();
+        updatePressureChart("left");
     } else {
-      initSockCharts(); // Prova a inizializzare se serve
+        rightSockSamples.push(sample);
+        if (rightSockSamples.length > 1000) rightSockSamples.shift();
+        updatePressureChart("right");
     }
+}
 
-    // 2. Bongiorno Index (Ogni 150ms)
-    if (now - lastBongiornoTime > BONGIORNO_INTERVAL_MS) {
-      const ax = data.accel_x || 0;
-      const ay = data.accel_y || 0;
-      const az = data.accel_z || 0;
-      
-      const totalAcc = Math.sqrt(ax*ax + ay*ay + az*az);
-      let bIndex = 0;
-      
-      if (totalAcc > 50) { 
-        bIndex = (Math.abs(ax) / totalAcc) * 100;
-      }
-      
-      const elB = document.getElementById("val-bongiorno");
-      if (elB) elB.textContent = bIndex.toFixed(0);
-      
-      lastBongiornoTime = now;
-    }
-
-    // 3. Jerk Index
-    const last = lastSensorState[sName];
-    if (last && last.t && tMs > last.t) {
-       const dt = (tMs - last.t) / 1000;
-       if (dt > 0.0001 && dt < 1.0) {
-         const jx = Math.abs((data.accel_x || 0) - last.ax) / dt;
-         const jy = Math.abs((data.accel_y || 0) - last.ay) / dt;
-         const jz = Math.abs((data.accel_z || 0) - last.az) / dt;
-         const jMean = (jx + jy + jz) / 3;
-
-         const elJ = document.getElementById("val-jerk");
-         if (elJ) elJ.textContent = (jMean / 1000).toFixed(1) + "k";
-       }
-    }
+// ==========================================
+// BONGIORNO INDEX CALCULATION
+// ==========================================
+function updateBongiornoIndex(side) {
+    const samples = side === "left" ? leftAccelSamples : rightAccelSamples;
     
-    lastSensorState[sName] = { t: tMs, ax: data.accel_x||0, ay: data.accel_y||0, az: data.accel_z||0 };
-  }
-}
+    if (samples.length === 0) return;
 
-function calculateBI(payload) {
-  // supporta sia accel_x/accelx
-  const ax = payload.accel_x ?? payload.accelx;
-  const ay = payload.accel_y ?? payload.accely;
-  const az = payload.accel_z ?? payload.accelz;
+    // Prendi gli ultimi N campioni durante la fase di spinta
+    // Per semplicità calcola la media degli ultimi 50 campioni
+    const N = Math.min(50, samples.length);
+    const recent = samples.slice(-N);
 
-  if (ax == null || ay == null || az == null) return 0;
+    let sumBI = 0;
+    let count = 0;
 
-  const norm = Math.sqrt(ax * ax + ay * ay + az * az);
-  return norm > 0.1 ? (Math.abs(ax) / norm) * 100 : 0;
-}
-
-// ==========================================
-// INIZIALIZZAZIONE GRAFICO UPLOT
-// ==========================================
-function initSockChart(side) {
-  const divId = side === "left" ? "chart-l-sock" : "chart-r-sock";
-  const el = document.getElementById(divId);
-  
-  if (!el) return; // Se il div non esiste, esci
-  if (uCharts[side]) return; // Se già esiste, non ricreare
-
-  // Configurazione Grafico
-  const opts = {
-    width: el.clientWidth,
-    height: el.clientHeight || 150,
-    title: "",
-    cursor: { show: false },
-    select: { show: false },
-    legend: { show: false },
-    scales: { x: { time: false } }, // X è tempo in secondi
-    series: [
-      {}, // Asse X
-      { stroke: "#ff4136", width: 2, fill: "rgba(255, 65, 54, 0.1)", points: { show: false } }, // P0
-      { stroke: "#2ecc40", width: 2, fill: "rgba(46, 204, 64, 0.1)", points: { show: false } }, // P1
-      { stroke: "#0074d9", width: 2, fill: "rgba(0, 116, 217, 0.1)", points: { show: false } }, // P2
-    ],
-    axes: [
-      { show: false }, // Niente assi visibili
-      { show: false }
-    ],
-    padding: [0, 0, 0, 0]
-  };
-
-  uCharts[side] = new uPlot(opts, uData[side], el);
-
-  // Resize automatico
-  new ResizeObserver(() => {
-    if (uCharts[side] && el) {
-      uCharts[side].setSize({ width: el.clientWidth, height: el.clientHeight });
+    for (const s of recent) {
+        const { ax, ay, az } = s;
+        const mag = Math.sqrt(ax * ax + ay * ay + az * az);
+        
+        if (mag > 0.1) { // Evita divisione per zero
+            // Formula: BI = |az| / sqrt(ax² + ay² + az²) * 100
+            const bi = (Math.abs(az) / mag) * 100;
+            sumBI += bi;
+            count++;
+        }
     }
-  }).observe(el);
-}
 
+    const avgBI = count > 0 ? sumBI / count : 0;
 
-// FUNZIONE AGGIORNATA: updateSocksUI
-function updateSocksUI(side, data, bi) {
-  const prefix = side === "left" ? "l" : "r";
-  
-  // BI (Balance Index) - se hai questo dato
-  const biEl = document.getElementById(`bi-val-${side}`);
-  if (biEl) {
-    biEl.textContent = `BI: ${bi.toFixed(1)}`;
-    biEl.style.color = bi > 40 ? "#ff4444" : SENSORIA_GREEN;
-  }
-
-  // Estrai i valori con fallback multipli
-  const val0 = data.p0 ?? data.pressure_0 ?? data.pressure0 ?? 0;
-  const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
-  const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
-
-  // MAPPING CORRETTO PER CALZINO SX E DX
-  const el_posteriore = document.getElementById(`${prefix}-posteriore`);
-  const el_sinistra = document.getElementById(`${prefix}-sinistra`);
-  const el_destra = document.getElementById(`${prefix}-destra`);
-
-  if (side === "left") {
-    // CALZINO SX: posteriore=p2, sinistra=p0, destra=p1
-    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
-    if (el_sinistra) el_sinistra.textContent = Math.round(val0);
-    if (el_destra) el_destra.textContent = Math.round(val1);
-  } else {
-    // CALZINO DX: posteriore=p2, sinistra=p1, destra=p0
-    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
-    if (el_sinistra) el_sinistra.textContent = Math.round(val1);
-    if (el_destra) el_destra.textContent = Math.round(val0);
-  }
-
-  // aggiorna grafico live calzino
-  if (!isReplayMode) {
-    if (!sockCharts.left) initSockCharts();
-    const chart = sockCharts[side];
-    if (chart) {
-      const d = sockChartData[side];
-      const tRel = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
-      d[0].push(tRel);
-      d[1].push(val0);
-      d[2].push(val1);
-      d[3].push(val2);
-      if (d[0].length > 100) d.forEach((a) => a.shift());
-      chart.setData(d);
+    if (side === "left") {
+        bongiornoIndexSX = avgBI;
+        const el = document.getElementById("bongiorno-sx-value");
+        if (el) el.textContent = avgBI.toFixed(1);
+    } else {
+        bongiornoIndexDX = avgBI;
+        const el = document.getElementById("bongiorno-dx-value");
+        if (el) el.textContent = avgBI.toFixed(1);
     }
-  }
 }
 
-
 // ==========================================
-// SENSOR CARDS UI (minimal)
+// MAPPA
 // ==========================================
-function createSensorCard(name, data) {
-  var grid = document.getElementById("sensors-grid");
-  if (!grid) return;
-
-  var div = document.createElement("div");
-  div.className = "sensor-card sensor-col connected";
-  div.setAttribute("data-sensor", name);
-
-  div.innerHTML = `
-    <div class="sensor-header">
-      <span class="emoji">📡</span>
-      <span class="name">${name}</span>
-      <div class="status-indicator active"></div>
-    </div>
-    <div class="sensor-data-section">
-      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure_0">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure_1">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure_2">0</span></div>
-    </div>
-  `;
-  grid.appendChild(div);
-}
-
-function updateSensorCardUI(name, data) {
-  if (!name) return;
-
-  var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  if (!card) {
-    createSensorCard(name, data);
-    card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  }
-  if (!card) return;
-
-  // aggiorna valori noti
-  const p0 = data.pressure_0 ?? data.p0 ?? data.pressure0;
-  const p1 = data.pressure_1 ?? data.p1 ?? data.pressure1;
-  const p2 = data.pressure_2 ?? data.p2 ?? data.pressure2;
-
-  const set = (key, val) => {
-    const el = card.querySelector(`[data-key="${key}"]`);
-    if (el && val != null && isFinite(val)) {
-      el.textContent = String(Math.round(val));
+function initMap() {
+    const mapEl = document.getElementById("map");
+    if (!mapEl) {
+        console.warn("Map element not found");
+        return;
     }
-  };
 
-  set("pressure_0", p0);
-  set("pressure_1", p1);
-  set("pressure_2", p2);
+    try {
+        map = L.map("map", {
+            zoomControl: true,
+            attributionControl: false
+        }).setView([45.4408, 12.3155], 13); // Mestre default
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19
+        }).addTo(map);
+
+        isMapInitialized = true;
+        console.log("Map initialized ✓");
+    } catch (error) {
+        console.error("Error initializing map:", error);
+    }
+}
+
+function updateMapPosition(lat, lng) {
+    if (!isMapInitialized || !map) return;
+
+    if (!mapMarker) {
+        mapMarker = L.circleMarker([lat, lng], {
+            radius: 8,
+            fillColor: SENSORIA_GREEN,
+            color: "#fff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.8
+        }).addTo(map);
+
+        map.setView([lat, lng], 15);
+    } else {
+        mapMarker.setLatLng([lat, lng]);
+    }
+
+    // Aggiorna tracciato
+    if (!fullRoute) {
+        fullRoute = L.polyline([[lat, lng]], {
+            color: SENSORIA_GREEN,
+            weight: 4,
+            opacity: 0.7
+        }).addTo(map);
+    } else {
+        fullRoute.addLatLng([lat, lng]);
+    }
 }
 
 // ==========================================
-// PROFILE UI (placeholder)
+// PRESSURE CHARTS
 // ==========================================
-function updateProfileUI(data) {
-  const nameEl = document.getElementById("session-user-name");
-  if (nameEl && data && data.name) {
-    nameEl.textContent = data.name;
-  }
+function initPressureCharts() {
+    const opts = {
+        width: 300,
+        height: 150,
+        scales: { x: { time: false } },
+        axes: [
+            {},
+            {
+                stroke: RED_COLOR,
+                grid: { show: false }
+            }
+        ],
+        series: [
+            {},
+            { stroke: RED_COLOR, width: 2, label: "S1" },
+            { stroke: "#ff9999", width: 2, label: "S2" },
+            { stroke: "#ffcccc", width: 2, label: "S3" }
+        ],
+        legend: { show: false }
+    };
+
+    const leftEl = document.getElementById("pressure-left-chart");
+    const rightEl = document.getElementById("pressure-right-chart");
+
+    try {
+        if (leftEl) {
+            pressureChartLeft = new uPlot(opts, pressureDataLeft, leftEl);
+            console.log("Left pressure chart initialized ✓");
+        }
+
+        if (rightEl) {
+            pressureChartRight = new uPlot(opts, pressureDataRight, rightEl);
+            console.log("Right pressure chart initialized ✓");
+        }
+    } catch (error) {
+        console.error("Error initializing pressure charts:", error);
+    }
 }
 
+function updatePressureChart(side) {
+    const samples = side === "left" ? leftSockSamples : rightSockSamples;
+    const chart = side === "left" ? pressureChartLeft : pressureChartRight;
+    const data = side === "left" ? pressureDataLeft : pressureDataRight;
 
+    if (!chart || samples.length === 0) return;
 
-// ==========================================
-// uPlot charts (minimal, compat)
-// ==========================================
-function initCharts() {
-  var accelDiv = document.getElementById("accel-chart");
-  var gyroDiv = document.getElementById("gyro-chart");
-  var magDiv = document.getElementById("mag-chart");
-  var pressureDiv = document.getElementById("pressure-chart");
+    try {
+        // Popola data
+        data[0] = samples.map((s, i) => i);
+        data[1] = samples.map(s => s.s1);
+        data[2] = samples.map(s => s.s2);
+        data[3] = samples.map(s => s.s3);
 
-  if (!accelDiv || !gyroDiv || !magDiv || !pressureDiv) return;
-
-  accelDiv.innerHTML = "";
-  gyroDiv.innerHTML = "";
-  magDiv.innerHTML = "";
-  pressureDiv.innerHTML = "";
-
-  var commonOpts = {
-    width: accelDiv.offsetWidth,
-    height: 200,
-    cursor: { show: true, drag: { x: true, y: false } },
-    scales: { x: { time: true }, y: { auto: true } },
-    axes: [
-      { stroke: SENSORIA_GREEN, grid: { stroke: "#333" } },
-      { stroke: SENSORIA_GREEN, grid: { stroke: "#333" } }
-    ]
-  };
-
-  function mkSeries(c1, c2, c3) {
-    return [
-      {},
-      { label: "X", stroke: c1, width: 2 },
-      { label: "Y", stroke: c2, width: 2 },
-      { label: "Z", stroke: c3, width: 2 }
-    ];
-  }
-
-  var o1 = Object.assign({}, commonOpts);
-  o1.series = mkSeries("#ff6384", "#36a2eb", "#4bc0c0");
-
-  var o2 = Object.assign({}, commonOpts);
-  o2.series = mkSeries("#ff9f40", "#9966ff", "#ffcd56");
-
-  var o3 = Object.assign({}, commonOpts);
-  o3.series = mkSeries("#c9cbcf", "#4bc0c0", "#ff6384");
-
-  var o4 = Object.assign({}, commonOpts);
-  o4.height = 250;
-  o4.scales = { x: { time: true }, y: { auto: false, range: [0, 1024] } };
-  o4.series = [
-    {},
-    { label: "P0", stroke: "#ff6384", width: 3 },
-    { label: "P1", stroke: "#36a2eb", width: 3 },
-    { label: "P2", stroke: "#ffce56", width: 3 }
-  ];
-
-  charts.accel = new uPlot(o1, chartData.accel, accelDiv);
-  charts.gyro = new uPlot(o2, chartData.gyro, gyroDiv);
-  charts.mag = new uPlot(o3, chartData.mag, magDiv);
-  charts.pressure = new uPlot(o4, chartData.pressure, pressureDiv);
-
-  addInteraction(charts.accel);
-  addInteraction(charts.gyro);
-  addInteraction(charts.mag);
-  addInteraction(charts.pressure);
-}
-
-function addInteraction(u) {
-  if (!u || !u.over) return;
-  u.over.addEventListener("mousedown", () => (isUserInteracting = true));
-  u.over.addEventListener("wheel", () => (isUserInteracting = true));
-  u.over.addEventListener("dblclick", () => (isUserInteracting = false));
-}
-
-function resetChartData() {
-  isUserInteracting = false;
-  chartData = {
-    accel: [[], [], [], []],
-    gyro: [[], [], [], []],
-    mag: [[], [], [], []],
-    pressure: [[], [], [], []]
-  };
-
-  if (!chartsInitialized) return;
-
-  if (charts.accel) charts.accel.setData(chartData.accel);
-  if (charts.gyro) charts.gyro.setData(chartData.gyro);
-  if (charts.mag) charts.mag.setData(chartData.mag);
-  if (charts.pressure) charts.pressure.setData(chartData.pressure);
-}
-
-function updateChartsUI(sensorName, data) {
-  if (!selectedSensor || !chartsInitialized) return;
-  if (!sensorName || String(sensorName) !== String(selectedSensor)) return;
-
-  const timestamp = Date.now() / 1000;
-
-  function push(arr, vals) {
-    arr[0].push(timestamp);
-    vals.forEach((v, i) => arr[i + 1].push(v ?? 0));
-    if (arr[0].length > 1000) arr.forEach((s) => s.shift());
-  }
-
-  // accel
-  if (data.accel_x != null || data.accelx != null) {
-    push(chartData.accel, [
-      data.accel_x ?? data.accelx,
-      data.accel_y ?? data.accely,
-      data.accel_z ?? data.accelz
-    ]);
-    charts.accel.setData(chartData.accel);
-  }
-
-  // gyro
-  if (data.gyro_x != null || data.gyrox != null) {
-    push(chartData.gyro, [
-      data.gyro_x ?? data.gyrox,
-      data.gyro_y ?? data.gyroy,
-      data.gyro_z ?? data.gyroz
-    ]);
-    charts.gyro.setData(chartData.gyro);
-  }
-
-  // mag
-  if (data.mag_x != null || data.magx != null) {
-    push(chartData.mag, [
-      data.mag_x ?? data.magx,
-      data.mag_y ?? data.magy,
-      data.mag_z ?? data.magz
-    ]);
-    charts.mag.setData(chartData.mag);
-  }
-
-  // pressure
-  const p0 = data.pressure_0 ?? data.p0 ?? data.pressure0;
-  if (p0 != null) {
-    push(chartData.pressure, [
-      p0,
-      data.pressure_1 ?? data.p1 ?? data.pressure1,
-      data.pressure_2 ?? data.p2 ?? data.pressure2
-    ]);
-    charts.pressure.setData(chartData.pressure);
-  }
+        chart.setData(data);
+    } catch (error) {
+        console.error(`Error updating ${side} pressure chart:`, error);
+    }
 }
 
 // ==========================================
-// PAST ACTIVITY LOADER (modal replay build)
+// RAW CHARTS (DATI RAW)
 // ==========================================
-function initPastActivityLoader() {
-  const header =
-    document.querySelector(".dashboard-info") ||
-    document.querySelector(".dashboard-header") ||
-    document.body;
+function initRawCharts() {
+    const opts = {
+        width: 1000,
+        height: 180,
+        scales: { x: { time: false } },
+        axes: [
+            {},
+            {
+                stroke: RED_COLOR,
+                grid: { show: true, stroke: "#333" }
+            }
+        ],
+        series: [
+            {},
+            { stroke: RED_COLOR, width: 2, label: "Acc X" },
+            { stroke: YELLOW_COLOR, width: 2, label: "Acc Y" },
+            { stroke: GREEN_COLOR, width: 2, label: "Acc Z" }
+        ],
+        legend: { show: true }
+    };
 
-  if (document.getElementById("btn-load-activity")) return;
+    const leftEl = document.getElementById("raw-chart-left");
+    const rightEl = document.getElementById("raw-chart-right");
 
-  const btn = document.createElement("button");
-  btn.id = "btn-load-activity";
-  btn.type = "button";
-  btn.textContent = "Carica attività passata";
-  btn.style.cssText = `
-    padding:8px 12px;
-    border-radius:10px;
-    border:1px solid rgba(151,201,62,0.8);
-    background:rgba(151,201,62,0.12);
-    color:${SENSORIA_GREEN};
-    font-weight:800;
-    cursor:pointer;
-    white-space:nowrap;
-    margin-left:12px;
-  `;
-  btn.addEventListener("click", openLogsModal);
-  header.appendChild(btn);
+    try {
+        if (leftEl) {
+            rawChartLeft = new uPlot(opts, rawDataLeft, leftEl);
+            console.log("Left raw chart initialized ✓");
+        }
+
+        if (rightEl) {
+            rawChartRight = new uPlot(opts, rawDataRight, rightEl);
+            console.log("Right raw chart initialized ✓");
+        }
+    } catch (error) {
+        console.error("Error initializing raw charts:", error);
+    }
 }
 
-async function openLogsModal() {
-  const old = document.getElementById("logs-modal");
-  if (old) old.remove();
+function updateRawCharts() {
+    // Left
+    if (rawChartLeft && leftAccelSamples.length > 0) {
+        try {
+            rawDataLeft[0] = leftAccelSamples.map((s, i) => i);
+            rawDataLeft[1] = leftAccelSamples.map(s => s.ax);
+            rawDataLeft[2] = leftAccelSamples.map(s => s.ay);
+            rawDataLeft[3] = leftAccelSamples.map(s => s.az);
+            rawChartLeft.setData(rawDataLeft);
+        } catch (error) {
+            console.error("Error updating left raw chart:", error);
+        }
+    }
 
-  const modal = document.createElement("div");
-  modal.id = "logs-modal";
-  modal.style.cssText = `
-    position:fixed;
-    inset:0;
-    z-index:99999;
-    background:rgba(0,0,0,0.65);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:18px;
-  `;
+    // Right
+    if (rawChartRight && rightAccelSamples.length > 0) {
+        try {
+            rawDataRight[0] = rightAccelSamples.map((s, i) => i);
+            rawDataRight[1] = rightAccelSamples.map(s => s.ax);
+            rawDataRight[2] = rightAccelSamples.map(s => s.ay);
+            rawDataRight[3] = rightAccelSamples.map(s => s.az);
+            rawChartRight.setData(rawDataRight);
+        } catch (error) {
+            console.error("Error updating right raw chart:", error);
+        }
+    }
+}
 
-  modal.innerHTML = `
-    <div style="width:min(620px,96vw);background:#111;border:1px solid #333;border-radius:14px; box-shadow:0 18px 48px rgba(0,0,0,0.65);overflow:hidden">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222">
-        <div style="font-weight:900;color:#fff">Carica attività passata</div>
-        <button id="logs-close" style="background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer">✕</button>
-      </div>
-      <div style="padding:14px 16px">
-        <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:10px">Caricamento lista...</div>
-        <div id="logs-list" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto"></div>
-      </div>
-    </div>
-  `;
-
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) modal.remove();
-  });
-
-  document.body.appendChild(modal);
-  document.getElementById("logs-close").onclick = () => modal.remove();
-
-  const status = document.getElementById("logs-status");
-  const list = document.getElementById("logs-list");
-
-  try {
-    const resp = await fetch("/api/logs");
-    const json = await resp.json();
-    const logs = Array.isArray(json) ? json : json.logs || [];
-
-    status.textContent = logs.length ? "Seleziona un log:" : "Nessun log trovato.";
-    list.innerHTML = "";
-
-    logs.forEach((item) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.style.cssText = `
-        text-align:left;
-        padding:10px 12px;
-        border-radius:10px;
-        border:1px solid #2a2a2a;
-        background:#161616;
-        color:#fff;
-        cursor:pointer;
-      `;
-
-      const dt = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : "--";
-      const kb = item.size != null ? Math.round(item.size / 1024) : "--";
-
-      row.innerHTML = `
-        <div style="font-weight:800">${item.name}</div>
-        <div style="font-size:12px;color:#999;margin-top:2px">${dt} · ${kb} KB</div>
-      `;
-
-      row.onclick = async () => {
-        status.textContent = `Caricamento ${item.name}...`;
-        await loadPastActivity(item.name);
-        modal.remove();
-      };
-
-      list.appendChild(row);
+// ==========================================
+// TABS
+// ==========================================
+function initTabs() {
+    const buttons = document.querySelectorAll(".tab-btn");
+    buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const tab = btn.dataset.tab;
+            switchTab(tab);
+        });
     });
-  } catch (e) {
-    status.textContent = "Errore nel caricamento lista log.";
-    console.error(e);
-  }
 }
 
-function resetReplayState() {
-  gpsSamples = [];
-  bpmSamples = [];
-  leftSockSamples = [];
-  rightSockSamples = [];
+function switchTab(tab) {
+    currentTab = tab;
 
-  sockChartData.left = [[], [], [], []];
-  sockChartData.right = [[], [], [], []];
+    // Update button states
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.tab === tab);
+    });
 
-  speedBySec = [];
-  lastSpeedKmh = 0;
-  lastSpeedSec = null;
-  lastSecFix = null;
-  lastLiveBpm = "--";
+    // Show/hide charts
+    const leftChart = document.getElementById("raw-chart-left");
+    const rightChart = document.getElementById("raw-chart-right");
 
-  sessionStartTimeMs = null;
-  sessionEndTimeMs = null;
-  isReplayMode = false;
+    if (leftChart) leftChart.style.display = tab === "left" ? "block" : "none";
+    if (rightChart) rightChart.style.display = tab === "right" ? "block" : "none";
 
-  gpsTimeUnit = null;
-  lastGpsTRaw = null;
-
-  if (fullRoute) fullRoute.setLatLngs([]);
-  if (progressRoute) progressRoute.setLatLngs([]);
-
-  updateBpmValue("--");
-  updateSpeedDistanceUI(null, null);
+    updateRawCharts();
 }
 
-async function loadPastActivity(logName) {
-  try {
-    const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
-    const data = await resp.json();
+// ==========================================
+// DASHBOARD UI UPDATE
+// ==========================================
+function updateDashboardUI() {
+    // Aggiorna angoli (placeholder)
+    // TODO: In futuro calcolare da dati IMU
+    const kneeEl = document.getElementById("knee-angle-value");
+    const tibiaEl = document.getElementById("tibia-angle-value");
+    
+    if (kneeEl) kneeEl.textContent = kneeAngle.toFixed(0);
+    if (tibiaEl) tibiaEl.textContent = tibiaAngle.toFixed(0);
+}
 
-    // 1) Reset stati/array
-    gpsSamples = [];
-    bpmSamples = [];
-    speedBySec = [];
-    secPos = [];
-    leftSockSamples = [];
-    rightSockSamples = [];
+// ==========================================
+// REPLAY CONTROLS
+// ==========================================
+function initReplayControls() {
+    const playBtn = document.getElementById("replay-play-btn");
+    const slider = document.getElementById("replay-slider");
 
-    sockChartData.left = [[], [], [], []];
-    sockChartData.right = [[], [], [], []];
+    if (playBtn) {
+        playBtn.addEventListener("click", toggleReplay);
+    }
 
-    sessionStartTimeMs = null;
-    sessionEndTimeMs = null;
-    isReplayMode = false;
+    if (slider) {
+        slider.addEventListener("click", onReplaySliderClick);
+    }
+}
 
-    // 2) Sensori / calzini
-    const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
+var isReplayPlaying = false;
+var replayIntervalId = null;
+var currentReplayTimeMs = 0;
 
-    if (sensorsData.length > 0) {
-      const firstSensor = sensorsData[0];
-      const initialT = firstSensor.t
-        ? firstSensor.t
-        : firstSensor.timestamp
-        ? new Date(firstSensor.timestamp).getTime()
-        : Date.now();
+function toggleReplay() {
+    isReplayPlaying = !isReplayPlaying;
+    const btn = document.getElementById("replay-play-btn");
 
-      sessionStartTimeMs = sensorsData.reduce((min, item) => {
-        const t = item.t
-          ? item.t
-          : item.timestamp
-          ? new Date(item.timestamp).getTime()
-          : min;
-        return t < min ? t : min;
-      }, initialT);
+    if (isReplayPlaying) {
+        btn.textContent = "⏸ Pause";
+        startReplayPlayback();
+    } else {
+        btn.textContent = "▶ Play";
+        stopReplayPlayback();
+    }
+}
 
-      sensorsData.forEach((sensorItem) => {
-        const tMs = sensorItem.t
-          ? sensorItem.t
-          : sensorItem.timestamp
-          ? new Date(sensorItem.timestamp).getTime()
-          : null;
-        if (!tMs) return;
+function startReplayPlayback() {
+    if (!sessionStartTimeMs || !sessionEndTimeMs) return;
 
-        const tRelSec = (tMs - sessionStartTimeMs) / 1000;
-
-        // SUPPORTA: sensor_name, sensorname, name
-        const name = String(sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown").toLowerCase();
-
-        console.log("🔵 Processing sensor:", name, sensorItem);
-
-        const bi = calculateBI(sensorItem);
-
-        // SUPPORTA: pressure_0, p0, pressure0
-        const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
-        const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? sensorItem.pressure1 ?? 0);
-        const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? sensorItem.pressure2 ?? 0);
-
-        const sample = { t: tMs, p0, p1, p2, bi };
-
-        if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
-          leftSockSamples.push(sample);
-          sockChartData.left[0].push(tRelSec);
-          sockChartData.left[1].push(p0);
-          sockChartData.left[2].push(p1);
-          sockChartData.left[3].push(p2);
-          console.log("✅ Added LEFT sock sample:", sample);
-        } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
-          rightSockSamples.push(sample);
-          sockChartData.right[0].push(tRelSec);
-          sockChartData.right[1].push(p0);
-          sockChartData.right[2].push(p1);
-          sockChartData.right[3].push(p2);
-          console.log("✅ Added RIGHT sock sample:", sample);
+    replayIntervalId = setInterval(() => {
+        currentReplayTimeMs += 100;
+        
+        if (currentReplayTimeMs > (sessionEndTimeMs - sessionStartTimeMs)) {
+            currentReplayTimeMs = sessionEndTimeMs - sessionStartTimeMs;
+            stopReplayPlayback();
         }
-      });
+
+        updateReplayUI();
+    }, 100);
+}
+
+function stopReplayPlayback() {
+    if (replayIntervalId) {
+        clearInterval(replayIntervalId);
+        replayIntervalId = null;
     }
+    isReplayPlaying = false;
+    const btn = document.getElementById("replay-play-btn");
+    if (btn) btn.textContent = "▶ Play";
+}
 
-    // 3) GPS bulk-load (NO map/UI per ogni punto)
-    const gpsArr = Array.isArray(data.gps) ? data.gps : [];
-    if (gpsArr.length === 0) {
-      console.warn("Nessun GPS nel log.");
-      return;
-    }
+function updateReplayUI() {
+    if (!sessionStartTimeMs || !sessionEndTimeMs) return;
 
-    isBulkLoading = true;
-    for (let i = 0; i < gpsArr.length; i++) {
-      onGpsUpdate(gpsArr[i]);
-    }
-    isBulkLoading = false;
+    const duration = sessionEndTimeMs - sessionStartTimeMs;
+    const progress = (currentReplayTimeMs / duration) * 100;
 
-    // 4) BPM
-    if (Array.isArray(data.bpm)) {
-      data.bpm.forEach((b) => {
-        const tMs = b.t ? b.t : b.timestamp ? new Date(b.timestamp).getTime() : null;
-        if (!tMs) return;
-        bpmSamples.push({ t: tMs, bpm: b.bpm ?? b.value ?? 0 });
-      });
-    }
+    const progressEl = document.getElementById("replay-progress");
+    if (progressEl) progressEl.style.width = progress + "%";
 
-    // 5) UI/Grafici calzini una volta
-    initSockCharts();
-    if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
-    if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
+    const sec = Math.floor(currentReplayTimeMs / 1000);
+    const min = Math.floor(sec / 60);
+    const secRem = sec % 60;
+    
+    const timeEl = document.getElementById("replay-time-display");
+    if (timeEl) timeEl.textContent = `${pad(min)}:${pad(secRem)}`;
+}
 
-    // 6) MAPPA: aggiorna UNA volta sola (route completa + marker)
-    if (gpsSamples.length) {
-      const first = gpsSamples[0];
-      ensureMapInitialized(first.lat, first.lng);
+function onReplaySliderClick(e) {
+    if (!sessionStartTimeMs || !sessionEndTimeMs) return;
 
-      // downsample route per Leaflet (grande boost: 1 punto ogni 2m)
-      const pts = [];
-      let last = null;
-      const MIN_STEP_M = 2.0;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const percent = x / rect.width;
 
-      for (let i = 0; i < gpsSamples.length; i++) {
-        const s = gpsSamples[i];
-        if (!last) {
-          pts.push([s.lat, s.lng]);
-          last = s;
-          continue;
-        }
-        const dm = haversineMeters(last.lat, last.lng, s.lat, s.lng);
-        if (dm >= MIN_STEP_M) {
-          pts.push([s.lat, s.lng]);
-          last = s;
-        }
-      }
+    const duration = sessionEndTimeMs - sessionStartTimeMs;
+    currentReplayTimeMs = duration * percent;
 
-      if (fullRoute) fullRoute.setLatLngs(pts);
-      if (progressRoute) progressRoute.setLatLngs([]); // verrà ricostruita da enterReplayAtSecond
-      if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
-    }
+    updateReplayUI();
+}
 
-    // 7) Bounds + overlay replay una volta
-    sessionEndTimeMs = getSessionEndMs();
-    updateReplayUiBounds();
-    showReplayOverlayIfReady();
-    rebuildSpeedBySecFromGps();
+function showReplayOverlay() {
+    const overlay = document.getElementById("replay-overlay");
+    if (overlay) overlay.style.display = "block";
+}
 
-    // vai all'inizio attività
-    enterReplayAtSecond(0);
-
-    console.log("✅ Log caricato:", logName, "GPS:", gpsSamples.length, "BPM:", bpmSamples.length, "Left socks:", leftSockSamples.length, "Right socks:", rightSockSamples.length);
-  } catch (error) {
-    isBulkLoading = false;
-    console.error("Errore durante il caricamento dell'attività:", error);
-  }
+function pad(n) {
+    return n < 10 ? "0" + n : n;
 }
 
 // ==========================================
-// FUNZIONE CHE FIXA L'ERRORE (Wrapper)
+// LOAD PAST ACTIVITY
 // ==========================================
-function initSockCharts() {
-  console.log("Initializing Sock Charts...");
-  initSockChart("left");
-  initSockChart("right");
+function loadPastActivity() {
+    const filename = prompt("Inserisci il nome del file JSON (es: activity_123.json):");
+    if (!filename) return;
+
+    console.log("Loading past activity:", filename);
+    socket.emit("load_past_activity", { filename });
 }
 
-
 // ==========================================
-// OPTIONAL: clear API (client)
+// UTILS
 // ==========================================
-function clearAllData() {
-  if (!confirm("Pulire tutto?")) return;
-  fetch("/api/clear", { method: "POST" });
+function ensureSessionStart(tMs) {
+    if (sessionStartTimeMs == null) {
+        sessionStartTimeMs = tMs;
+        console.log("Session started at:", new Date(tMs).toISOString());
+    }
 }
-window.clearAllData = clearAllData;
+
+function getNowMs() {
+    return Date.now();
+}
+
+console.log("Dashboard module loaded ✓");
