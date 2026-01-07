@@ -1,390 +1,430 @@
 /* Header superiore */
 .dashboard-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 24px;
-    background-color: #1a1a1a;
-    border-bottom: 1px solid #333;
-    flex-wrap: wrap;
-    gap: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background-color: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .dashboard-title {
-    font-size: 24px;
-    font-weight: 700;
-    color: #97c93e;
-    margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #97c93e;
+  margin: 0;
 }
 
 .dashboard-info {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    flex-wrap: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: nowrap;
 }
 
 #connection-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 14px;
-    color: #97c93e;
-    white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #97c93e;
+  white-space: nowrap;
 }
 
 #connection-status.disconnected {
-    color: #ff4444;
+  color: #ff4444;
 }
 
 .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background-color: #97c93e;
-    animation: pulse 2s ease-in-out infinite;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #97c93e;
+  animation: pulse 2s ease-in-out infinite;
 }
 
 #connection-status.disconnected .dot {
-    background-color: #ff4444;
+  background-color: #ff4444;
 }
 
 #sensor-count {
-    font-size: 14px;
-    color: #999;
-    white-space: nowrap;
+  font-size: 14px;
+  color: #999;
+  white-space: nowrap;
 }
 
 #fps-counter {
-    font-size: 14px;
-    color: #666;
-    font-family: 'Courier New', monospace;
-    white-space: nowrap;
+  font-size: 14px;
+  color: #666;
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Base page */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #0f0f0f;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
 }
 
 /* Container principale */
 .dashboard-container {
-    padding: 24px;
-    max-width: 1600px;
-    margin: 0 auto;
+  padding: 24px;
+  max-width: 1600px;
+  margin: 0 auto;
 }
 
 /* Griglia sensori - OTTIMIZZATA PER PIÙ DATI */
 #sensors-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-    gap: 24px;
-    margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 24px;
+  margin-top: 20px;
 }
 
 #pressure-chart {
-    min-width: 320px;
-    width: 100%;
-    min-height: 200px;
-    height: 250px;
-    box-sizing: border-box;
+  min-width: 320px;
+  width: 100%;
+  min-height: 200px;
+  height: 250px;
+  box-sizing: border-box;
 }
 
 #pressure-chart-container {
-    min-width: 320px;
-    width: 100%;
-    min-height: 230px;
-    height: auto;
-    box-sizing: border-box;
+  min-width: 320px;
+  width: 100%;
+  min-height: 230px;
+  height: auto;
+  box-sizing: border-box;
 }
 
 /* ========================================
    LEGENDA uPlot - Quadrati con tick perfetti
    ======================================== */
-
 .u-legend {
-    display: flex !important;
-    flex-wrap: nowrap !important;
-    gap: 20px !important;
-    padding: 8px 0 !important;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
-    font-size: 13px !important;
-    overflow-x: auto;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 20px !important;
+  padding: 8px 0 !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+  font-size: 13px !important;
+  overflow-x: auto;
 }
 
-.u-legend .u-series:first-child {
-    display: none !important;
-}
+.u-legend .u-series:first-child { display: none !important; }
 
 .u-legend .u-series {
-    display: inline-flex !important;
-    align-items: center !important;
-    padding: 4px 0 !important;
-    cursor: pointer !important;
-    gap: 8px !important;
-    white-space: nowrap !important;
-    flex-shrink: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 4px 0 !important;
+  cursor: pointer !important;
+  gap: 8px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
 }
 
 .u-legend .u-marker,
 .u-legend .u-series.u-off .u-marker {
-    width: 16px !important;
-    height: 16px !important;
-    border-radius: 3px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    border: 2px solid #fff !important;    /* bordo spesso e bianco */
-    background: transparent !important;    /* sempre trasparente */
-    color: #fff !important;
-    position: relative !important;
-    font-size: 16px !important;
-    box-sizing: border-box !important;
-    opacity: 1 !important;
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 3px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border: 2px solid #fff !important;
+  background: transparent !important;
+  color: #fff !important;
+  position: relative !important;
+  font-size: 16px !important;
+  box-sizing: border-box !important;
+  opacity: 1 !important;
 }
 
-.u-legend .u-series.u-off {
-    opacity: 1 !important;
-}
-
-
-.u-legend .u-series.u-off > * {
-    opacity: 1 !important;
-}
-
+.u-legend .u-series.u-off { opacity: 1 !important; }
+.u-legend .u-series.u-off > * { opacity: 1 !important; }
 
 .u-legend .u-series.u-off .u-label,
 .u-legend .u-series.u-off .u-value,
 .u-legend .u-series.u-off .u-color,
-.u-legend .u-series.u-off .u-border {
-    opacity: 1 !important;
-}
-
+.u-legend .u-series.u-off .u-border { opacity: 1 !important; }
 
 .u-legend .u-series:not(.u-off) .u-marker::after {
-    content: '✓' !important;
-    color: #fff !important;
-    font-size: 13px !important;
-    font-weight: bold !important;
-    display: block;
-    position: absolute !important;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -55%);
-    line-height: 1;
-    pointer-events: none;
+  content: '✓' !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: bold !important;
+  display: block;
+  position: absolute !important;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -55%);
+  line-height: 1;
+  pointer-events: none;
 }
-/* Nessun tick se off */
-.u-legend .u-series.u-off .u-marker::after {
-    content: none !important;
-}
+
+.u-legend .u-series.u-off .u-marker::after { content: none !important; }
 
 .u-legend .u-series .u-label,
 .u-legend .u-series .u-value,
 .u-legend .u-series.u-off .u-label,
 .u-legend .u-series.u-off .u-value {
-    opacity: 1 !important;
-    color: #97c93e !important;
-    font-weight: 600 !important;
+  opacity: 1 !important;
+  color: #97c93e !important;
+  font-weight: 600 !important;
 }
 
-/* Disabilita il dimming automatico delle serie non nascoste */
-.uplot .u-series:not(.u-off) {
-    opacity: 1 !important;
-}
+/* Disabilita il dimming automatico */
+.uplot .u-series:not(.u-off) { opacity: 1 !important; }
+.uplot .u-series.u-off ~ .u-series { opacity: 1 !important; }
 
-/* E anche quando una serie è nascosta, le altre NON si dimmerano */
-.uplot .u-series.u-off ~ .u-series {
-    opacity: 1 !important;
-}
-
-/* Card sensore - INGRANDITA */
+/* Card sensore */
 .sensor-col {
-    background-color: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 12px;
-    padding: 20px;
-    transition: all 0.2s ease;
+  background-color: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 20px;
+  transition: all 0.2s ease;
 }
 
 .sensor-col.connected {
-    border-color: #97c93e;
-    box-shadow: 0 0 10px rgba(151, 201, 62, 0.2);
+  border-color: #97c93e;
+  box-shadow: 0 0 10px rgba(151, 201, 62, 0.2);
 }
 
 .sensor-col.disconnected {
-    opacity: 0.5;
-    border-color: #ff4444;
+  opacity: 0.5;
+  border-color: #ff4444;
 }
 
 .sensor-col:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(151, 201, 62, 0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(151, 201, 62, 0.2);
 }
 
 .sensor-header {
-    font-size: 18px;
-    font-weight: 700;
-    color: #97c93e;
-    margin-bottom: 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  font-size: 18px;
+  font-weight: 700;
+  color: #97c93e;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .sensor-data-section {
-    margin-bottom: 16px;
-    padding-bottom: 12px;
-    border-bottom: 1px solid #2a2a2a;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a2a2a;
 }
 
-.sensor-data-section:last-child {
-    border-bottom: none;
-}
+.sensor-data-section:last-child { border-bottom: none; }
 
 .sensor-data-section-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: #97c93e;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #97c93e;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
 }
 
 .sensor-data-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 6px 0;
-    font-size: 13px;
-    color: #ccc;
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+  color: #ccc;
 }
 
 .sensor-data-label {
-    font-weight: 600;
-    color: #aaa;
-    min-width: 60px;
+  font-weight: 600;
+  color: #aaa;
+  min-width: 60px;
 }
 
 .sensor-value {
-    font-family: 'Courier New', monospace;
-    color: #97c93e;
-    font-weight: 600;
-    text-align: right;
+  font-family: 'Courier New', monospace;
+  color: #97c93e;
+  font-weight: 600;
+  text-align: right;
 }
 
 .sensor-unit {
-    font-size: 11px;
-    color: #666;
-    margin-left: 4px;
+  font-size: 11px;
+  color: #666;
+  margin-left: 4px;
 }
 
 .sensor-timestamp {
-    font-size: 11px;
-    color: #666;
-    margin-top: 12px;
-    display: block;
+  font-size: 11px;
+  color: #666;
+  margin-top: 12px;
+  display: block;
 }
 
 /* Status indicator */
 .status-indicator {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background-color: #555;
-    transition: all 0.05s ease;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #555;
+  transition: all 0.05s ease;
 }
 
 .status-indicator.active {
-    background-color: #97c93e;
-    box-shadow: 0 0 8px rgba(151, 201, 62, 0.8);
+  background-color: #97c93e;
+  box-shadow: 0 0 8px rgba(151, 201, 62, 0.8);
 }
 
 /* Empty state */
 #empty-state {
-    display: none;
-    text-align: center;
-    padding: 60px 20px;
-    color: #666;
+  display: none;
+  text-align: center;
+  padding: 60px 20px;
+  color: #666;
 }
 
-#empty-state.visible {
-    display: block;
-}
+#empty-state.visible { display: block; }
 
 #empty-state h2 {
-    font-size: 24px;
-    margin-bottom: 12px;
-    color: #999;
+  font-size: 24px;
+  margin-bottom: 12px;
+  color: #999;
 }
 
 /* MARKER VERDE PULSANTE */
 .pulsating-marker {
-    width: 20px;
-    height: 20px;
-    background-color: #00ff00; /* Verde acceso */
-    border-radius: 50%;
-    border: 3px solid #ffffff; /* Bordo bianco per contrasto */
-    box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
-    animation: pulse-green 2s infinite;
+  width: 20px;
+  height: 20px;
+  background-color: #00ff00;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
+  animation: pulse-green 2s infinite;
 }
-/* Card BPM sul GPS */
-#bpm-display {
-    width: 190px;
-    min-height: 64px;
-    box-sizing: border-box;
-    border-radius: 12px;
-    padding: 10px 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between; /* valore a destra del cuore */
-    gap: 12px;
-}
-
-/* DISABILITA QUALSIASI ANIMAZIONE NEL BOX BPM */
-#bpm-display .heart-icon,
-#bpm-display .heart-icon * {
-  animation: none !important;
-  transition: none !important;
-}
-
-#bpm-display .heart-icon::before,
-#bpm-display .heart-icon::after {
-  animation: none !important;
-}
-#bpm-display { display: none !important; }
 
 @keyframes pulse-green {
-    0% {
-        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7);
-    }
-    70% {
-        box-shadow: 0 0 0 20px rgba(0, 255, 0, 0); /* L'onda si allarga e svanisce */
-    }
-    100% {
-        box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
-    }
+  0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }
+  70% { box-shadow: 0 0 0 20px rgba(0, 255, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
 }
 
+/* ====== LAYOUT SCREENSHOT (aggiunta) ====== */
+.top-layout{
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.gps-panel{
+  min-height: 520px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  overflow: hidden;
+  background: #0f0f0f;
+  position: relative; /* serve per overlay replay e metric cards */
+}
+
+.right-panels{
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.right-col{
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.panel-card{
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.22);
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+  padding: 14px 14px 12px 14px;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.panel-title{
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #ff6a3d;
+  text-transform: uppercase;
+  font-size: 16px;
+}
+
+.panel-subtitle{
+  margin-top: 4px;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.panel-placeholder{
+  margin-top: 14px;
+  font-family: "Courier New", monospace;
+  font-size: 28px;
+  font-weight: 900;
+  color: rgba(255,255,255,0.65);
+}
+
+.panel-value{
+  margin-top: 12px;
+  font-family: "Courier New", monospace;
+  font-size: 34px;
+  font-weight: 900;
+  color: #97c93e;
+}
+
+.pressure-mini-chart{
+  margin-top: 10px;
+  height: 130px;
+}
+
+/* DATI RAW sotto */
+.raw-section{ margin-top: 18px; padding-top: 14px; }
+
+.raw-title{
+  text-align: center;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  color: #ff6a3d;
+  margin: 10px 0 14px 0;
+}
+
+/* come screenshot: 2 colonne sotto */
+#sensors-grid{
+  grid-template-columns: repeat(2, minmax(420px, 1fr));
+}
 
 /* Responsive */
+@media (max-width: 1100px){
+  .top-layout{ grid-template-columns: 1fr; }
+  .gps-panel{ min-height: 420px; }
+  #sensors-grid{ grid-template-columns: 1fr; }
+}
+
+/* Responsive originali */
 @media (max-width: 1024px) {
-    #sensors-grid {
-        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    }
+  #sensors-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
-    .dashboard-header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    
-    .dashboard-info {
-        width: 100%;
-        justify-content: space-between;
-    }
-    
-    #sensors-grid {
-        grid-template-columns: 1fr;
-    }
+  .dashboard-header { flex-direction: column; align-items: flex-start; }
+  .dashboard-info { width: 100%; justify-content: space-between; }
+  #sensors-grid { grid-template-columns: 1fr; }
 }

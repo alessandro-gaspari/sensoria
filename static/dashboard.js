@@ -118,6 +118,29 @@ document.addEventListener("DOMContentLoaded", function () {
   ensureMetricsCardsUI();
   initPastActivityLoader();
 
+  if (!biAvgTimer) {
+    biAvgTimer = setInterval(() => {
+      // LEFT
+      if (biAgg.left.n > 0) {
+        biAgg.left.last = biAgg.left.sum / biAgg.left.n;
+        biAgg.left.sum = 0; biAgg.left.n = 0;
+
+        // aggiorna solo BI (pressioni restano quelle già mostrate)
+        const l = leftSockSamples.length ? leftSockSamples[leftSockSamples.length - 1] : null;
+        if (l && !isReplayMode) updateSocksUI('left', { p0: l.p0, p1: l.p1, p2: l.p2 }, biAgg.left.last);
+      }
+
+      // RIGHT
+      if (biAgg.right.n > 0) {
+        biAgg.right.last = biAgg.right.sum / biAgg.right.n;
+        biAgg.right.sum = 0; biAgg.right.n = 0;
+
+        const r = rightSockSamples.length ? rightSockSamples[rightSockSamples.length - 1] : null;
+        if (r && !isReplayMode) updateSocksUI('right', { p0: r.p0, p1: r.p1, p2: r.p2 }, biAgg.right.last);
+      }
+    }, BI_AVG_WINDOW_MS);
+  }
+
   var sel = document.getElementById("chart-sensor-select");
   if (sel) {
     sel.addEventListener("change", function (e) {
@@ -988,6 +1011,34 @@ function findSampleAtTime(samples, tMs) {
   return samples[idx - 1];
 }
 
+function avgBiInWindow(samples, tMs, windowMs) {
+  if (!samples || !samples.length) return null;
+  const tMin = tMs - windowMs;
+
+  // idxEnd: primo > tMs
+  let idxEnd = upperBoundByTime(samples, tMs);
+  // idxStart: primo > tMin
+  let idxStart = upperBoundByTime(samples, tMin);
+
+  idxStart = Math.max(0, Math.min(idxStart, samples.length));
+  idxEnd = Math.max(0, Math.min(idxEnd, samples.length));
+
+  if (idxEnd <= idxStart) {
+    // fallback: ultimo noto
+    const s = samples[Math.max(0, idxEnd - 1)];
+    return s ? s.bi : null;
+  }
+
+  let sum = 0;
+  let n = 0;
+  for (let i = idxStart; i < idxEnd; i++) {
+    const v = samples[i] && samples[i].bi;
+    if (v != null && isFinite(v)) { sum += v; n++; }
+  }
+  if (!n) return null;
+  return sum / n;
+}
+
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
 
@@ -1059,13 +1110,16 @@ function enterReplayAtSecond(sec) {
   // AGGIORNA VALORI ISTANTANEI CALZINI
   const lS = findSampleAtTime(leftSockSamples, tMs);
   if (lS) {
-    updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, lS.bi);
+    const biL = avgBiInWindow(leftSockSamples, tMs, 150);
+    updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, biL ?? lS.bi);
   }
 
   const rS = findSampleAtTime(rightSockSamples, tMs);
   if (rS) {
-    updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, rS.bi);
+    const biR = avgBiInWindow(rightSockSamples, tMs, 150);
+    updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, biR ?? rS.bi);
   }
+
 
   // 7) sync slider (solo se non stai trascinando in modo fine)
   const slider = document.getElementById("replay-slider");
@@ -1137,17 +1191,33 @@ function processIncomingData(data) {
   updateChartsUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
 }
 
+// Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
+const BI_LATERAL_AXIS = 'z';
+const BI_AVG_WINDOW_MS = 150;
+
+const biAgg = {
+  left: { sum: 0, n: 0, last: null },
+  right:{ sum: 0, n: 0, last: null }
+};
+
+let biAvgTimer = null;
+
 function calculateBI(payload) {
-  // supporta sia accel_x/accelx
-  const ax = payload.accel_x ?? payload.accelx;
-  const ay = payload.accel_y ?? payload.accely;
-  const az = payload.accel_z ?? payload.accelz;
+  const ax = Number(payload.accelx);
+  const ay = Number(payload.accely);
+  const az = Number(payload.accelz);
+  if (!isFinite(ax) || !isFinite(ay) || !isFinite(az)) return 0;
 
-  if (ax == null || ay == null || az == null) return 0;
+  const norm = Math.sqrt(ax*ax + ay*ay + az*az);
+  if (!isFinite(norm) || norm < 1e-9) return 0;
 
-  const norm = Math.sqrt(ax * ax + ay * ay + az * az);
-  return norm > 0.1 ? (Math.abs(ax) / norm) * 100 : 0;
+  const lateral =
+    BI_LATERAL_AXIS === 'x' ? ax :
+    BI_LATERAL_AXIS === 'y' ? ay : az;
+
+  return Math.abs(lateral) / norm * 100;
 }
+
 
 function initSockCharts() {
   const leftEl = document.getElementById("chart-left-p");
@@ -1633,7 +1703,29 @@ async function loadPastActivity(logName) {
 
         console.log("🔵 Processing sensor:", name, sensorItem);
 
-        const bi = calculateBI(sensorItem);
+        const biInst = calculateBI(payload);
+
+        if (name.includes('sx') || name.includes('left')) {
+          leftSockSamples.push({ t: tMs, p0, p1, p2, bi: biInst });
+
+          // accumulo per media 150ms (solo live)
+          if (!isReplayMode) {
+            biAgg.left.sum += biInst;
+            biAgg.left.n += 1;
+          }
+
+          if (!isReplayMode) updateSocksUI('left', { p0, p1, p2 }, biAgg.left.last ?? biInst);
+        }
+        else if (name.includes('dx') || name.includes('right')) {
+          rightSockSamples.push({ t: tMs, p0, p1, p2, bi: biInst });
+
+          if (!isReplayMode) {
+            biAgg.right.sum += biInst;
+            biAgg.right.n += 1;
+          }
+
+          if (!isReplayMode) updateSocksUI('right', { p0, p1, p2 }, biAgg.right.last ?? biInst);
+        }
 
         // SUPPORTA: pressure_0, p0, pressure0
         const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
