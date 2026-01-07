@@ -1,498 +1,293 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sensoria Dashboard</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/uPlot/1.6.24/uPlot.min.css" />
-    <link rel="stylesheet" href="dashboard.css" />
-    <style>
-        /* Stili aggiuntivi specifici per il nuovo layout */
-        body {
-            margin: 0;
-            padding: 0;
-            background: #0a0a0a;
-            color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-            overflow: hidden;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Sensoria Dashboard - GPS Only</title>
 
-        #app-container {
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
+  <!-- (Opzionale) Il tuo CSS -->
+  <link rel="stylesheet" href="/static/dashboard.css" />
 
-        /* Header */
-        #header {
-            height: 60px;
-            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
-            border-bottom: 1px solid #97c93e;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 24px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-        }
+  <!-- Leaflet (mappa) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-        #logo {
-            font-size: 24px;
-            font-weight: 700;
-            color: #97c93e;
-            letter-spacing: 2px;
-        }
-
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #97c93e;
-            box-shadow: 0 0 10px #97c93e;
-        }
-
-        #load-activity-btn {
-            background: #97c93e;
-            color: #000;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        #load-activity-btn:hover {
-            background: #b4e054;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(151, 201, 62, 0.4);
-        }
-
-        /* Main Content Grid */
-        #main-content {
-            flex: 1;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr 1fr auto;
-            gap: 16px;
-            padding: 16px;
-            overflow: hidden;
-        }
-
-        /* GPS Section */
-        #gps-section {
-            grid-column: 1;
-            grid-row: 1 / 3;
-            position: relative;
-            background: #1a1a1a;
-            border: 2px solid #c77dff;
-            border-radius: 16px;
-            overflow: hidden;
-        }
-
-        #gps-label {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            font-size: 18px;
-            font-weight: 700;
-            color: #c77dff;
-            z-index: 1000;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-
-        /* Right Top Row */
-        #right-top-row {
-            grid-column: 2;
-            grid-row: 1;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-        }
-
-        /* Right Bottom Row */
-        #right-bottom-row {
-            grid-column: 2;
-            grid-row: 2;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr 1fr;
-            gap: 16px;
-        }
-
-        /* Metric Cards */
-        .metric-card {
-            background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
-            border-radius: 12px;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .metric-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 3px;
-        }
-
-        .pressure-card {
-            border: 2px solid #ff6b6b;
-        }
-
-        .pressure-card::before {
-            background: #ff6b6b;
-        }
-
-        .angle-card {
-            border: 2px solid #ffd93d;
-        }
-
-        .angle-card::before {
-            background: #ffd93d;
-        }
-
-        .bongiorno-card {
-            border: 2px solid #6bcf7f;
-        }
-
-        .bongiorno-card::before {
-            background: #6bcf7f;
-        }
-
-        .metric-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 8px;
-        }
-
-        .metric-title {
-            font-size: 13px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            line-height: 1.3;
-        }
-
-        .pressure-card .metric-title {
-            color: #ff6b6b;
-        }
-
-        .angle-card .metric-title {
-            color: #ffd93d;
-        }
-
-        .bongiorno-card .metric-title {
-            color: #6bcf7f;
-        }
-
-        .metric-subtitle {
-            font-size: 11px;
-            color: #888;
-            font-weight: 600;
-        }
-
-        .metric-body {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .chart-mini {
-            width: 100%;
-            height: 100%;
-        }
-
-        .metric-value {
-            font-size: 42px;
-            font-weight: 700;
-            text-align: center;
-            line-height: 1;
-        }
-
-        .metric-unit {
-            font-size: 18px;
-            color: #888;
-            margin-left: 4px;
-        }
-
-        /* Raw Data Section */
-        #raw-data-section {
-            grid-column: 1 / 3;
-            grid-row: 3;
-            background: #1a1a1a;
-            border: 2px solid #ff6b6b;
-            border-radius: 16px;
-            padding: 16px;
-            max-height: 280px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        }
-
-        #raw-data-header {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin-bottom: 16px;
-        }
-
-        #raw-data-title {
-            font-size: 20px;
-            font-weight: 700;
-            color: #ff6b6b;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .tab-buttons {
-            display: flex;
-            gap: 8px;
-        }
-
-        .tab-btn {
-            background: transparent;
-            color: #888;
-            border: 2px solid #333;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-size: 13px;
-        }
-
-        .tab-btn:hover {
-            border-color: #555;
-            color: #fff;
-        }
-
-        .tab-btn.active {
-            background: #ff6b6b;
-            border-color: #ff6b6b;
-            color: #000;
-        }
-
-        #raw-data-content {
-            flex: 1;
-            overflow: auto;
-        }
-
-        .chart-container-raw {
-            width: 100%;
-            height: 200px;
-        }
-
-        /* Replay Overlay */
-        #replay-overlay {
-            display: none;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: rgba(0, 0, 0, 0.95);
-            border-top: 2px solid #97c93e;
-            padding: 20px;
-            z-index: 10000;
-        }
-
-        #replay-controls {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        #replay-slider {
-            flex: 1;
-            height: 8px;
-            background: #333;
-            border-radius: 4px;
-            cursor: pointer;
-            position: relative;
-        }
-
-        #replay-progress {
-            height: 100%;
-            background: #97c93e;
-            border-radius: 4px;
-            width: 0%;
-            transition: width 0.1s;
-        }
-
-        .replay-btn {
-            background: #97c93e;
-            color: #000;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .replay-btn:hover {
-            background: #b4e054;
-            transform: translateY(-2px);
-        }
-
-        #replay-time-display {
-            font-weight: 600;
-            color: #97c93e;
-            min-width: 100px;
-            text-align: center;
-        }
-    </style>
+  <style>
+    body {
+      background: #0f0f0f;
+      color: #fff;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    .dashboard-header {
+      background: #111;
+      border-bottom: 1px solid #333;
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+    #connection-status {
+      font-weight: 700;
+      color: #ddd;
+      white-space: nowrap;
+    }
+    .dot {
+      height: 10px;
+      width: 10px;
+      background: #97c93e;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .dashboard-container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 25px;
+    }
+    #map-section {
+      position: relative;
+      height: 520px;
+      width: 100%;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+      border-radius: 20px;
+      border: 2px solid #333;
+    }
+    
+    /* ========================================== */
+    /* RIQUADRI CALZINI */
+    /* ========================================== */
+    #socks-container {
+      display: flex;
+      gap: 20px;
+      padding: 25px 0;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .sock-card {
+      background: linear-gradient(145deg, #1a1a1a, #0f0f0f);
+      border: 2px solid #333;
+      border-radius: 20px;
+      padding: 24px;
+      width: 340px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .sock-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 12px 32px rgba(151, 201, 62, 0.2);
+    }
+    
+    .sock-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid #333;
+    }
+    
+    .sock-emoji {
+      font-size: 36px;
+      line-height: 1;
+    }
+    
+    .sock-title {
+      flex: 1;
+    }
+    
+    .sock-title h3 {
+      font-size: 19px;
+      font-weight: 800;
+      color: #fff;
+      margin-bottom: 5px;
+      letter-spacing: 0.3px;
+    }
+    
+    .sock-title p {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      color: #97c93e;
+      text-transform: uppercase;
+    }
+    
+    .sock-pressures {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    
+    .pressure-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.05);
+      transition: background 0.2s ease;
+    }
+    
+    .pressure-row:hover {
+      background: rgba(255,255,255,0.06);
+    }
+    
+    .pressure-label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .pressure-value {
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 22px;
+      font-weight: 900;
+      color: #97c93e;
+      min-width: 60px;
+      text-align: right;
+    }
+    
+    /* ========================================== */
+    /* PULSATING MARKER ANIMATION */
+    /* ========================================== */
+    .pulsating-marker {
+      width: 24px;
+      height: 24px;
+      background: #97c93e;
+      border-radius: 50%;
+      position: relative;
+      box-shadow: 0 0 12px rgba(151, 201, 62, 0.8);
+    }
+    
+    .pulsating-marker::before {
+      content: '';
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: rgba(151, 201, 62, 0.6);
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { 
+        transform: scale(1); 
+        opacity: 1; 
+      }
+      100% { 
+        transform: scale(2.5); 
+        opacity: 0; 
+      }
+    }
+    
+    /* ========================================== */
+    /* RESPONSIVE */
+    /* ========================================== */
+    @media (max-width: 768px) {
+      #map-section {
+        height: 400px;
+      }
+      
+      .dashboard-container {
+        padding: 15px;
+      }
+      
+      #socks-container {
+        padding: 15px 0;
+        gap: 15px;
+      }
+      
+      .sock-card {
+        width: 100%;
+        max-width: 400px;
+      }
+    }
+  </style>
 </head>
+
 <body>
-    <div id="app-container">
-        <!-- HEADER -->
-        <div id="header">
-            <div id="logo">sensoria</div>
-            <div id="connection-status">
-                <div class="status-dot"></div>
-                <span>Connesso</span>
-            </div>
-            <button id="load-activity-btn">Carica attività passata</button>
-        </div>
-
-        <!-- MAIN CONTENT -->
-        <div id="main-content">
-            <!-- GPS SECTION -->
-            <div id="gps-section">
-                <div id="gps-label">GPS</div>
-                <div id="map"></div>
-            </div>
-
-            <!-- RIGHT TOP ROW -->
-            <div id="right-top-row">
-                <!-- PRESSIONI PIEDE SX -->
-                <div class="metric-card pressure-card">
-                    <div class="metric-header">
-                        <div>
-                            <div class="metric-title">Pressioni<br>Piede SX</div>
-                            <div class="metric-subtitle">(solo grafici)</div>
-                        </div>
-                    </div>
-                    <div class="metric-body">
-                        <div id="pressure-left-chart" class="chart-mini"></div>
-                    </div>
-                </div>
-
-                <!-- PRESSIONI PIEDE DX -->
-                <div class="metric-card pressure-card">
-                    <div class="metric-header">
-                        <div>
-                            <div class="metric-title">Pressioni<br>Piede DX</div>
-                            <div class="metric-subtitle">(solo grafici)</div>
-                        </div>
-                    </div>
-                    <div class="metric-body">
-                        <div id="pressure-right-chart" class="chart-mini"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- RIGHT BOTTOM ROW -->
-            <div id="right-bottom-row">
-                <!-- ANGOLO GINOCCHIO -->
-                <div class="metric-card angle-card">
-                    <div class="metric-header">
-                        <div class="metric-title">Angolo<br>Ginocchio</div>
-                    </div>
-                    <div class="metric-body">
-                        <div class="metric-value">
-                            <span id="knee-angle-value">--</span>
-                            <span class="metric-unit">°</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- ANGOLO TIBIA -->
-                <div class="metric-card angle-card">
-                    <div class="metric-header">
-                        <div class="metric-title">Angolo<br>Tibia</div>
-                    </div>
-                    <div class="metric-body">
-                        <div class="metric-value">
-                            <span id="tibia-angle-value">--</span>
-                            <span class="metric-unit">°</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- BONGIORNO INDEX SX -->
-                <div class="metric-card bongiorno-card">
-                    <div class="metric-header">
-                        <div class="metric-title">Bongiorno<br>Index SX</div>
-                    </div>
-                    <div class="metric-body">
-                        <div class="metric-value">
-                            <span id="bongiorno-sx-value">--</span>
-                            <span class="metric-unit">%</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- BONGIORNO INDEX DX -->
-                <div class="metric-card bongiorno-card">
-                    <div class="metric-header">
-                        <div class="metric-title">Bongiorno<br>Index DX</div>
-                    </div>
-                    <div class="metric-body">
-                        <div class="metric-value">
-                            <span id="bongiorno-dx-value">--</span>
-                            <span class="metric-unit">%</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- RAW DATA SECTION -->
-            <div id="raw-data-section">
-                <div id="raw-data-header">
-                    <div id="raw-data-title">DATI RAW</div>
-                    <div class="tab-buttons">
-                        <button class="tab-btn active" data-tab="left">Piede Sinistro</button>
-                        <button class="tab-btn" data-tab="right">Piede Destro</button>
-                    </div>
-                </div>
-                <div id="raw-data-content">
-                    <div id="raw-chart-left" class="chart-container-raw"></div>
-                    <div id="raw-chart-right" class="chart-container-raw" style="display:none;"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- REPLAY OVERLAY -->
-        <div id="replay-overlay">
-            <div id="replay-controls">
-                <button id="replay-play-btn" class="replay-btn">▶ Play</button>
-                <div id="replay-time-display">00:00</div>
-                <div id="replay-slider">
-                    <div id="replay-progress"></div>
-                </div>
-            </div>
-        </div>
+  <!-- HEADER -->
+  <div class="dashboard-header">
+    <div style="display:flex;align-items:center;gap:14px;">
+      <img src="/static/assets/logo_Clean.png" alt="Sensoria Logo" style="height:40px;object-fit:contain;" />
     </div>
 
-    <!-- SCRIPTS -->
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/uPlot/1.6.24/uPlot.iife.min.js"></script>
-    <script src="dashboard.js"></script>
+    <div id="connection-status">
+      <span class="dot"></span> Disconnesso
+    </div>
+  </div>
+
+  <div class="dashboard-container">
+    <!-- MAPPA (il JS mette overlay metriche + slider replay sopra questa) -->
+    <div id="map-section">
+      <div id="map"></div>
+    </div>
+    
+    <!-- RIQUADRI CALZINI -->
+    <div id="socks-container">
+      <!-- CALZINO SINISTRO -->
+      <div class="sock-card">
+        <div class="sock-card-header">
+          <div class="sock-emoji">👟</div>
+          <div class="sock-title">
+            <h3>Piede Sinistro</h3>
+            <p>Pressioni</p>
+          </div>
+        </div>
+        <div class="sock-pressures">
+          <div class="pressure-row">
+            <span class="pressure-label">Posteriore</span>
+            <span class="pressure-value" id="l-posteriore">--</span>
+          </div>
+          <div class="pressure-row">
+            <span class="pressure-label">Sinistra</span>
+            <span class="pressure-value" id="l-sinistra">--</span>
+          </div>
+          <div class="pressure-row">
+            <span class="pressure-label">Destra</span>
+            <span class="pressure-value" id="l-destra">--</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- CALZINO DESTRO -->
+      <div class="sock-card">
+        <div class="sock-card-header">
+          <div class="sock-emoji">👟</div>
+          <div class="sock-title">
+            <h3>Piede Destro</h3>
+            <p>Pressioni</p>
+          </div>
+        </div>
+        <div class="sock-pressures">
+          <div class="pressure-row">
+            <span class="pressure-label">Posteriore</span>
+            <span class="pressure-value" id="r-posteriore">--</span>
+          </div>
+          <div class="pressure-row">
+            <span class="pressure-label">Sinistra</span>
+            <span class="pressure-value" id="r-sinistra">--</span>
+          </div>
+          <div class="pressure-row">
+            <span class="pressure-label">Destra</span>
+            <span class="pressure-value" id="r-destra">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="/static/dashboard.js"></script>
+
 </body>
 </html>
