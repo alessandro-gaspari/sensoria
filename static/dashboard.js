@@ -1230,7 +1230,7 @@ function initSockCharts() {
 
   const makeOpts = (container, title) => ({
     width: container.offsetWidth,
-    height: 130,
+    height: 150,
     scales: {
       x: { time: false }, // secondi dall'inizio attività
       y: { auto: true }

@@ -403,9 +403,8 @@ html, body {
 }
 
 /* Mini-chart: label legenda col colore della serie */
-.pressure-mini-chart .u-legend .u-label {
-  color: inherit !important; /* uPlot mette il colore inline */
-}
+.pressure-mini-chart .u-legend .u-series.u-off .u-label { color: var(--u-stroke) !important; }
+
 
 /* Mini-chart: legenda più in alto e più compatta */
 .pressure-mini-chart .u-legend {
@@ -436,10 +435,42 @@ html, body {
   background: var(--u-stroke) !important;
 }
 
+/* Testo legenda = colore della serie */
+.u-legend .u-series .u-label,
+.u-legend .u-series .u-value {
+  color: var(--u-stroke) !important;
+}
+
+/* Anche quando la serie è spenta (u-off), resta del suo colore */
+.u-legend .u-series.u-off .u-label,
+.u-legend .u-series.u-off .u-value {
+  color: var(--u-stroke) !important;
+}
+
 
 /* come screenshot: 2 colonne sotto */
 #sensors-grid{
   grid-template-columns: repeat(2, minmax(420px, 1fr));
+}
+
+/* Il box del grafico deve contenere canvas + legenda */
+#chart-left-p, #chart-right-p {
+  position: relative;
+  overflow: hidden;
+}
+
+/* La legenda non deve “uscire” e deve andare a capo se serve */
+#chart-left-p .u-legend,
+#chart-right-p .u-legend {
+  flex-wrap: wrap !important;
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+
+/* Evita che ogni item “scappi” fuori */
+#chart-left-p .u-legend .u-series,
+#chart-right-p .u-legend .u-series {
+  max-width: 100% !important;
 }
 
 
