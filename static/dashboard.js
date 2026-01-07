@@ -42,6 +42,13 @@ var lastSpeedSec = null;
 var lastSecFix = null;
 var lastSpeedKmh = 0;
 var lastSensorState = {};
+var uCharts = {left: null, right: null};
+var uData = {
+  left: [[], [], [], []],
+  right: [[], [], [], []]
+};
+var lastBongiornoTime = 0;
+const BONGIORNO_INTERVAL_MS = 150;
 
 // ==========================================
 // MAPPA
@@ -1105,91 +1112,105 @@ function goLive() {
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
 // ==========================================
-// DATA PROCESSING (Core Logic)
+// PROCESSO DATI SENSORI (CORE)
 // ==========================================
 function processIncomingData(data) {
   if (!data) return;
 
-  // 1. Parsing Time (ISO string o timestamp numerico)
-  let tMs = null;
-  if (data.t != null) tMs = Number(data.t);
-  else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
-  else tMs = Date.now();
+  // 1. Parsing del Tempo (Tenta t, timestamp o Date.now)
+  let tMs = data.t != null ? Number(data.t) : (data.timestamp ? new Date(data.timestamp).getTime() : Date.now());
+  const now = Date.now();
 
   const sName = data.sensor_name || "Unknown";
   
-  // Salva dati raw nel dizionario sensori globale
+  // Cache per uso generico
   sensors[sName] = data;
 
-  // Se non è un calzino, usciamo (o gestiamo altri sensori qui)
-  // Nota: i nomi JSON sono "Calzino SX" e presumibilmente "Calzino DX"
+  // Identifica Lato
   const isLeft = (sName === "Calzino SX");
-  const isRight = (sName === "Calzino DX");
-  
+  const isRight = (sName === "Calzino DX" || sName === "RightSock");
+
   if (isLeft || isRight) {
-    const prefix = isLeft ? "l-" : "r-";
+    const side = isLeft ? "left" : "right";
     
     // ------------------------------------------
-    // A. PRESSIONI (P0, P1, P2)
+    // A. AGGIORNAMENTO GRAFICI PRESSIONE
     // ------------------------------------------
-    if (data.pressure_0 != null) updateText(prefix + "posteriore", data.pressure_0.toFixed(0));
-    if (data.pressure_1 != null) updateText(prefix + "sinistra", data.pressure_1.toFixed(0));
-    if (data.pressure_2 != null) updateText(prefix + "destra", data.pressure_2.toFixed(0));
-
-    // Dati accelerometro (default 0 se mancano)
-    const ax = data.accel_x || 0;
-    const ay = data.accel_y || 0;
-    const az = data.accel_z || 0;
-
-    // ------------------------------------------
-    // B. BONGIORNO INDEX
-    // Formula: (Accelerazione Laterale / Totale) * 100
-    // Assumiamo che Accel X sia l'asse laterale.
-    // ------------------------------------------
-    const totalAcc = Math.sqrt(ax*ax + ay*ay + az*az);
-    let bongiornoIdx = 0;
+    const chartArr = uData[side];
     
-    if (totalAcc > 0) {
-      // Calcolo percentuale contributo laterale
-      bongiornoIdx = (Math.abs(ax) / totalAcc) * 100;
+    // Manteniamo buffer limitato (es. ultimi 100 punti) per fluidità
+    if (chartArr[0].length > 100) {
+      for (let i = 0; i < 4; i++) chartArr[i].shift();
     }
-    updateText(prefix + "bongiorno", bongiornoIdx.toFixed(1) + "%");
-
-    // ------------------------------------------
-    // C. JERK INDEX (Derivata Accelerazione)
-    // Formula: (Acc_new - Acc_old) / dt
-    // ------------------------------------------
-    let jx = 0, jy = 0, jz = 0;
     
-    // Recupera stato precedente per questo sensore
-    const last = lastSensorState[sName];
+    // Push nuovi dati: [TempoSec, P0, P1, P2]
+    // uPlot vuole il tempo in secondi per l'asse X
+    chartArr[0].push(tMs / 1000); 
+    chartArr[1].push(data.pressure_0 || 0);
+    chartArr[2].push(data.pressure_1 || 0);
+    chartArr[3].push(data.pressure_2 || 0);
 
-    if (last && last.t && tMs > last.t) {
-      // Calcolo delta time in SECONDI
-      const dt = (tMs - last.t) / 1000;
+    // Se il grafico è inizializzato, ridisegna
+    if (uCharts[side]) {
+      uCharts[side].setData(chartArr);
+    } else {
+      // Primo pacchetto: prova a inizializzare
+      initSockChart(side);
+    }
 
-      // Filtro per evitare picchi assurdi se perdiamo pacchetti (dt > 0.5s)
-      if (dt > 0.0001 && dt < 0.5) {
-        jx = Math.abs(ax - last.ax) / dt;
-        jy = Math.abs(ay - last.ay) / dt;
-        jz = Math.abs(az - last.az) / dt;
+    // ------------------------------------------
+    // B. BONGIORNO INDEX (Throttled 150ms)
+    // ------------------------------------------
+    if (now - lastBongiornoTime > BONGIORNO_INTERVAL_MS) {
+      const ax = data.accel_x || 0;
+      const ay = data.accel_y || 0;
+      const az = data.accel_z || 0;
+      
+      const totalAcc = Math.sqrt(ax*ax + ay*ay + az*az);
+      let bIndex = 0;
+      
+      // Calcola solo se c'è movimento (>50 unità arbitrarie)
+      if (totalAcc > 50) { 
+        // Formula: % accelerazione laterale su totale
+        bIndex = (Math.abs(ax) / totalAcc) * 100;
       }
+      
+      // Aggiorna DOM
+      const elB = document.getElementById("val-bongiorno");
+      if (elB) elB.textContent = bIndex.toFixed(0);
+      
+      lastBongiornoTime = now;
     }
 
-    // Aggiorna UI Jerk
-    updateText(prefix + "jerk-x", jx.toFixed(0));
-    updateText(prefix + "jerk-y", jy.toFixed(0));
-    updateText(prefix + "jerk-z", jz.toFixed(0));
+    // ------------------------------------------
+    // C. JERK INDEX (Opzionale: ogni pacchetto)
+    // ------------------------------------------
+    const last = lastSensorState[sName];
+    if (last && last.t && tMs > last.t) {
+       const dt = (tMs - last.t) / 1000; // Secondi
+       
+       // Filtro dt valido (evita divisioni per zero o salti enormi)
+       if (dt > 0.0001 && dt < 1.0) {
+         // Jerk medio = media delle derivate sui 3 assi
+         const jx = Math.abs((data.accel_x || 0) - last.ax) / dt;
+         const jy = Math.abs((data.accel_y || 0) - last.ay) / dt;
+         const jz = Math.abs((data.accel_z || 0) - last.az) / dt;
+         const jMean = (jx + jy + jz) / 3;
 
-    // Salva stato attuale per il prossimo ciclo
-    lastSensorState[sName] = { t: tMs, ax: ax, ay: ay, az: az };
+         // Aggiorna DOM (scalato /1000 per leggibilità, es "12.5k")
+         const elJ = document.getElementById("val-jerk");
+         if (elJ) elJ.textContent = (jMean / 1000).toFixed(1) + "k";
+       }
+    }
+    
+    // Salva stato per il prossimo calcolo Jerk
+    lastSensorState[sName] = { 
+      t: tMs, 
+      ax: data.accel_x||0, 
+      ay: data.accel_y||0, 
+      az: data.accel_z||0 
+    };
   }
-}
-
-// Helper per aggiornare testo in sicurezza
-function updateText(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
 }
 
 
@@ -1205,36 +1226,49 @@ function calculateBI(payload) {
   return norm > 0.1 ? (Math.abs(ax) / norm) * 100 : 0;
 }
 
-function initSockCharts() {
-  const leftEl = document.getElementById("chart-left-p");
-  const rightEl = document.getElementById("chart-right-p");
-  if (!leftEl || !rightEl) return;
+// ==========================================
+// INIZIALIZZAZIONE GRAFICO UPLOT
+// ==========================================
+function initSockChart(side) {
+  const divId = side === "left" ? "chart-l-sock" : "chart-r-sock";
+  const el = document.getElementById(divId);
+  
+  // Se il div non esiste o grafico già creato, esci
+  if (!el || uCharts[side]) return;
 
-  const makeOpts = (container, title) => ({
-    width: container.offsetWidth,
-    height: 130,
-    scales: {
-      x: { time: false }, // secondi dall'inizio attività
-      y: { auto: false, range: [0, 1100] }
-    },
+  // Opzioni Grafico (Leggero, senza assi visibili per pulizia)
+  const opts = {
+    width: el.clientWidth,
+    height: el.clientHeight || 150,
+    title: "",
+    cursor: { show: false }, // Disabilita cursore per performance
+    select: { show: false },
+    legend: { show: false },
+    scales: { x: { time: false } }, // Asse X è il tempo
     series: [
-      {},
-      { label: "P0", stroke: "#ffb74d", width: 2, points: { show: false } },
-      { label: "P1", stroke: "#e91e63", width: 2, points: { show: false } },
-      { label: "P2", stroke: "#4fc3f7", width: 2, points: { show: false } }
+      {}, // Asse X (Tempo)
+      { stroke: "#ff4136", width: 2, fill: "rgba(255, 65, 54, 0.1)", points: { show: false } }, // P0 (Rosso)
+      { stroke: "#2ecc40", width: 2, fill: "rgba(46, 204, 64, 0.1)", points: { show: false } }, // P1 (Verde)
+      { stroke: "#0074d9", width: 2, fill: "rgba(0, 116, 217, 0.1)", points: { show: false } }, // P2 (Blu)
     ],
-    axes: [{ show: false }, { show: false }],
-    legend: { show: true, live: false },
-    cursor: { show: true, sync: { key: "socks" } }
-  });
+    axes: [
+      { show: false }, // Nascondi griglia X
+      { show: false }  // Nascondi griglia Y
+    ],
+    padding: [0, 0, 0, 0]
+  };
 
-  if (!sockCharts.left) {
-    sockCharts.left = new uPlot(makeOpts(leftEl, "SX"), sockChartData.left, leftEl);
-  }
-  if (!sockCharts.right) {
-    sockCharts.right = new uPlot(makeOpts(rightEl, "DX"), sockChartData.right, rightEl);
-  }
+  // Crea istanza uPlot
+  uCharts[side] = new uPlot(opts, uData[side], el);
+
+  // Observer per resize automatico (Responsive)
+  new ResizeObserver(() => {
+    if (uCharts[side] && el) {
+      uCharts[side].setSize({ width: el.clientWidth, height: el.clientHeight });
+    }
+  }).observe(el);
 }
+
 
 // FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
@@ -1344,9 +1378,13 @@ function updateSensorCardUI(name, data) {
 // PROFILE UI (placeholder)
 // ==========================================
 function updateProfileUI(data) {
-  // se hai già HTML specifico, puoi completare qui
-  // lasciato volutamente minimale
+  if (!data) return;
+  const elName = document.getElementById("user-name-display");
+  if (elName && data.name) {
+    elName.textContent = data.name + " " + (data.surname || "");
+  }
 }
+
 
 // ==========================================
 // uPlot charts (minimal, compat)
