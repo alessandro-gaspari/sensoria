@@ -21,7 +21,6 @@
 
 <body>
   <header class="dashboard-header" role="banner">
-    <!-- LOGO (sostituisce il testo) -->
     <div class="dashboard-title" aria-label="Sensoria">
       <img
         src="/static/assets/logo_Clean.png"
@@ -38,7 +37,6 @@
 
       <div id="sensor-count" aria-label="Numero sensori">--</div>
       <div id="fps-counter" aria-label="FPS">--</div>
-
       <!-- Il bottone "Carica attività passata" viene aggiunto dal JS -->
     </div>
   </header>
@@ -50,10 +48,21 @@
 
       <!-- Destra: 2 colonne x 3 card -->
       <div class="right-panels" aria-label="Pannelli metriche">
+
+        <!-- Colonna sinistra -->
         <div class="right-col">
           <div class="panel-card">
             <div class="panel-title">Pressioni Calzino sx</div>
+
+            <!-- Grafico uPlot (JS usa questo id) -->
             <div id="chart-left-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede sinistro"></div>
+
+            <!-- Legenda custom (NON cliccabile) -->
+            <div class="press-legend" aria-label="Legenda pressioni piede sinistro">
+              <span class="press-lbl p0">Lat Int</span>
+              <span class="press-lbl p1">Lat Est</span>
+              <span class="press-lbl p2">Posteriore</span>
+            </div>
           </div>
 
           <div class="panel-card">
@@ -67,10 +76,20 @@
           </div>
         </div>
 
+        <!-- Colonna destra -->
         <div class="right-col">
           <div class="panel-card">
             <div class="panel-title">Pressioni Calzino dx</div>
+
+            <!-- Grafico uPlot (JS usa questo id) -->
             <div id="chart-right-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede destro"></div>
+
+            <!-- Legenda custom (NON cliccabile) -->
+            <div class="press-legend" aria-label="Legenda pressioni piede destro">
+              <span class="press-lbl p0">Lat Int</span>
+              <span class="press-lbl p1">Lat Est</span>
+              <span class="press-lbl p2">Posteriore</span>
+            </div>
           </div>
 
           <div class="panel-card">
@@ -83,6 +102,7 @@
             <div class="panel-value" id="bi-val-right" aria-label="BI destro">--</div>
           </div>
         </div>
+
       </div>
     </section>
 

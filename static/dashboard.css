@@ -439,6 +439,41 @@ html, body {
   margin: 10px 0 14px 0;
 }
 
+/* Legenda custom NON cliccabile */
+.press-legend{
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.press-lbl{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.95;
+}
+
+/* pallino colore */
+.press-lbl::before{
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: currentColor;
+  display: inline-block;
+}
+
+/* Colori = stroke definiti in initSockCharts(): P0 #ffb74d, P1 #e91e63, P2 #4fc3f7 */
+.press-lbl.p0{ color: #ffb74d; }
+.press-lbl.p1{ color: #e91e63; }
+.press-lbl.p2{ color: #4fc3f7; }
+
+
 /* =========================
    Fix overflow legenda grafici calzini
    ========================= */

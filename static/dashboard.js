@@ -1242,7 +1242,7 @@ function initSockCharts() {
       { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
     ],
     axes: [{ show: false }, { show: false }],
-    legend: { show: true, live: false },
+    legend: { show: false },
     cursor: { show: true, sync: { key: "socks" } }
   });
 
