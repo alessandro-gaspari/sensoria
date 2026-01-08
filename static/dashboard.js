@@ -20,6 +20,14 @@ var socket = io({
 // ==========================================
 const SENSORIA_GREEN = "#97c93e";
 
+function getHrColor(bpm) {
+  if (!Number.isFinite(bpm)) return HR_GREEN;
+  if (bpm < 100) return HR_GREEN;
+  if (bpm <= 140) return HR_YELLOW;
+  return HR_RED;
+}
+
+
 // ==========================================
 // SENSORI / DATI
 // ==========================================
@@ -48,8 +56,7 @@ var lastSpeedKmh = 0;
 var map = null;
 var mapMarker = null;
 var isMapInitialized = false;
-var fullRoute = null; // polilinea intera
-var progressRoute = null; // polilinea fino al tempo (replay/live)
+var fullRouteSegments = [];   // ogni elemento: { polyline, color };
 
 // (opzionale) stato marker animato / rotazione
 var currentMapPos = null;
@@ -125,6 +132,151 @@ function replayCenterLinePlugin() {
     }
   };
 }
+
+// ==========================================
+// BPM -> colore traccia
+// ==========================================
+const HR_GREEN  = "#00c853";  // < 100
+const HR_YELLOW = "#ffeb3b";  // 100..140
+const HR_RED    = "#ff5252";  // > 140
+
+function getHrColor(bpm) {
+  if (!Number.isFinite(bpm)) return HR_GREEN;
+  if (bpm < 100) return HR_GREEN;
+  if (bpm <= 140) return HR_YELLOW;
+  return HR_RED;
+}
+
+// ==========================================
+// FULL route (sempre tutta): segmenti colorati
+// ==========================================
+var fullRouteSegments = [];   // array di L.Polyline
+var fullActiveSeg = null;
+var fullActiveColor = null;
+
+// ==========================================
+// PROGRESS route (fino al tempo): segmenti colorati
+// ==========================================
+var progressRouteSegments = []; // array di L.Polyline
+var progActiveSeg = null;
+var progActiveColor = null;
+
+function clearSegs(arr) {
+  if (!map) return;
+  (arr || []).forEach(seg => map.removeLayer(seg));
+}
+
+function clearFullRouteSegments() {
+  clearSegs(fullRouteSegments);
+  fullRouteSegments = [];
+  fullActiveSeg = null;
+  fullActiveColor = null;
+}
+
+function clearProgressRouteSegments() {
+  clearSegs(progressRouteSegments);
+  progressRouteSegments = [];
+  progActiveSeg = null;
+  progActiveColor = null;
+}
+
+// helper comune: crea/estende segmenti contigui dello stesso colore
+function appendColoredSegment(state, a, b, weight, opacity) {
+  if (!map || !a || !b) return;
+
+  const midT = (a.t + b.t) / 2;
+  const bpm = getBpmAtTime(midT);           // già presente nel file
+  const color = getHrColor(bpm);
+
+  if (!state.activeSeg || state.activeColor !== color) {
+    state.activeColor = color;
+    state.activeSeg = L.polyline([[a.lat, a.lng], [b.lat, b.lng]], {
+      pane: "routePane",
+      color,
+      weight,
+      opacity,
+      lineJoin: "round",
+      lineCap: "round",
+    }).addTo(map);
+    state.segments.push(state.activeSeg);
+  } else {
+    state.activeSeg.addLatLng([b.lat, b.lng]);
+  }
+}
+
+function addFullColoredBetween(a, b) {
+  appendColoredSegment(
+    { segments: fullRouteSegments, activeSeg: fullActiveSeg, activeColor: fullActiveColor },
+    a, b, 4, 0.45
+  );
+  // sync back
+  fullActiveSeg = fullRouteSegments.length ? fullRouteSegments[fullRouteSegments.length - 1] : null;
+  fullActiveColor = fullActiveSeg ? fullActiveSeg.options.color : null;
+}
+
+function addProgressColoredBetween(a, b) {
+  appendColoredSegment(
+    { segments: progressRouteSegments, activeSeg: progActiveSeg, activeColor: progActiveColor },
+    a, b, 7, 0.95
+  );
+  // sync back
+  progActiveSeg = progressRouteSegments.length ? progressRouteSegments[progressRouteSegments.length - 1] : null;
+  progActiveColor = progActiveSeg ? progActiveSeg.options.color : null;
+}
+
+// Ricostruisce FULL route UNA volta (replay load) o incrementale (live)
+function rebuildColoredFullRouteFromGpsSamples(minStepM = 0) {
+  clearFullRouteSegments();
+  if (!map || !gpsSamples || gpsSamples.length < 2) return;
+
+  let prev = gpsSamples[0];
+  for (let i = 1; i < gpsSamples.length; i++) {
+    const cur = gpsSamples[i];
+    if (minStepM > 0) {
+      const dm = haversineMeters(prev.lat, prev.lng, cur.lat, cur.lng);
+      if (!isFinite(dm) || dm < minStepM) continue;
+    }
+    addFullColoredBetween(prev, cur);
+    prev = cur;
+  }
+}
+
+// Ricostruisce PROGRESS route ogni seek (fino a tMs)
+function rebuildColoredProgressRouteToTime(tMs, minStepM = 0) {
+  clearProgressRouteSegments();
+  if (!map || !gpsSamples || gpsSamples.length < 2) return;
+
+  let idx = upperBoundByTime(gpsSamples, tMs); // già presente nel file
+  idx = clamp(idx, 0, gpsSamples.length);
+
+  if (idx <= 1) return;
+
+  let prev = gpsSamples[0];
+
+  // segmenti fino all'ultimo punto <= tMs
+  for (let i = 1; i < idx; i++) {
+    const cur = gpsSamples[i];
+    if (minStepM > 0) {
+      const dm = haversineMeters(prev.lat, prev.lng, cur.lat, cur.lng);
+      if (!isFinite(dm) || dm < minStepM) continue;
+    }
+    addProgressColoredBetween(prev, cur);
+    prev = cur;
+  }
+
+  // aggiungi punto interpolato finale a tMs (così la progress arriva “precisa” al tempo slider)
+  if (idx < gpsSamples.length) {
+    const interp = getInterpolatedGpsAtTime(tMs); // già presente nel file
+    if (interp) {
+      const pseudo = { t: tMs, lat: interp.lat, lng: interp.lng };
+      const dm = haversineMeters(prev.lat, prev.lng, pseudo.lat, pseudo.lng);
+      if (!minStepM || (isFinite(dm) && dm >= minStepM)) {
+        addProgressColoredBetween(prev, pseudo);
+      }
+    }
+  }
+}
+
 
 
 // ==========================================
@@ -524,22 +676,19 @@ function normalizeGpsPoint(raw) {
 // ==========================================
 // GPS (LIVE / REPLAY CORE: onGpsUpdate)
 // ==========================================
-function onGpsUpdate(data) {
+
+function onGpsUpdate(data, opts) {
+  opts = opts || { updateUi: true, updateMap: true };
   if (!data) return;
 
   const lat = Number(data.latitude ?? data.lat);
   const lng = Number(data.longitude ?? data.lng ?? data.lon);
   const acc = Number(data.accuracy ?? data.acc ?? 10);
 
-  // timestamp: preferisci t, fallback timestamp ISO, fallback now
   let tMs = null;
-  if (data.t != null) {
-    tMs = Number(data.t);
-  } else if (data.timestamp) {
-    tMs = new Date(data.timestamp).getTime();
-  } else {
-    tMs = Date.now();
-  }
+  if (data.t != null) tMs = Number(data.t);
+  else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
+  else tMs = Date.now();
 
   if (!isFinite(lat) || !isFinite(lng) || lat === 0 || lng === 0) return;
   if (!isFinite(tMs)) return;
@@ -548,77 +697,67 @@ function onGpsUpdate(data) {
 
   const prevSample = gpsSamples.length ? gpsSamples[gpsSamples.length - 1] : null;
 
-  // primo punto: speed = 0
   if (!prevSample) {
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
+    if (!isBulkLoading) ensureMapInitialized(lat, lng);
 
-    if (!isBulkLoading) {
-      ensureMapInitialized(lat, lng);
-      if (!isReplayMode) {
-        updateSpeedDistanceUI(0, 0);
-      }
-    }
-
+    if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(0, 0);
     updateReplayUiBounds();
     showReplayOverlayIfReady();
     return;
   }
 
-  // CALCOLO VELOCITÀ (con SMOOTHING per GPS rumorosi)
-  const dtSec = (tMs - prevSample.t) / 1000;
+  const dtSecRaw = (tMs - prevSample.t) / 1000;
+  const dtSec = clamp(dtSecRaw, GPS_MIN_DT_S, GPS_MAX_DT_S);
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
   let usedStepM = 0;
   let speedKmh = 0;
 
-  // Filtri qualità GPS
-  if (dtSec >= 0.3 && dtSec <= 5.0 && acc <= 50) {
-    // Se ti muovi pochissimo (<1m), considera velocità = 0
-    if (stepM < 1.0) {
+  const goodFix = dtSecRaw >= GPS_MIN_DT_S && dtSecRaw <= 5.0 && acc <= GPS_MAX_ACCURACY_FOR_DIST_M;
+
+  if (goodFix) {
+    if (stepM < GPS_MIN_STEP_M) {
       speedKmh = 0;
       usedStepM = 0;
-    }
-    // Movimento rilevato
-    else {
+    } else {
       usedStepM = stepM;
-      const instantSpeed = (stepM / dtSec) * 3.6; // km/h istantaneo
-
-      // Smoothing esponenziale: 70% vecchio, 30% nuovo per evitare oscillazioni
-      const prevSpeed = prevSample.speedKmh || 0;
+      const instantSpeed = (stepM / dtSec) * 3.6;
+      const prevSpeed = prevSample.speedKmh ?? 0;
       speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
 
-      // Cap realistico
       if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
-      speedKmh = Math.min(speedKmh, 100);
+      speedKmh = Math.min(speedKmh, MAX_SPEED_KMH);
     }
   } else {
-    // Fix scadenti: mantieni velocità precedente
-    speedKmh = prevSample.speedKmh || 0;
+    speedKmh = prevSample.speedKmh ?? 0;
   }
 
-  const newCumDistM = (prevSample.cumDistM || 0) + usedStepM;
+  const newCumDistM = (prevSample.cumDistM ?? 0) + usedStepM;
+  const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
+  gpsSamples.push(newSample);
 
-  // Salva sample
-  gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh });
-
-  // UI/MAP: aggiorna solo se non bulk
   if (isBulkLoading) return;
 
-  if (!isReplayMode) {
-    updateSpeedDistanceUI(speedKmh, newCumDistM);
-  }
+  if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(speedKmh, newCumDistM);
 
-  if (map && mapMarker) {
+  if (opts.updateMap && map && mapMarker) {
     const pos = [lat, lng];
     mapMarker.setLatLng(pos);
-    if (fullRoute) fullRoute.addLatLng(pos);
-    if (progressRoute) progressRoute.addLatLng(pos);
+
+    // FULL route (sottile) colorata BPM
+    addFullColoredBetween(prevSample, newSample);
+
+    // PROGRESS (spessa) colorata BPM - in live coincide col "fino ad ora"
+    if (!isReplayMode) addProgressColoredBetween(prevSample, newSample);
+
     if (!isUserInteracting) map.panTo(pos);
   }
 
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
+
 
 // ==========================================
 // MAP INIT + push point
@@ -634,72 +773,44 @@ function ensureMapInitialized(lat, lng) {
 
   const mapDiv = document.getElementById("map");
   if (!mapDiv) return;
+
   mapDiv.style.position = "relative";
 
-  map = L.map("map", {
-    attributionControl: false,
-    zoomControl: true
-  }).setView([lat, lng], 19);
+  map = L.map("map", { attributionControl: false, zoomControl: true }).setView([lat, lng], 19);
 
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
-    maxZoom: 20
+    maxZoom: 20,
   }).addTo(map);
 
-  // pane ordering
   map.createPane("routePane");
   map.getPane("routePane").style.zIndex = 450;
 
   map.createPane("markerPane");
   map.getPane("markerPane").style.zIndex = 650;
 
-  var pulseIcon = L.divIcon({
+  const pulseIcon = L.divIcon({
     className: "custom-div-icon",
     html: '<div class="pulsating-marker"></div>',
     iconSize: [24, 24],
-    iconAnchor: [12, 12]
+    iconAnchor: [12, 12],
   });
 
-  mapMarker = L.marker([lat, lng], {
-    icon: pulseIcon,
-    pane: "markerPane"
-  }).addTo(map);
-
-  fullRoute = L.polyline([], {
-    pane: "routePane",
-    color: SENSORIA_GREEN,
-    weight: 4,
-    opacity: 0.45,
-    lineJoin: "round",
-    lineCap: "round"
-  }).addTo(map);
-
-  progressRoute = L.polyline([], {
-    pane: "routePane",
-    color: SENSORIA_GREEN,
-    weight: 7,
-    opacity: 0.95,
-    lineJoin: "round",
-    lineCap: "round"
-  }).addTo(map);
+  mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: "markerPane" }).addTo(map);
 
   createReplayOverlayControls();
   createRotateControl();
   ensureMetricsCardsUI();
 
   isMapInitialized = true;
-
-  setTimeout(() => {
-    map.invalidateSize();
-  }, 120);
+  setTimeout(() => map.invalidateSize(), 120);
 }
+
 
 function pushMapPoint(lat, lng) {
   if (!map || !mapMarker) return;
 
   const pos = [lat, lng];
   mapMarker.setLatLng(pos);
-  if (fullRoute) fullRoute.addLatLng(pos);
-  if (progressRoute) progressRoute.addLatLng(pos);
   if (!isUserInteracting) map.panTo(pos);
 }
 
@@ -1015,27 +1126,10 @@ function getSpeedAtTime(tMs) {
 }
 
 function updateProgressRouteToTime(tMs) {
-  if (!progressRoute) return;
-  if (!gpsSamples.length) {
-    progressRoute.setLatLngs([]);
-    return;
-  }
-
-  var idx = upperBoundByTime(gpsSamples, tMs);
-  idx = clamp(idx, 0, gpsSamples.length);
-
-  var pts = [];
-  for (var i = 0; i < idx; i++) {
-    pts.push([gpsSamples[i].lat, gpsSamples[i].lng]);
-  }
-
-  if (idx > 0 && idx < gpsSamples.length) {
-    var interp = getInterpolatedGpsAtTime(tMs);
-    if (interp) pts.push([interp.lat, interp.lng]);
-  }
-
-  progressRoute.setLatLngs(pts);
+  // downsample 2m per non ammazzare il browser durante lo scrubbing
+  rebuildColoredProgressRouteToTime(tMs, 2.0);
 }
+
 
 // FUNZIONE HELPER PER TROVARE SAMPLE CALZINI
 function findSampleAtTime(samples, tMs) {
@@ -1181,6 +1275,8 @@ function enterReplayAtSecond(sec) {
 function goLive() {
   isReplayMode = false;
   updateReplayUiBounds();
+  clearProgressRouteSegments();
+  rebuildColoredProgressRouteToTime(getSessionEndMs(), 2.0);
 
   if (gpsSamples.length) {
     var lastG = gpsSamples[gpsSamples.length - 1];
@@ -1684,6 +1780,9 @@ function resetReplayState() {
   bpmSamples = [];
   leftSockSamples = [];
   rightSockSamples = [];
+  clearFullRouteSegments();
+  clearProgressRouteSegments();
+
 
   sockChartData.left = [[], [], [], []];
   sockChartData.right = [[], [], [], []];
@@ -1701,8 +1800,6 @@ function resetReplayState() {
   gpsTimeUnit = null;
   lastGpsTRaw = null;
 
-  if (fullRoute) fullRoute.setLatLngs([]);
-  if (progressRoute) progressRoute.setLatLngs([]);
 
   updateBpmValue("--");
   updateSpeedDistanceUI(null, null);
@@ -1743,8 +1840,6 @@ async function loadPastActivity(logName) {
     lastSecFix = null;
     lastLiveBpm = "--";
 
-    if (fullRoute) fullRoute.setLatLngs([]);
-    if (progressRoute) progressRoute.setLatLngs([]);
 
     updateBpmValue("--");
     updateSpeedDistanceUI(null, null);
@@ -1853,35 +1948,20 @@ async function loadPastActivity(logName) {
     if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
     if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
 
-    // 6) MAPPA: aggiorna UNA volta sola (route completa + marker)
+    // 6 MAPPA: aggiorna UNA volta sola route completa + marker
     setStatus("Rendering mappa...");
+
     if (gpsSamples.length) {
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
 
-      // downsample route per Leaflet (boost: 1 punto ogni 2m)
-      const pts = [];
-      let last = null;
-      const MIN_STEP_M = 2.0;
+      // ricostruisci la full route colorata (downsample 2m per non creare 50k punti)
+      rebuildColoredFullRouteFromGpsSamples(2.0);
 
-      for (let i = 0; i < gpsSamples.length; i++) {
-        const s = gpsSamples[i];
-        if (!last) {
-          pts.push([s.lat, s.lng]);
-          last = s;
-          continue;
-        }
-        const dm = haversineMeters(last.lat, last.lng, s.lat, s.lng);
-        if (dm >= MIN_STEP_M) {
-          pts.push([s.lat, s.lng]);
-          last = s;
-        }
-      }
 
-      if (fullRoute) fullRoute.setLatLngs(pts);
-      if (progressRoute) progressRoute.setLatLngs([]); // ricostruita da enterReplayAtSecond
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
+
 
     // 7) Bounds + overlay replay una volta
     setStatus("Finalizzazione replay...");
