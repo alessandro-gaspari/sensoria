@@ -99,6 +99,33 @@ var sockChartData = {
   left: [[], [], [], []],
   right: [[], [], [], []]
 };
+var replayCursorSec = null;
+
+function replayCenterLinePlugin() {
+  return {
+    hooks: {
+      draw: (u) => {
+        if (!isReplayMode || replayCursorSec == null) return;
+
+        const ctx = u.ctx;
+        const x = u.valToPos(replayCursorSec, "x", true);
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(151,201,62,0.9)"; // verde sensoria
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+
+        ctx.beginPath();
+        ctx.moveTo(x, u.bbox.top);
+        ctx.lineTo(x, u.bbox.top + u.bbox.height);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+    }
+  };
+}
+
 
 // ==========================================
 // GPS SPEED config (anti picchi)
@@ -956,6 +983,19 @@ function getDistanceAtTime(tMs) {
   return da + (db - da) * alpha;
 }
 
+function lastSockSec(side) {
+  const arr = sockChartData[side]?.[0] || [];
+  return arr.length ? arr[arr.length - 1] : 0;
+}
+
+function setSockWindow(u, centerSec, halfWin, maxSec) {
+  const win = halfWin * 2;
+  const min = Math.max(0, Math.min(centerSec - halfWin, Math.max(0, maxSec - win)));
+  const max = min + win;
+  u.setScale("x", { min, max });
+}
+
+
 function getSpeedAtTime(tMs) {
   if (!gpsSamples.length) return 0;
   if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
@@ -1054,6 +1094,13 @@ function enterReplayAtSecond(sec) {
   // 1) clamp tempo
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
+  const lMax = lastSockSec("left");
+  const rMax = lastSockSec("right");
+  if (sockCharts.left)  setSockWindow(sockCharts.left,  clampedSec, 5, lMax);
+  if (sockCharts.right) setSockWindow(sockCharts.right, clampedSec, 5, rMax);
+  replayCursorSec = clampedSec;
+  if (sockCharts.left) sockCharts.left.redraw();
+  if (sockCharts.right) sockCharts.right.redraw();
   const tMs = sessionStartTimeMs + clampedSec * 1000;
 
   // 2) label mm:ss
@@ -1231,6 +1278,7 @@ function initSockCharts() {
   const makeOpts = (container, title) => ({
     width: container.offsetWidth,
     height: 240,
+    plugins: [replayCenterLinePlugin()],
     scales: {
       x: { time: false }, // secondi dall'inizio attività
       y: { auto: true }
