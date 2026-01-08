@@ -1276,8 +1276,8 @@ function initSockCharts() {
   if (!leftEl || !rightEl) return;
 
   const makeOpts = (container, title) => ({
-    width: container.offsetWidth,
-    height: 240,
+    width: Math.max(container.offsetWidth, container.clientWidth),
+    height: Math.max(240, container.clientHeight),
     plugins: [replayCenterLinePlugin()],
     scales: {
       x: { time: false }, // secondi dall'inizio attività

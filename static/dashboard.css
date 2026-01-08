@@ -460,6 +460,34 @@ html, body {
   box-shadow: 0 0 8px rgba(151, 201, 62, 0.8);
 }
 
+/* CARD PRESSIONI: usa lo spazio verticale per il grafico */
+.panel-card.sock-card{
+  justify-content: flex-start;   /* evita centratura verticale */
+}
+
+/* Il grafico si espande e prende tutto lo spazio disponibile */
+.panel-card.sock-card .pressure-mini-chart{
+  margin-top: 6px;              /* meno spazio sopra */
+  flex: 1 1 auto;               /* prende lo spazio libero della card */
+  height: auto !important;      /* lascia che sia flex a decidere */
+  min-height: 220px;            /* safety */
+}
+
+/* Legenda: attaccata in basso e più compatta */
+.panel-card.sock-card .press-legend{
+  margin-top: auto;             /* spinge la legenda in fondo */
+  padding-top: 6px;
+  font-size: 12px;
+  line-height: 1;
+  gap: 12px;
+}
+
+/* Facoltativo: meno padding in basso nella card pressioni */
+.panel-card.sock-card{
+  padding-bottom: 10px;
+}
+
+
 /* Empty state */
 #empty-state {
   display: none;
