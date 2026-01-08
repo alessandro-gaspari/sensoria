@@ -1,6 +1,6 @@
 /* =========================
    Base page
-   ========================= */
+========================= */
 html, body {
   margin: 0;
   padding: 0;
@@ -9,9 +9,11 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
 }
 
+* { box-sizing: border-box; }
+
 /* =========================
    Header superiore
-   ========================= */
+========================= */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
@@ -46,9 +48,7 @@ html, body {
   white-space: nowrap;
 }
 
-#connection-status.disconnected {
-  color: #ff4444;
-}
+#connection-status.disconnected { color: #ff4444; }
 
 .dot {
   width: 8px;
@@ -58,9 +58,7 @@ html, body {
   animation: pulse 2s ease-in-out infinite;
 }
 
-#connection-status.disconnected .dot {
-  background-color: #ff4444;
-}
+#connection-status.disconnected .dot { background-color: #ff4444; }
 
 #sensor-count {
   font-size: 14px;
@@ -82,7 +80,7 @@ html, body {
 
 /* =========================
    Container principale
-   ========================= */
+========================= */
 .dashboard-container {
   padding: 24px;
   max-width: 1600px;
@@ -90,37 +88,8 @@ html, body {
 }
 
 /* =========================
-   Griglia sensori
-   ========================= */
-#sensors-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 24px;
-  margin-top: 20px;
-}
-
-/* vecchi id (se li usi ancora) */
-#pressure-chart {
-  min-width: 320px;
-  width: 100%;
-  min-height: 200px;
-  height: 250px;
-  box-sizing: border-box;
-}
-
-#pressure-chart-container {
-  min-width: 320px;
-  width: 100%;
-  min-height: 230px;
-  height: auto;
-  box-sizing: border-box;
-}
-
-/* =========================
    uPlot - legenda/checkbox
-   ========================= */
-
-/* Contenitore legenda */
+========================= */
 .u-legend {
   display: flex !important;
   flex-wrap: nowrap !important;
@@ -131,7 +100,6 @@ html, body {
   overflow-x: auto;
 }
 
-/* Ogni voce */
 .u-legend .u-series {
   display: inline-flex !important;
   align-items: center !important;
@@ -140,10 +108,9 @@ html, body {
   gap: 8px !important;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
-  opacity: 1 !important; /* no dimming */
+  opacity: 1 !important;
 }
 
-/* Testo legenda = colore serie (ON + OFF) */
 .u-legend .u-series .u-label,
 .u-legend .u-series .u-value,
 .u-legend .u-series.u-off .u-label,
@@ -153,7 +120,6 @@ html, body {
   font-weight: 600 !important;
 }
 
-/* Checkbox (quadretto) = colore serie */
 .u-legend .u-marker {
   width: 16px !important;
   height: 16px !important;
@@ -163,12 +129,10 @@ html, body {
   justify-content: center !important;
   position: relative !important;
   box-sizing: border-box !important;
-
   border: 2px solid var(--u-stroke) !important;
   background: var(--u-stroke) !important;
 }
 
-/* Tick solo quando la serie è ON */
 .u-legend .u-series:not(.u-off) .u-marker::after {
   content: "✓" !important;
   color: #fff !important;
@@ -183,23 +147,244 @@ html, body {
   pointer-events: none;
 }
 
-.u-legend .u-series.u-off .u-marker::after {
-  content: none !important;
-}
+.u-legend .u-series.u-off .u-marker::after { content: none !important; }
 
-/* Quando OFF: quadretto vuoto ma col bordo serie */
 .u-legend .u-series.u-off .u-marker {
   background: transparent !important;
   border-color: var(--u-stroke) !important;
 }
 
-/* Disabilita eventuale dimming automatico uPlot */
-.uplot .u-series:not(.u-off) { opacity: 1 !important; }
-.uplot .u-series.u-off ~ .u-series { opacity: 1 !important; }
+/* =========================
+   Marker verde pulsante
+========================= */
+.pulsating-marker {
+  width: 20px;
+  height: 20px;
+  background-color: #00ff00;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }
+  70% { box-shadow: 0 0 0 20px rgba(0, 255, 0, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
+}
 
 /* =========================
-   Card sensore
-   ========================= */
+   Layout (GPS + pannelli a destra)
+========================= */
+.top-layout {
+  display: grid;
+  grid-template-columns: 1.45fr 1fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.gps-panel {
+  min-height: 520px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  overflow: hidden;
+  background: #0f0f0f;
+  position: relative;
+}
+
+#map {
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+}
+
+/* --- IMPORTANT: NON stringere le colonne a destra --- */
+.right-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* uguali come in screenshot */
+  gap: 14px;
+}
+
+.right-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Card base */
+.panel-card {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.22);
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+  padding: 14px 14px 12px 14px;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.panel-title {
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #ff6a3d;
+  text-transform: uppercase;
+  font-size: 16px;
+}
+
+.panel-subtitle {
+  margin-top: 4px;
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.panel-placeholder {
+  margin-top: 14px;
+  font-family: "Courier New", monospace;
+  font-size: 28px;
+  font-weight: 900;
+  color: rgba(255,255,255,0.65);
+}
+
+.panel-value {
+  margin-top: 10px;
+  font-family: "Courier New", monospace;
+  font-size: 34px;
+  font-weight: 900;
+  color: #97c93e;
+}
+
+/* =========================
+   ALTEZZE CARD (asse Y)
+   - 1a card per colonna = PRESSIONI (più alta)
+   - 2a/3a = ANGOLI + BONGIORNO (più basse)
+========================= */
+.right-col > .panel-card:first-child {
+  min-height: 360px; /* pressioni più grandi */
+  padding-bottom: 14px;
+}
+
+.right-col > .panel-card:nth-child(2),
+.right-col > .panel-card:nth-child(3) {
+  min-height: 110px; /* angoli + bongiorno più piccoli */
+  padding: 10px 12px;
+}
+
+/* =========================
+   Pressioni: legenda + valori
+========================= */
+.press-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.press-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.95;
+}
+
+.press-lbl::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: currentColor;
+  display: inline-block;
+}
+
+.press-lbl.p0 { color: #ffb74d; }
+.press-lbl.p1 { color: #e91e63; }
+.press-lbl.p2 { color: #4fc3f7; }
+
+/* IL PUNTO: altezza grafici pressioni (div) */
+#chart-left-p, #chart-right-p {
+  position: relative;
+  overflow: hidden;
+  height: 240px;  /* aumenta qui per “allungare” i grafici */
+}
+
+.pressure-mini-chart {
+  margin-top: 10px;
+  height: 240px;  /* fallback se usi questa classe */
+}
+
+/* Legenda mini-chart più compatta */
+.pressure-mini-chart .u-legend {
+  margin-top: -6px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* Fix overflow legenda grafici calzini */
+#chart-left-p .u-legend,
+#chart-right-p .u-legend {
+  flex-wrap: wrap !important;
+  overflow: hidden !important;
+  max-width: 100% !important;
+}
+
+#chart-left-p .u-legend .u-series,
+#chart-right-p .u-legend .u-series {
+  max-width: 100% !important;
+}
+
+/* =========================
+   IMU charts
+========================= */
+#chart-sensor-select {
+  width: 100%;
+  max-width: 260px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: #121212;
+  color: #fff;
+}
+
+#charts-container {
+  display: none;
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.imu-chart-block {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.imu-chart-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255,255,255,0.75);
+  margin-bottom: 6px;
+}
+
+#accel-chart, #gyro-chart, #mag-chart, #pressure-chart {
+  min-width: 320px;
+  width: 100%;
+  min-height: 200px;
+  height: 220px;
+}
+
+/* =========================
+   Griglia sensori (RAW)
+========================= */
+#sensors-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(420px, 1fr));
+  gap: 24px;
+  margin-top: 20px;
+}
+
 .sensor-col {
   background-color: #1a1a1a;
   border: 1px solid #333;
@@ -241,15 +426,6 @@ html, body {
 
 .sensor-data-section:last-child { border-bottom: none; }
 
-.sensor-data-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #97c93e;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
-}
-
 .sensor-data-row {
   display: flex;
   justify-content: space-between;
@@ -271,20 +447,6 @@ html, body {
   text-align: right;
 }
 
-.sensor-unit {
-  font-size: 11px;
-  color: #666;
-  margin-left: 4px;
-}
-
-.sensor-timestamp {
-  font-size: 11px;
-  color: #666;
-  margin-top: 12px;
-  display: block;
-}
-
-/* Status indicator */
 .status-indicator {
   width: 10px;
   height: 10px;
@@ -314,124 +476,6 @@ html, body {
   color: #999;
 }
 
-/* =========================
-   Marker verde pulsante
-   ========================= */
-.pulsating-marker {
-  width: 20px;
-  height: 20px;
-  background-color: #00ff00;
-  border-radius: 50%;
-  border: 3px solid #ffffff;
-  box-shadow: 0 0 0 rgba(0, 255, 0, 0.4);
-  animation: pulse-green 2s infinite;
-}
-
-@keyframes pulse-green {
-  0% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.7); }
-  70% { box-shadow: 0 0 0 20px rgba(0, 255, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 255, 0, 0); }
-}
-
-/* =========================
-   Layout screenshot (GPS + pannelli a destra)
-   ========================= */
-.top-layout {
-  display: grid;
-  grid-template-columns: 1.45fr 1fr;
-  gap: 18px;
-  align-items: stretch;
-}
-
-.gps-panel {
-  min-height: 520px;
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.10);
-  overflow: hidden;
-  background: #0f0f0f;
-  position: relative; /* overlay replay e metric cards */
-}
-
-.right-panels {
-  display: grid;
-  grid-template-columns: 1.35fr 0.65fr;
-  gap: 14px;
-}
-
-.right-col {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.panel-card {
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.10);
-  background: rgba(0,0,0,0.22);
-  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
-  padding: 14px 14px 12px 14px;
-  min-height: 190px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.pressure-mini-chart{ height: 170px; }
-
-
-.panel-title {
-  font-weight: 900;
-  letter-spacing: 0.5px;
-  color: #ff6a3d;
-  text-transform: uppercase;
-  font-size: 16px;
-}
-
-.panel-subtitle {
-  margin-top: 4px;
-  color: rgba(255,255,255,0.55);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.panel-placeholder {
-  margin-top: 14px;
-  font-family: "Courier New", monospace;
-  font-size: 28px;
-  font-weight: 900;
-  color: rgba(255,255,255,0.65);
-}
-
-.panel-value {
-  margin-top: 12px;
-  font-family: "Courier New", monospace;
-  font-size: 34px;
-  font-weight: 900;
-  color: #97c93e;
-}
-
-/* mini chart (uPlot) */
-.pressure-mini-chart {
-  margin-top: 10px;
-  height: 130px;
-}
-
-/* Nel mini-chart NON nascondere la prima serie (uPlot spesso ha una serie "x"). 
-   Se nel tuo caso la prima serie è davvero "tempo" e non la vuoi in legenda, questa regola va rimossa. */
-.pressure-mini-chart .u-legend .u-series:first-child {
-  display: inline-flex !important;
-}
-
-/* Mini-chart: legenda più compatta */
-.pressure-mini-chart .u-legend {
-  margin-top: -6px !important;
-  padding-top: 0 !important;
-  padding-bottom: 0 !important;
-}
-
-/* =========================
-   Dati raw
-   ========================= */
 .raw-section { margin-top: 18px; padding-top: 14px; }
 
 .raw-title {
@@ -442,105 +486,18 @@ html, body {
   margin: 10px 0 14px 0;
 }
 
-/* Legenda custom NON cliccabile */
-.press-legend{
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 8px;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.2px;
-}
-
-.press-lbl{
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  opacity: 0.95;
-}
-
-/* pallino colore */
-.press-lbl::before{
-  content: "";
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  background: currentColor;
-  display: inline-block;
-}
-
-/* Card calzini più grandi */
-.panel-card.sock-card{
-  min-height: 260px;
-  padding: 16px 16px 14px 16px;
-}
-
-.panel-card.sock-card .panel-value{
-  font-size: 38px; /* BI più leggibile */
-}
-
-/* Card IMU/altre più piccole */
-.panel-card.small-card{
-  min-height: 120px;
-  padding: 10px 12px;
-}
-
-.panel-card.small-card .panel-title{
-  font-size: 14px;
-}
-
-.panel-card.small-card .panel-subtitle{
-  font-size: 11px;
-}
-
-/* Colori = stroke definiti in initSockCharts(): P0 #ffb74d, P1 #e91e63, P2 #4fc3f7 */
-.press-lbl.p0{ color: #ffb74d; }
-.press-lbl.p1{ color: #e91e63; }
-.press-lbl.p2{ color: #4fc3f7; }
-
-
-/* =========================
-   Fix overflow legenda grafici calzini
-   ========================= */
-#chart-left-p, #chart-right-p {
-  position: relative;
-  overflow: hidden;
-}
-
-#chart-left-p .u-legend,
-#chart-right-p .u-legend {
-  flex-wrap: wrap !important;
-  overflow: hidden !important;
-  max-width: 100% !important;
-}
-
-#chart-left-p .u-legend .u-series,
-#chart-right-p .u-legend .u-series {
-  max-width: 100% !important;
-}
-
-/* come screenshot: 2 colonne sotto */
-#sensors-grid {
-  grid-template-columns: repeat(2, minmax(420px, 1fr));
-}
-
 /* =========================
    Responsive
-   ========================= */
+========================= */
 @media (max-width: 1100px) {
   .top-layout { grid-template-columns: 1fr; }
   .gps-panel { min-height: 420px; }
-  #sensors-grid { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 1024px) {
+  #map { min-height: 420px; }
   #sensors-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
   .dashboard-header { flex-direction: column; align-items: flex-start; }
-  .dashboard-info { width: 100%; justify-content: space-between; }
-  #sensors-grid { grid-template-columns: 1fr; }
+  .dashboard-info { width: 100%; justify-content: space-between; flex-wrap: wrap; }
+  .right-panels { grid-template-columns: 1fr; }
 }
