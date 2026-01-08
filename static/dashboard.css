@@ -354,7 +354,7 @@ html, body {
 
 .right-panels {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.35fr 0.65fr;
   gap: 14px;
 }
 
@@ -370,11 +370,14 @@ html, body {
   background: rgba(0,0,0,0.22);
   box-shadow: 0 10px 26px rgba(0,0,0,0.35);
   padding: 14px 14px 12px 14px;
-  min-height: 150px;
+  min-height: 190px;
   display: flex;
   flex-direction: column;
   justify-content: center;
 }
+
+.pressure-mini-chart{ height: 170px; }
+
 
 .panel-title {
   font-weight: 900;
@@ -466,6 +469,30 @@ html, body {
   border-radius: 3px;
   background: currentColor;
   display: inline-block;
+}
+
+/* Card calzini più grandi */
+.panel-card.sock-card{
+  min-height: 260px;
+  padding: 16px 16px 14px 16px;
+}
+
+.panel-card.sock-card .panel-value{
+  font-size: 38px; /* BI più leggibile */
+}
+
+/* Card IMU/altre più piccole */
+.panel-card.small-card{
+  min-height: 120px;
+  padding: 10px 12px;
+}
+
+.panel-card.small-card .panel-title{
+  font-size: 14px;
+}
+
+.panel-card.small-card .panel-subtitle{
+  font-size: 11px;
 }
 
 /* Colori = stroke definiti in initSockCharts(): P0 #ffb74d, P1 #e91e63, P2 #4fc3f7 */

@@ -1096,7 +1096,7 @@ function enterReplayAtSecond(sec) {
   updateSpeedDistanceUI(speed, dist);
 
   // 6) calzini: finestra zoom + valori istantanei
-  const windowHalf = 5;
+  const windowHalf = 2;
   const tMin = Math.max(0, clampedSec - windowHalf);
   const tMax = tMin + windowHalf * 2;
 
@@ -1301,6 +1301,13 @@ function updateSocksUI(side, data, bi) {
       d[3].push(val2);
       if (d[0].length > 100) d.forEach((a) => a.shift());
       chart.setData(d);
+      // ZOOM live: mostra solo gli ultimi N secondi
+      const N = 4; // prova 3 / 4 / 5 (più piccolo = più zoom)
+      const xMax = d[0].length ? d[0][d[0].length - 1] : 0;
+      const xMin = Math.max(0, xMax - N);
+
+      chart.setScale("x", { min: xMin, max: xMax });
+      chart.redraw();
     }
   }
 }
