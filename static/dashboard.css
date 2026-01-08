@@ -518,7 +518,7 @@ html, body {
    Responsive
 ========================= */
 @media (max-width: 1100px) {
-  .top-layout { grid-template-columns: 1fr; }
+  .top-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .gps-panel { min-height: 420px; }
   #map { min-height: 420px; }
   #sensors-grid { grid-template-columns: 1fr; }
