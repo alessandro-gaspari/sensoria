@@ -1780,6 +1780,12 @@ async function openLogsModal() {
       </div>
       <div style="padding:14px 16px">
         <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:10px">Caricamento lista...</div>
+        <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:10px">Caricamento lista...</div>
+        <!-- PROGRESS -->
+        <div id="logs-progress-wrap" style="height:10px;background:#222;border:1px solid #333;border-radius:999px;overflow:hidden">
+          <div id="logs-progress-bar" style="height:100%;width:0%;background:#97c93e;transition:width .12s linear"></div>
+        </div>
+        <div id="logs-progress-pct" style="margin-top:6px;color:#777;font-size:11px">0%</div>
         <div id="logs-list" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto"></div>
       </div>
     </div>
@@ -1869,38 +1875,59 @@ function resetReplayState() {
 }
 
 async function loadPastActivity(logName) {
+  // helper: safe yield UI
+  const yieldUI = () => new Promise((r) => setTimeout(r, 0));
+
   try {
-    // --- helper UI status (se la modale è aperta) ---
+    // --- helper UI status/progress (se la modale è aperta) ---
     const statusEl = document.getElementById("logs-status");
+    const barEl = document.getElementById("logs-progress-bar");
+    const pctEl = document.getElementById("logs-progress-pct");
+
     const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+    const setProgress = (p) => {
+      const v = Math.max(0, Math.min(100, Number(p) || 0));
+      if (barEl) barEl.style.width = v.toFixed(1) + "%";
+      if (pctEl) pctEl.textContent = Math.round(v) + "%";
+    };
 
     setStatus(`Caricamento ${logName}...`);
+    setProgress(1);
 
-    // --- fetch log ---
+    // --- fetch log (UNA SOLA VOLTA) ---
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
+    setProgress(6);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
+    setProgress(12);
 
     // --- PROFILO (da log) ---
+    setStatus("Parsing profilo...");
     const profArr = Array.isArray(data.profile) ? data.profile : [];
     if (profArr.length) {
-      // prendi l'ultimo profilo (per t o timestamp)
       const lastProf = profArr.reduce((best, p) => {
-        const bt = best?.t ? Number(best.t) : (best?.timestamp ? new Date(best.timestamp).getTime() : -Infinity);
-        const pt = p?.t ? Number(p.t) : (p?.timestamp ? new Date(p.timestamp).getTime() : -Infinity);
+        const bt = (best && best.t != null) ? Number(best.t)
+          : (best && best.timestamp) ? new Date(best.timestamp).getTime()
+          : -Infinity;
+
+        const pt = (p && p.t != null) ? Number(p.t)
+          : (p && p.timestamp) ? new Date(p.timestamp).getTime()
+          : -Infinity;
+
         return pt >= bt ? p : best;
       }, profArr[0]);
 
-      updateProfileUI(lastProf); // aggiorna #profile-name-header e #profile-meta-header
+      updateProfileUI(lastProf);
     } else {
-      // opzionale: reset UI profilo
       const nameEl = document.getElementById("profile-name-header");
       const metaEl = document.getElementById("profile-meta-header");
       if (nameEl) nameEl.textContent = "--";
       if (metaEl) metaEl.textContent = "Peso -- kg  Et --";
     }
+    setProgress(18);
 
-
-    // 1) Reset stati/array
+    // --- 1) Reset stati/array (replay) ---
+    setStatus("Reset stato...");
     gpsSamples = [];
     bpmSamples = [];
     speedBySec = [];
@@ -1923,46 +1950,55 @@ async function loadPastActivity(logName) {
     lastSecFix = null;
     lastLiveBpm = "--";
 
+    // pulizia route precedenti (se esistono)
+    if (typeof clearFullRouteSegments === "function") clearFullRouteSegments();
+    if (typeof clearProgressRouteSegments === "function") clearProgressRouteSegments();
 
     updateBpmValue("--");
     updateSpeedDistanceUI(null, null);
+    setProgress(22);
 
-    // 2) Sensori calzini
+    // --- 2) Sensori calzini (costruisce anche sockChartData) ---
     setStatus("Parsing sensori...");
     const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
 
-    if (sensorsData.length > 0) {
-      // calcola sessionStartTimeMs robusto
-      const firstSensor = sensorsData[0];
-      const initialT =
-        firstSensor.t ? Number(firstSensor.t) :
-        firstSensor.timestamp ? new Date(firstSensor.timestamp).getTime() :
-        Date.now();
+    const getTimeMs = (obj) => {
+      if (!obj || typeof obj !== "object") return null;
+      if (obj.t != null) {
+        const n = Number(obj.t);
+        if (Number.isFinite(n)) return n;
+      }
+      if (obj.timestamp) {
+        const d = new Date(obj.timestamp);
+        const ms = d.getTime();
+        if (!Number.isNaN(ms)) return ms;
+      }
+      return null;
+    };
 
-      sessionStartTimeMs = sensorsData.reduce((min, item) => {
-        const t =
-          item.t ? Number(item.t) :
-          item.timestamp ? new Date(item.timestamp).getTime() :
-          null;
-        if (!t || !isFinite(t)) return min;
-        return t < min ? t : min;
-      }, initialT);
+    // scegli un sessionStartTimeMs sensato (se possibile) prima dei tRelSec
+    const firstSensorT = sensorsData.length ? getTimeMs(sensorsData[0]) : null;
+    const firstGpsT = (Array.isArray(data.gps) && data.gps.length) ? getTimeMs(data.gps[0]) : null;
+    const firstBpmT = (Array.isArray(data.bpm) && data.bpm.length) ? getTimeMs(data.bpm[0]) : null;
+
+    const candidates = [firstSensorT, firstGpsT, firstBpmT].filter((x) => Number.isFinite(x));
+    if (candidates.length) sessionStartTimeMs = Math.min(...candidates);
+
+    if (sensorsData.length > 0) {
+      // se ancora null (timestamp strani), fallback su primo sensore
+      if (sessionStartTimeMs == null && firstSensorT != null) sessionStartTimeMs = firstSensorT;
 
       sensorsData.forEach((sensorItem) => {
-        const tMs =
-          sensorItem.t ? Number(sensorItem.t) :
-          sensorItem.timestamp ? new Date(sensorItem.timestamp).getTime() :
-          null;
-        if (!tMs || !isFinite(tMs)) return;
+        const tMs = getTimeMs(sensorItem);
+        if (!tMs || !Number.isFinite(tMs)) return;
 
+        if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
 
-        // SUPPORTA: sensor_name, sensorname, name
         const name = String(
           sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown"
         ).toLowerCase();
 
-        // SUPPORTA: pressure_0, p0, pressure0 (ecc.)
         const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
         const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? sensorItem.pressure1 ?? 0);
         const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? sensorItem.pressure2 ?? 0);
@@ -1986,77 +2022,89 @@ async function loadPastActivity(logName) {
       });
     }
 
-    // 3) GPS bulk-load (NO map/UI per ogni punto)
+    setProgress(35);
+    await yieldUI();
+
+    // --- 3) GPS bulk-load con progress reale ---
     setStatus("Parsing GPS...");
     const gpsArr = Array.isArray(data.gps) ? data.gps : [];
-    if (gpsArr.length === 0) {
-      console.warn("Nessun GPS nel log.");
+    if (!gpsArr.length) {
       setStatus("Nessun GPS nel log.");
+      setProgress(100);
       return;
     }
 
     isBulkLoading = true;
 
-    // Chunking per non freezare (log grandi)
     const CHUNK = 1000;
     for (let i = 0; i < gpsArr.length; i += CHUNK) {
       const end = Math.min(i + CHUNK, gpsArr.length);
+
+      const frac = gpsArr.length ? (end / gpsArr.length) : 1;
+      setProgress(35 + frac * 45); // 35% -> 80%
+
       setStatus(`Parsing GPS... ${end}/${gpsArr.length}`);
+
       for (let j = i; j < end; j++) {
-        // usa la tua onGpsUpdate già robusta (accetta più formati)
-        onGpsUpdate(gpsArr[j]);
+        // onGpsUpdate già gestisce più formati e con isBulkLoading evita UI/map per punto
+        onGpsUpdate(gpsArr[j], { updateUi: false, updateMap: false });
       }
-      // yield UI
-      await new Promise((r) => setTimeout(r, 0));
+
+      await yieldUI();
     }
 
     isBulkLoading = false;
+    setProgress(82);
 
-    // 4) BPM
+    // --- 4) BPM ---
     setStatus("Parsing BPM...");
-    if (Array.isArray(data.bpm)) {
-      data.bpm.forEach((b) => {
-        const tMs =
-          b.t ? Number(b.t) :
-          b.timestamp ? new Date(b.timestamp).getTime() :
-          null;
-        if (!tMs || !isFinite(tMs)) return;
-        bpmSamples.push({ t: tMs, bpm: b.bpm ?? b.value ?? 0 });
+    const bpmArr = Array.isArray(data.bpm) ? data.bpm : [];
+    if (bpmArr.length) {
+      bpmArr.forEach((b) => {
+        const tMs = getTimeMs(b);
+        if (!tMs || !Number.isFinite(tMs)) return;
+        const v = Number(b.bpm ?? b.value ?? b.heartrate ?? 0);
+        bpmSamples.push({ t: tMs, bpm: Number.isFinite(v) ? v : 0 });
       });
     }
+    setProgress(88);
+    await yieldUI();
 
-    // 5) UI/Grafici calzini una volta
+    // --- 5) Rendering grafici calzini ---
     setStatus("Rendering grafici calzini...");
     initSockCharts();
     if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
     if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
+    setProgress(92);
+    await yieldUI();
 
-    // 6 MAPPA: aggiorna UNA volta sola route completa + marker
+    // --- 6) Rendering mappa/route UNA volta ---
     setStatus("Rendering mappa...");
-
     if (gpsSamples.length) {
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
 
-      // ricostruisci la full route colorata (downsample 2m per non creare 50k punti)
+      // route completa colorata (downsample metri)
       rebuildColoredFullRouteFromGpsSamples(2.0);
-
 
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
+    setProgress(96);
+    await yieldUI();
 
-
-    // 7) Bounds + overlay replay una volta
+    // --- 7) Finalizzazione replay ---
     setStatus("Finalizzazione replay...");
     sessionEndTimeMs = getSessionEndMs();
+    rebuildSpeedBySecFromGps();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
-    rebuildSpeedBySecFromGps();
 
-    // vai all'inizio attività
+    // vai all'inizio attività (entra in replay mode)
     enterReplayAtSecond(0);
 
+    setProgress(100);
     setStatus("Caricato.");
+
     console.log(
       "✅ Log caricato:",
       logName,
@@ -2068,8 +2116,14 @@ async function loadPastActivity(logName) {
   } catch (error) {
     isBulkLoading = false;
     console.error("Errore durante il caricamento dell'attività:", error);
+
     const statusEl = document.getElementById("logs-status");
     if (statusEl) statusEl.textContent = "Errore durante il caricamento dell'attività.";
+
+    const barEl = document.getElementById("logs-progress-bar");
+    const pctEl = document.getElementById("logs-progress-pct");
+    if (barEl) barEl.style.width = "0%";
+    if (pctEl) pctEl.textContent = "0%";
   }
 }
 
