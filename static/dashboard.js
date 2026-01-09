@@ -296,6 +296,7 @@ document.addEventListener("DOMContentLoaded", function () {
   ensureMapDomOverlay();
   ensureMetricsCardsUI();
   initPastActivityLoader();
+  ensureProfileCardUI();
 
   if (!biAvgTimer) {
     biAvgTimer = setInterval(() => {
@@ -338,6 +339,123 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 });
+
+// ===== PROFILE CARD (bottom-right on map) =====
+const PROFILECARDW = 240;
+const PROFILECARDH = 70;
+
+let lastProfile = { name: "--", weightKg: null, age: null };
+
+function ensureProfileCardUI() {
+  const mapDiv = document.getElementById("map");
+  if (!mapDiv) return;
+
+  // serve per gli overlay assoluti
+  mapDiv.style.position = "relative";
+
+  let wrap = document.getElementById("profile-card-wrap");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.id = "profile-card-wrap";
+    wrap.style.cssText = [
+      "position:absolute",
+      "right:16px",
+      "bottom:16px",
+      "z-index:25000",
+      "pointer-events:none",
+      "display:flex",
+      "justify-content:flex-end",
+    ].join(";");
+    mapDiv.appendChild(wrap);
+  }
+
+  if (!document.getElementById("profile-card")) {
+    const card = document.createElement("div");
+    card.id = "profile-card";
+    card.style.cssText = [
+      `width:${PROFILECARDW}px`,
+      `height:${PROFILECARDH}px`,
+      "box-sizing:border-box",
+      "border-radius:12px",
+      "padding:10px 12px",
+      "display:flex",
+      "align-items:center",
+      "gap:12px",
+      "background:rgba(0,0,0,0.35)",
+      "border:1px solid rgba(151,201,62,0.70)",
+      "box-shadow:0 10px 22px rgba(0,0,0,0.45)",
+      "overflow:hidden",
+      "pointer-events:auto",
+    ].join(";");
+
+    card.innerHTML = `
+      <div style="font-size:24px;line-height:1;width:34px;text-align:center">👤</div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0">
+        <div id="profile-name"
+             style="font-size:13px;font-weight:900;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          --
+        </div>
+        <div id="profile-meta"
+             style="font-size:10px;font-weight:800;letter-spacing:0.8px;color:rgba(151,201,62,0.95);text-transform:uppercase">
+          Peso -- kg • Età --
+        </div>
+      </div>`;
+    wrap.appendChild(card);
+  }
+
+  updateProfileCardUI(lastProfile);
+  updateProfileCardPosition();
+}
+
+function updateProfileCardPosition() {
+  const wrap = document.getElementById("profile-card-wrap");
+  if (!wrap) return;
+
+  // Evita overlap con il replay overlay che sta bottom:16px e full-width. [file:98]
+  const overlay = document.getElementById("replay-overlay");
+  const overlayVisible = overlay && overlay.style.display !== "none";
+  wrap.style.bottom = overlayVisible ? "92px" : "16px";
+}
+
+function updateProfileCardUI(p) {
+  const nameEl = document.getElementById("profile-name");
+  const metaEl = document.getElementById("profile-meta");
+  if (!nameEl || !metaEl) return;
+
+  const name = (p && p.name) ? String(p.name) : "--";
+  const w = (p && Number.isFinite(p.weightKg)) ? `${Math.round(p.weightKg)} kg` : "-- kg";
+  const a = (p && Number.isFinite(p.age)) ? `${Math.round(p.age)}` : "--";
+
+  nameEl.textContent = name;
+  metaEl.textContent = `Peso ${w} • Età ${a}`;
+}
+
+// Sostituisci il placeholder che hai già:
+function updateProfileUI(data) {
+  if (!data || typeof data !== "object") return;
+
+  const name =
+    data.name ?? data.user_name ?? data.username ?? data.user ?? data.athlete ?? data.nome ?? "--";
+
+  const weightKgRaw =
+    data.weightKg ?? data.weight ?? data.peso_kg ?? data.peso;
+
+  const ageRaw =
+    data.age ?? data.eta ?? data["età"];
+
+  const weightKg = Number(weightKgRaw);
+  const age = Number(ageRaw);
+
+  lastProfile = {
+    name: String(name),
+    weightKg: Number.isFinite(weightKg) ? weightKg : null,
+    age: Number.isFinite(age) ? age : null,
+  };
+
+  ensureProfileCardUI();
+  updateProfileCardUI(lastProfile);
+}
+
 
 // ==========================================
 // SOCKET
@@ -800,6 +918,7 @@ function ensureMapInitialized(lat, lng) {
   createReplayOverlayControls();
   createRotateControl();
   ensureMetricsCardsUI();
+  ensureProfileCardUI();
 
   isMapInitialized = true;
   setTimeout(() => map.invalidateSize(), 120);
@@ -1009,6 +1128,7 @@ function updateReplayTimeLabel(sec) {
 }
 
 function showReplayOverlayIfReady() {
+  updateProfileCardPosition();
   var overlay = document.getElementById("replay-overlay");
   if (!overlay) return;
   if (getDurationSec() > 0 && gpsSamples.length >= 1) {
@@ -1339,7 +1459,7 @@ function processIncomingData(data) {
 }
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
-const BI_LATERAL_AXIS = 'z';
+const BILATERAL_AXIS = 'z';
 const BI_AVG_WINDOW_MS = 850;
 
 const biAgg = {
@@ -1404,7 +1524,7 @@ function updateSocksUI(side, data, bi) {
   // BI (Balance Index) - se hai questo dato
   const biEl = document.getElementById(`bi-val-${side}`);
   if (biEl) {
-    biEl.textContent = `BI: ${bi.toFixed(1)}`;
+    biEl.textContent = `BI: ${bi.toFixed(1)}%`;
     biEl.style.color = bi > 40 ? "#ff4444" : SENSORIA_GREEN;
   }
 
