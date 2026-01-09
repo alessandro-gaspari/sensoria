@@ -1761,92 +1761,112 @@ async function openLogsModal() {
 
   const modal = document.createElement("div");
   modal.id = "logs-modal";
-  modal.style.cssText = `
-    position:fixed;
-    inset:0;
-    z-index:99999;
-    background:rgba(0,0,0,0.65);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:18px;
-  `;
+  modal.style.cssText =
+    "position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.65);" +
+    "display:flex; align-items:center; justify-content:center; padding:18px;";
 
+  // NOTA: qui dentro ci DEVONO essere logs-status e logs-list
   modal.innerHTML = `
-    <div style="width:min(620px,96vw);background:#111;border:1px solid #333;border-radius:14px; box-shadow:0 18px 48px rgba(0,0,0,0.65);overflow:hidden">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid #222">
-        <div style="font-weight:900;color:#fff">Carica attività passata</div>
-        <button id="logs-close" style="background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer">✕</button>
-      </div>
-      <div style="padding:14px 16px">
-      <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:8px">
-        Caricamento lista...
+    <div style="width:min(620px,96vw); background:#111; border:1px solid #333; border-radius:14px;
+                box-shadow:0 18px 48px rgba(0,0,0,0.65); overflow:hidden;">
+      <div style="display:flex; justify-content:space-between; align-items:center;
+                  padding:14px 16px; border-bottom:1px solid #222;">
+        <div style="font-weight:900; color:#fff;">Carica attività passata</div>
+        <button id="logs-close" style="background:transparent; color:#fff; border:0;
+                                       font-size:18px; cursor:pointer;">✕</button>
       </div>
 
-      <div id="logs-progress-container"
-          style="display:none; margin-top:4px; margin-bottom:4px;">
-        <div id="logs-progress-wrap"
-            style="height:10px;background:#222;border:1px solid #333;border-radius:999px;overflow:hidden">
-          <div id="logs-progress-bar"
-              style="height:100%;width:0%;background:#97c93e;transition:width .12s linear"></div>
+      <div style="padding:14px 16px;">
+        <div id="logs-status" style="color:#aaa; font-size:12px; margin-bottom:8px;">
+          Caricamento lista...
         </div>
-        <div id="logs-progress-pct" style="margin-top:4px;color:#777;font-size:11px">0%</div>
-      </div>
 
+        <!-- PROGRESS (nascosto finché non clicchi un log) -->
+        <div id="logs-progress-container" style="display:none; margin-bottom:10px;">
+          <div style="height:10px; background:#222; border:1px solid #333; border-radius:999px; overflow:hidden;">
+            <div id="logs-progress-bar" style="height:100%; width:0%; background:#97c93e;"></div>
+          </div>
+          <div id="logs-progress-pct" style="margin-top:4px; color:#777; font-size:11px;">0%</div>
+        </div>
+
+        <div id="logs-list" style="display:flex; flex-direction:column; gap:8px; max-height:55vh; overflow:auto;"></div>
+      </div>
+    </div>
   `;
 
+  // chiudi cliccando fuori
   modal.addEventListener("click", (e) => {
     if (e.target === modal) modal.remove();
   });
 
   document.body.appendChild(modal);
-  document.getElementById("logs-close").onclick = () => modal.remove();
 
-  const status = document.getElementById("logs-status");
-  const list = document.getElementById("logs-list");
+  // query SOLO dentro la modale (robusto)
+  const closeBtn = modal.querySelector("#logs-close");
+  const status = modal.querySelector("#logs-status");
+  const list = modal.querySelector("#logs-list");
+  const progressContainer = modal.querySelector("#logs-progress-container");
+
+  if (closeBtn) closeBtn.onclick = () => modal.remove();
+
+  // se manca qualcosa, evita crash
+  if (!status || !list) {
+    console.error("openLogsModal: logs-status o logs-list non trovati nella modale.");
+    return;
+  }
 
   try {
     const resp = await fetch("/api/logs");
     const json = await resp.json();
-    const logs = Array.isArray(json) ? json : json.logs || [];
+    const logs = Array.isArray(json) ? json : (json.logs || []);
 
-    status.textContent = logs.length ? "Seleziona un log:" : "Nessun log trovato.";
+    status.textContent = logs.length ? "Seleziona un log" : "Nessun log trovato.";
     list.innerHTML = "";
 
     logs.forEach((item) => {
       const row = document.createElement("button");
       row.type = "button";
-      row.style.cssText = `
-        text-align:left;
-        padding:10px 12px;
-        border-radius:10px;
-        border:1px solid #2a2a2a;
-        background:#161616;
-        color:#fff;
-        cursor:pointer;
-      `;
+      row.style.cssText =
+        "text-align:left; padding:10px 12px; border-radius:10px; border:1px solid #2a2a2a;" +
+        "background:#161616; color:#fff; cursor:pointer;";
 
       const dt = item.mtime ? new Date(item.mtime * 1000).toLocaleString() : "--";
       const kb = item.size != null ? Math.round(item.size / 1024) : "--";
 
       row.innerHTML = `
-        <div style="font-weight:800">${item.name}</div>
-        <div style="font-size:12px;color:#999;margin-top:2px">${dt} · ${kb} KB</div>
+        <div style="font-weight:800;">${item.name}</div>
+        <div style="font-size:12px; color:#999; margin-top:2px;">${dt} · ${kb} KB</div>
       `;
 
       row.onclick = async () => {
+        // mostra progress SOLO ora (quando clicchi)
+        if (progressContainer) progressContainer.style.display = "block";
+
+        // disabilita lista per evitare multi-click
+        Array.from(list.querySelectorAll("button")).forEach((b) => (b.disabled = true));
+
         status.textContent = `Caricamento ${item.name}...`;
-        await loadPastActivity(item.name);
-        modal.remove();
+
+        try {
+          await loadPastActivity(item.name);   // qui userai la tua progress bar dentro loadPastActivity
+          modal.remove();                      // chiudi solo a fine load
+        } catch (e) {
+          console.error(e);
+          status.textContent = "Errore nel caricamento del log.";
+          // riabilita lista
+          Array.from(list.querySelectorAll("button")).forEach((b) => (b.disabled = false));
+          if (progressContainer) progressContainer.style.display = "none";
+        }
       };
 
       list.appendChild(row);
     });
   } catch (e) {
-    status.textContent = "Errore nel caricamento lista log.";
     console.error(e);
+    status.textContent = "Errore nel caricamento lista log.";
   }
 }
+
 
 function resetReplayState() {
   gpsSamples = [];
@@ -1881,151 +1901,303 @@ function resetReplayState() {
 async function loadPastActivity(logName) {
   const yieldUI = () => new Promise((r) => setTimeout(r, 0));
 
+  // --- UI progress (dentro la modale) ---
+  const statusEl = document.getElementById("logs-status");
+  const contEl = document.getElementById("logs-progress-container");
+  const barEl = document.getElementById("logs-progress-bar");
+  const pctEl = document.getElementById("logs-progress-pct");
+
+  const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
+  const setProgress = (p) => {
+    const v = Math.max(0, Math.min(100, Number(p) || 0));
+    if (barEl) barEl.style.width = v.toFixed(1) + "%";
+    if (pctEl) pctEl.textContent = Math.round(v) + "%";
+  };
+
+  // --- helpers parsing (stream log) ---
+  const extractJsonFromLine = (line) => {
+    if (!line) return null;
+    const a = line.indexOf("{");
+    const b = line.lastIndexOf("}");
+    if (a < 0 || b <= a) return null;
+    try { return JSON.parse(line.slice(a, b + 1)); } catch { return null; }
+  };
+
+  const parseTimeMs = (obj) => {
+    if (!obj || typeof obj !== "object") return null;
+
+    const numToMs = (n) => (n < 1e12 ? Math.round(n * 1000) : Math.round(n));
+
+    for (const k of ["t", "time", "ts"]) {
+      if (obj[k] != null) {
+        const v = obj[k];
+        if (typeof v === "number" && Number.isFinite(v)) return numToMs(v);
+        if (typeof v === "string" && v.trim().match(/^\d+(\.\d+)?$/)) return numToMs(Number(v));
+      }
+    }
+
+    if (obj.timestamp) {
+      const d = new Date(obj.timestamp);
+      const ms = d.getTime();
+      if (!Number.isNaN(ms)) return ms;
+    }
+
+    return null;
+  };
+
+  const getLastByTime = (arr) => {
+    if (!arr || !arr.length) return null;
+    return arr.reduce((best, cur) => {
+      const bt = (best && best.t != null) ? Number(best.t)
+        : (best && best.timestamp) ? new Date(best.timestamp).getTime()
+        : -Infinity;
+      const ct = (cur && cur.t != null) ? Number(cur.t)
+        : (cur && cur.timestamp) ? new Date(cur.timestamp).getTime()
+        : -Infinity;
+      return ct >= bt ? cur : best;
+    }, arr[0]);
+  };
+
+  const normSensorItem = (x) => {
+    if (!x || typeof x !== "object") return x;
+    // normalizza alias più comuni (minimo indispensabile per calculateBI / pressioni)
+    const o = { ...x };
+    if (o.accelx == null && o.accel_x != null) o.accelx = o.accel_x;
+    if (o.accely == null && o.accel_y != null) o.accely = o.accel_y;
+    if (o.accelz == null && o.accel_z != null) o.accelz = o.accel_z;
+
+    if (o.gyrox == null && o.gyro_x != null) o.gyrox = o.gyro_x;
+    if (o.gyroy == null && o.gyro_y != null) o.gyroy = o.gyro_y;
+    if (o.gyroz == null && o.gyro_z != null) o.gyroz = o.gyro_z;
+
+    if (o.magx == null && o.mag_x != null) o.magx = o.mag_x;
+    if (o.magy == null && o.mag_y != null) o.magy = o.mag_y;
+    if (o.magz == null && o.mag_z != null) o.magz = o.mag_z;
+
+    if (o.pressure0 == null && o.pressure_0 != null) o.pressure0 = o.pressure_0;
+    if (o.pressure1 == null && o.pressure_1 != null) o.pressure1 = o.pressure_1;
+    if (o.pressure2 == null && o.pressure_2 != null) o.pressure2 = o.pressure_2;
+
+    return o;
+  };
+
   try {
-    // UI elementi
-    const statusEl = document.getElementById("logs-status");
-    const contEl   = document.getElementById("logs-progress-container");
-    const barEl    = document.getElementById("logs-progress-bar");
-    const pctEl    = document.getElementById("logs-progress-pct");
-
-    const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
-    const setProgress = (p) => {
-      const v = Math.max(0, Math.min(100, Number(p) || 0));
-      if (barEl) barEl.style.width = v + "%";
-      if (pctEl) pctEl.textContent = Math.round(v) + "%";
-    };
-
-    // mostra barra SOLO durante il caricamento
+    // mostra barra solo DURANTE load
     if (contEl) contEl.style.display = "block";
     setProgress(0);
     setStatus(`Caricamento ${logName}...`);
 
-    // fetch (qui la UI può bloccare finché non arriva la risposta, è normale)
-    const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();  // JSON parsing: breve rispetto al loop GPS
-    setProgress(10);
+    // ============================================================
+    // 1) DOWNLOAD + PARSE (stream se disponibile)
+    // ============================================================
+    const data = { name: logName, gps: [], bpm: [], profile: [], sensors: [] };
 
-    // --- PROFILO ---
-    setStatus("Parsing profilo...");
-    const profArr = Array.isArray(data.profile) ? data.profile : [];
-    if (profArr.length) {
-      const lastProf = profArr.reduce((best, p) => {
-        const bt = (best && best.t != null) ? Number(best.t)
-          : (best && best.timestamp) ? new Date(best.timestamp).getTime()
-          : -Infinity;
-        const pt = (p && p.t != null) ? Number(p.t)
-          : (p && p.timestamp) ? new Date(p.timestamp).getTime()
-          : -Infinity;
-        return pt >= bt ? p : best;
-      }, profArr[0]);
-      updateProfileUI(lastProf);
-    } else {
-      const nameEl = document.getElementById("profile-name-header");
-      const metaEl = document.getElementById("profile-meta-header");
-      if (nameEl) nameEl.textContent = "--";
-      if (metaEl) metaEl.textContent = "Peso -- kg  Et --";
-    }
-    setProgress(18);
+    let usedStreaming = false;
 
-    // --- RESET stato ---
-    setStatus("Reset stato...");
-    gpsSamples = [];
-    bpmSamples = [];
-    speedBySec = [];
-    secPos = [];
+    // prova streaming
+    try {
+      setStatus(`Download ${logName}...`);
+      const resp = await fetch(`/api/logs/raw?name=${encodeURIComponent(logName)}`);
 
-    leftSockSamples = [];
-    rightSockSamples = [];
-    sockChartData.left = [[], [], [], []];
-    sockChartData.right = [[], [], [], []];
+      if (resp.ok && resp.body) {
+        usedStreaming = true;
 
-    sessionStartTimeMs = null;
-    sessionEndTimeMs = null;
-    isReplayMode = false;
+        const total =
+          Number(resp.headers.get("Content-Length")) ||
+          Number(resp.headers.get("X-Total-Bytes")) ||
+          0;
 
-    gpsTimeUnit = null;
-    lastGpsTRaw = null;
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
 
-    lastSpeedKmh = 0;
-    lastSpeedSec = null;
-    lastSecFix = null;
-    lastLiveBpm = "--";
+        let received = 0;
+        let buf = "";
 
-    if (typeof clearFullRouteSegments === "function") clearFullRouteSegments();
-    if (typeof clearProgressRouteSegments === "function") clearProgressRouteSegments();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
 
-    updateBpmValue("--");
-    updateSpeedDistanceUI(null, null);
-    setProgress(22);
+          received += value.byteLength;
 
-    const getTimeMs = (obj) => {
-      if (!obj || typeof obj !== "object") return null;
-      if (obj.t != null) {
-        const n = Number(obj.t);
-        if (Number.isFinite(n)) return n;
-      }
-      if (obj.timestamp) {
-        const d = new Date(obj.timestamp);
-        const ms = d.getTime();
-        if (!Number.isNaN(ms)) return ms;
-      }
-      return null;
-    };
+          // 0..55% durante download
+          if (total > 0) setProgress(Math.min(55, (received / total) * 55));
 
-    // --- SENSORS (calzini) ---
-    setStatus("Parsing sensori...");
-    const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
+          buf += decoder.decode(value, { stream: true });
 
-    const firstSensorT = sensorsData.length ? getTimeMs(sensorsData[0]) : null;
-    const firstGpsT = (Array.isArray(data.gps) && data.gps.length) ? getTimeMs(data.gps[0]) : null;
-    const firstBpmT = (Array.isArray(data.bpm) && data.bpm.length) ? getTimeMs(data.bpm[0]) : null;
-    const candidates = [firstSensorT, firstGpsT, firstBpmT].filter((x) => Number.isFinite(x));
-    if (candidates.length) sessionStartTimeMs = Math.min(...candidates);
+          const lines = buf.split(/\r?\n/);
+          buf = lines.pop() || "";
 
-    if (sensorsData.length > 0) {
-      if (sessionStartTimeMs == null && firstSensorT != null) sessionStartTimeMs = firstSensorT;
+          for (const line of lines) {
+            const obj = extractJsonFromLine(line);
+            if (!obj) continue;
 
-      sensorsData.forEach((sensorItem) => {
-        const tMs = getTimeMs(sensorItem);
-        if (!tMs || !Number.isFinite(tMs)) return;
+            const tMs = parseTimeMs(obj);
+            if (tMs != null) obj.t = tMs;
 
-        if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
-        const tRelSec = (tMs - sessionStartTimeMs) / 1000;
+            // BPM
+            if (obj.bpm != null || obj.heartrate != null) {
+              const v = Number(obj.bpm ?? obj.heartrate);
+              if (Number.isFinite(v) && v > 0) data.bpm.push({ t: obj.t, bpm: v });
+              continue;
+            }
 
-        const name = String(
-          sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.name ?? "unknown"
-        ).toLowerCase();
+            // GPS
+            if (obj.latitude != null && obj.longitude != null) {
+              data.gps.push(obj);
+              continue;
+            }
 
-        const p0 = Number(sensorItem.pressure_0 ?? sensorItem.p0 ?? sensorItem.pressure0 ?? 0);
-        const p1 = Number(sensorItem.pressure_1 ?? sensorItem.p1 ?? sensorItem.pressure1 ?? 0);
-        const p2 = Number(sensorItem.pressure_2 ?? sensorItem.p2 ?? sensorItem.pressure2 ?? 0);
+            // PROFILO
+            const isProfile =
+              obj.sensor_name === "PROFILE_INFO" ||
+              (obj.name != null && (obj.age != null || obj.eta != null || obj.weight != null || obj.weightKg != null || obj.peso != null));
+            if (isProfile) {
+              data.profile.push(obj);
+              continue;
+            }
 
-        const biInst = calculateBI(sensorItem);
-        const sample = { t: tMs, p0, p1, p2, bi: biInst };
+            // SENSORI (imu/pressure)
+            const isSensor =
+              (obj.accelx != null || obj.accel_x != null) ||
+              (obj.gyrox != null || obj.gyro_x != null) ||
+              (obj.magx != null || obj.mag_x != null) ||
+              (obj.pressure0 != null || obj.pressure_0 != null || obj.p0 != null);
+            if (isSensor) {
+              data.sensors.push(normSensorItem(obj));
+              continue;
+            }
+          }
 
-        if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
-          leftSockSamples.push(sample);
-          sockChartData.left[0].push(tRelSec);
-          sockChartData.left[1].push(p0);
-          sockChartData.left[2].push(p1);
-          sockChartData.left[3].push(p2);
-        } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
-          rightSockSamples.push(sample);
-          sockChartData.right[0].push(tRelSec);
-          sockChartData.right[1].push(p0);
-          sockChartData.right[2].push(p1);
-          sockChartData.right[3].push(p2);
+          // lascia respirare UI durante download+parse
+          await yieldUI();
         }
-      });
+
+        // flush decoder finale (in genere buf rimane solo parziale/vuoto)
+        buf += decoder.decode();
+        // (se vuoi, puoi parsare anche l'ultima riga: spesso non serve)
+
+        setProgress(60);
+      } else {
+        throw new Error("Streaming non disponibile o endpoint non OK");
+      }
+    } catch (e) {
+      // fallback: vecchio endpoint JSON (nessun progresso durante download)
+      setStatus(`Download ${logName}...`);
+      setProgress(5);
+
+      const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const j = await resp.json();
+
+      data.gps = Array.isArray(j.gps) ? j.gps : [];
+      data.bpm = Array.isArray(j.bpm) ? j.bpm : [];
+      data.profile = Array.isArray(j.profile) ? j.profile : [];
+      data.sensors = Array.isArray(j.sensors) ? j.sensors.map(normSensorItem) : [];
+
+      setProgress(60);
     }
-    setProgress(35);
+
+    // ============================================================
+    // 2) RESET stato replay (usa la tua funzione se esiste)
+    // ============================================================
+    setStatus("Reset stato...");
+    if (typeof resetReplayState === "function") {
+      resetReplayState();
+    } else {
+      // fallback minimale se resetReplayState non esiste
+      gpsSamples = [];
+      bpmSamples = [];
+      leftSockSamples = [];
+      rightSockSamples = [];
+      sockChartData.left = [[], [], [], []];
+      sockChartData.right = [[], [], [], []];
+      speedBySec = [];
+      secPos = [];
+      lastSpeedKmh = 0;
+      lastSpeedSec = null;
+      lastSecFix = null;
+      lastLiveBpm = "--";
+      sessionStartTimeMs = null;
+      sessionEndTimeMs = null;
+      isReplayMode = false;
+      gpsTimeUnit = null;
+      lastGpsTRaw = null;
+      if (typeof clearFullRouteSegments === "function") clearFullRouteSegments();
+      if (typeof clearProgressRouteSegments === "function") clearProgressRouteSegments();
+      updateBpmValue("--");
+      updateSpeedDistanceUI(null, null);
+    }
+
+    setProgress(65);
     await yieldUI();
 
-    // --- GPS (bulk load con progress reale) ---
+    // ============================================================
+    // 3) PROFILO (aggiorna header)
+    // ============================================================
+    setStatus("Parsing profilo...");
+    const lastProf = getLastByTime(data.profile);
+    if (lastProf) updateProfileUI(lastProf);
+    setProgress(68);
+
+    // ============================================================
+    // 4) Calcola sessionStartTimeMs (min timestamp tra streams)
+    // ============================================================
+    const times = [];
+    if (data.gps.length) times.push(Number(data.gps[0].t));
+    if (data.bpm.length) times.push(Number(data.bpm[0].t));
+    if (data.sensors.length) times.push(Number(data.sensors[0].t));
+    if (data.profile.length) times.push(Number(data.profile[0].t));
+
+    const finiteTimes = times.filter((t) => Number.isFinite(t));
+    if (finiteTimes.length) sessionStartTimeMs = Math.min(...finiteTimes);
+    if (sessionStartTimeMs == null) sessionStartTimeMs = Date.now();
+
+    // ============================================================
+    // 5) SENSORI calzini -> left/right + sockChartData
+    // ============================================================
+    setStatus("Parsing sensori...");
+    for (const sensorItemRaw of data.sensors) {
+      const sensorItem = normSensorItem(sensorItemRaw);
+      const tMs = (sensorItem && sensorItem.t != null) ? Number(sensorItem.t) : null;
+      if (!Number.isFinite(tMs)) continue;
+
+      const tRelSec = (tMs - sessionStartTimeMs) / 1000;
+
+      const name = String(
+        sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.sensorName ??
+        sensorItem.name ?? sensorItem.sensor ?? "unknown"
+      ).toLowerCase();
+
+      const p0 = Number(sensorItem.pressure0 ?? sensorItem.pressure_0 ?? sensorItem.p0 ?? 0);
+      const p1 = Number(sensorItem.pressure1 ?? sensorItem.pressure_1 ?? sensorItem.p1 ?? 0);
+      const p2 = Number(sensorItem.pressure2 ?? sensorItem.pressure_2 ?? sensorItem.p2 ?? 0);
+
+      const biInst = (typeof calculateBI === "function") ? calculateBI(sensorItem) : 0;
+      const sample = { t: tMs, p0, p1, p2, bi: biInst };
+
+      if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
+        leftSockSamples.push(sample);
+        sockChartData.left[0].push(tRelSec);
+        sockChartData.left[1].push(p0);
+        sockChartData.left[2].push(p1);
+        sockChartData.left[3].push(p2);
+      } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
+        rightSockSamples.push(sample);
+        sockChartData.right[0].push(tRelSec);
+        sockChartData.right[1].push(p0);
+        sockChartData.right[2].push(p1);
+        sockChartData.right[3].push(p2);
+      }
+    }
+
+    setProgress(72);
+    await yieldUI();
+
+    // ============================================================
+    // 6) GPS bulk-load (progress 72..92)
+    // ============================================================
     setStatus("Parsing GPS...");
-    const gpsArr = Array.isArray(data.gps) ? data.gps : [];
-    if (!gpsArr.length) {
+    if (!data.gps.length) {
       setStatus("Nessun GPS nel log.");
       setProgress(100);
       if (contEl) contEl.style.display = "none";
@@ -2033,46 +2205,47 @@ async function loadPastActivity(logName) {
     }
 
     isBulkLoading = true;
-    const CHUNK = 1000;
+    const CHUNK = 1200;
 
-    for (let i = 0; i < gpsArr.length; i += CHUNK) {
-      const end = Math.min(i + CHUNK, gpsArr.length);
-      const frac = gpsArr.length ? (end / gpsArr.length) : 1;
-      setProgress(35 + frac * 45); // 35 -> 80
-      setStatus(`Parsing GPS... ${end}/${gpsArr.length}`);
+    for (let i = 0; i < data.gps.length; i += CHUNK) {
+      const end = Math.min(i + CHUNK, data.gps.length);
+      const frac = data.gps.length ? (end / data.gps.length) : 1;
+      setProgress(72 + frac * 20);
+      setStatus(`Parsing GPS... ${end}/${data.gps.length}`);
 
       for (let j = i; j < end; j++) {
-        onGpsUpdate(gpsArr[j], { updateUi: false, updateMap: false });
+        // onGpsUpdate nel tuo file accetta opts {updateUi, updateMap}
+        onGpsUpdate(data.gps[j], { updateUi: false, updateMap: false });
       }
       await yieldUI();
     }
 
     isBulkLoading = false;
-    setProgress(82);
 
-    // --- BPM ---
+    // ============================================================
+    // 7) BPM -> bpmSamples
+    // ============================================================
     setStatus("Parsing BPM...");
-    const bpmArr = Array.isArray(data.bpm) ? data.bpm : [];
-    if (bpmArr.length) {
-      bpmArr.forEach((b) => {
-        const tMs = getTimeMs(b);
-        if (!tMs || !Number.isFinite(tMs)) return;
-        const v = Number(b.bpm ?? b.value ?? b.heartrate ?? 0);
-        bpmSamples.push({ t: tMs, bpm: Number.isFinite(v) ? v : 0 });
-      });
+    for (const b of data.bpm) {
+      const tMs = (b && b.t != null) ? Number(b.t) : null;
+      if (!Number.isFinite(tMs)) continue;
+      const v = Number(b.bpm ?? b.value ?? b.heartrate ?? 0);
+      bpmSamples.push({ t: tMs, bpm: Number.isFinite(v) ? v : 0 });
     }
-    setProgress(88);
+
+    setProgress(94);
     await yieldUI();
 
-    // --- Grafici calzini ---
+    // ============================================================
+    // 8) Rendering grafici + mappa + replay
+    // ============================================================
     setStatus("Rendering grafici calzini...");
-    initSockCharts();
-    if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
-    if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
-    setProgress(92);
-    await yieldUI();
+    if (typeof initSockCharts === "function") {
+      initSockCharts();
+      if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
+      if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
+    }
 
-    // --- Mappa / route ---
     setStatus("Rendering mappa...");
     if (gpsSamples.length) {
       const first = gpsSamples[0];
@@ -2080,10 +2253,7 @@ async function loadPastActivity(logName) {
       rebuildColoredFullRouteFromGpsSamples(2.0);
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
-    setProgress(96);
-    await yieldUI();
 
-    // --- Replay / bounds ---
     setStatus("Finalizzazione replay...");
     sessionEndTimeMs = getSessionEndMs();
     rebuildSpeedBySecFromGps();
@@ -2092,25 +2262,17 @@ async function loadPastActivity(logName) {
     enterReplayAtSecond(0);
 
     setProgress(100);
-    setStatus("Caricato.");
-
-    // nascondi barra a fine lavoro (se preferisci lasciarla piena, rimuovi questa riga)
+    setStatus(usedStreaming ? "Caricato (stream)." : "Caricato.");
     if (contEl) contEl.style.display = "none";
 
-  } catch (err) {
-    console.error("Errore loadPastActivity:", err);
-    const statusEl = document.getElementById("logs-status");
-    if (statusEl) statusEl.textContent = "Errore durante il caricamento dell'attività.";
-    const contEl = document.getElementById("logs-progress-container");
-    const barEl  = document.getElementById("logs-progress-bar");
-    const pctEl  = document.getElementById("logs-progress-pct");
-    if (barEl) barEl.style.width = "0%";
-    if (pctEl) pctEl.textContent = "0%";
-    if (contEl) contEl.style.display = "none";
+  } catch (error) {
     isBulkLoading = false;
+    console.error("Errore durante il caricamento dell'attività:", error);
+    setStatus("Errore durante il caricamento dell'attività.");
+    setProgress(0);
+    if (contEl) contEl.style.display = "none";
   }
 }
-
 
 // ==========================================
 // OPTIONAL: clear API (client)

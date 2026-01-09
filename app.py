@@ -13,6 +13,7 @@ import time
 import os
 import re
 from datetime import datetime, timezone
+from flask import Response, stream_with_context
 
 import paramiko
 
@@ -49,6 +50,85 @@ last_bpm_data = 0       # Battito cardiaco
 @app.route('/')
 def index():
     return render_template('dashboard.html')
+
+@app.get("/api/logs/raw")
+def api_logs_raw():
+    name = request.args.get("name", "").strip()
+    if not safefilename(name) or not name.endswith(LOGSUFFIX):
+        return jsonify(error="badname"), 400
+
+    ssh = createsshclient()
+    if not ssh:
+        return jsonify(error="sshconnectfailed"), 500
+
+    sftp = None
+    f = None
+    try:
+        sftp = ssh.open_sftp()
+        remotepath = os.path.join(REMOTELOGDIR, name)
+
+        st = sftp.stat(remotepath)
+        total = int(getattr(st, "st_size", 0) or 0)
+
+        f = sftp.open(remotepath, "rb")
+
+        def gen():
+            nonlocal f, sftp, ssh
+            try:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    if f: f.close()
+                except:
+                    pass
+                try:
+                    if sftp: sftp.close()
+                except:
+                    pass
+                try:
+                    if ssh: ssh.close()
+                except:
+                    pass
+
+        resp = Response(stream_with_context(gen()), mimetype="text/plain; charset=utf-8")
+        resp.headers["X-Total-Bytes"] = str(total)
+        resp.headers["Content-Length"] = str(total)  # aiuta fetch progress
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    except FileNotFoundError:
+        try:
+            if f: f.close()
+        except:
+            pass
+        try:
+            if sftp: sftp.close()
+        except:
+            pass
+        try:
+            ssh.close()
+        except:
+            pass
+        return jsonify(error="notfound"), 404
+
+    except Exception as e:
+        try:
+            if f: f.close()
+        except:
+            pass
+        try:
+            if sftp: sftp.close()
+        except:
+            pass
+        try:
+            ssh.close()
+        except:
+            pass
+        return jsonify(error=str(e)), 500
 
 
 @app.route('/api/sensors', methods=['GET'])
