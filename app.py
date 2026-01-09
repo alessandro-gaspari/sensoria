@@ -1,21 +1,16 @@
 import sys
 sys.stdout.reconfigure(line_buffering=True)
-
 import eventlet
 eventlet.monkey_patch()
-
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 from flask_cors import CORS
-
 import json
 import time
 import os
 import re
 from datetime import datetime, timezone
 from flask import Flask, render_template, jsonify, request, Response, stream_with_context
-
-
 import paramiko
 
 # --------------------------------------------------------------------
@@ -54,81 +49,70 @@ def index():
 
 @app.get("/api/logs/raw")
 def api_logs_raw():
-    name = request.args.get("name", "").strip()
-    if not safefilename(name) or not name.endswith(LOGSUFFIX):
-        return jsonify(error="badname"), 400
-
-    ssh = createsshclient()
-    if not ssh:
-        return jsonify(error="sshconnectfailed"), 500
-
-    sftp = None
-    f = None
     try:
-        sftp = ssh.open_sftp()
-        remotepath = os.path.join(REMOTELOGDIR, name)
+        name = request.args.get("name", "").strip()
+        if not _safe_filename(name) or not name.endswith(LOG_SUFFIX):
+            return jsonify(error="bad_name"), 400
 
-        st = sftp.stat(remotepath)
-        total = int(getattr(st, "st_size", 0) or 0)
+        ssh = create_ssh_client()
+        if not ssh:
+            return jsonify(error="ssh_connect_failed"), 500
 
-        f = sftp.open(remotepath, "rb")
+        sftp = None
+        f = None
+        try:
+            sftp = ssh.open_sftp()
+            remote_path = os.path.join(REMOTE_LOG_DIR, name)
 
-        def gen():
-            nonlocal f, sftp, ssh
+            st = sftp.stat(remote_path)
+            total = int(getattr(st, "st_size", 0) or 0)
+
+            f = sftp.open(remote_path, "rb")
+
+            def gen():
+                try:
+                    while True:
+                        chunk = f.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    try:
+                        if f: f.close()
+                    except:
+                        pass
+                    try:
+                        if sftp: sftp.close()
+                    except:
+                        pass
+                    try:
+                        if ssh: ssh.close()
+                    except:
+                        pass
+
+            resp = Response(stream_with_context(gen()), mimetype="text/plain; charset=utf-8")
+            resp.headers["X-Total-Bytes"] = str(total)
+            resp.headers["Cache-Control"] = "no-store"
+            resp.headers["X-Accel-Buffering"] = "no"
+            return resp
+
+        except FileNotFoundError:
             try:
-                while True:
-                    chunk = f.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                try:
-                    if f: f.close()
-                except:
-                    pass
-                try:
-                    if sftp: sftp.close()
-                except:
-                    pass
-                try:
-                    if ssh: ssh.close()
-                except:
-                    pass
-
-        resp = Response(stream_with_context(gen()), mimetype="text/plain; charset=utf-8")
-        resp.headers["X-Total-Bytes"] = str(total)
-        resp.headers["Content-Length"] = str(total)  # aiuta fetch progress
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
-
-    except FileNotFoundError:
-        try:
-            if f: f.close()
-        except:
-            pass
-        try:
-            if sftp: sftp.close()
-        except:
-            pass
-        try:
-            ssh.close()
-        except:
-            pass
-        return jsonify(error="notfound"), 404
+                if f: f.close()
+            except:
+                pass
+            try:
+                if sftp: sftp.close()
+            except:
+                pass
+            try:
+                ssh.close()
+            except:
+                pass
+            return jsonify(error="not_found"), 404
 
     except Exception as e:
-        try:
-            if f: f.close()
-        except:
-            pass
-        try:
-            if sftp: sftp.close()
-        except:
-            pass
-        try:
-            ssh.close()
-        except:
-            pass
+        print("api_logs_raw error:", repr(e), flush=True)
         return jsonify(error=str(e)), 500
 
 
