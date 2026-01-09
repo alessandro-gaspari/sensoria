@@ -209,6 +209,16 @@ def get_latest_remote_file(sftp):
         return None
     return os.path.join(REMOTE_LOG_DIR, logs[0]["name"])
 
+@app.post("/api/clear")
+def api_clear():
+    global lastprofiledata, lastgpsdata, lastbpmdata
+    sensors_data.clear()
+    lastprofiledata = {}
+    lastgpsdata = {}
+    lastbpmdata = 0
+    socketio.emit("datacleared")
+    return jsonify({"ok": True})
+
 
 @app.get("/api/logs")
 def api_logs_list():
