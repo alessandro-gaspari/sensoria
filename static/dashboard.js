@@ -344,8 +344,6 @@ document.addEventListener("DOMContentLoaded", function () {
 const PROFILECARDW = 240;
 const PROFILECARDH = 70;
 
-let lastProfile = { name: "--", weightKg: null, age: null };
-
 function ensureProfileCardUI() {
   const mapDiv = document.getElementById("map");
   if (!mapDiv) return;
@@ -431,6 +429,27 @@ function updateProfileCardUI(p) {
 }
 
 // Sostituisci il placeholder che hai già:
+let lastProfile = { name: "--", weightKg: null, age: null };
+
+function ensureProfileHeaderUI() {
+  // Se hai messo l'HTML a mano, qui basta non fare nulla.
+  // Però teniamolo safe: se non esiste, non crasha.
+  return !!document.getElementById("profile-name-header");
+}
+
+function updateProfileHeaderUI(p) {
+  const nameEl = document.getElementById("profile-name-header");
+  const metaEl = document.getElementById("profile-meta-header");
+  if (!nameEl || !metaEl) return;
+
+  const name = (p && p.name) ? String(p.name) : "--";
+  const w = (p && Number.isFinite(p.weightKg)) ? `${Math.round(p.weightKg)} kg` : "-- kg";
+  const a = (p && Number.isFinite(p.age)) ? `${Math.round(p.age)}` : "--";
+
+  nameEl.textContent = name;
+  metaEl.textContent = `Peso ${w} • Età ${a}`;
+}
+
 function updateProfileUI(data) {
   if (!data || typeof data !== "object") return;
 
@@ -452,9 +471,9 @@ function updateProfileUI(data) {
     age: Number.isFinite(age) ? age : null,
   };
 
-  ensureProfileCardUI();
-  updateProfileCardUI(lastProfile);
+  if (ensureProfileHeaderUI()) updateProfileHeaderUI(lastProfile);
 }
+
 
 
 // ==========================================
