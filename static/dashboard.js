@@ -1779,16 +1779,20 @@ async function openLogsModal() {
         <button id="logs-close" style="background:transparent;color:#fff;border:0;font-size:18px;cursor:pointer">✕</button>
       </div>
       <div style="padding:14px 16px">
-        <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:10px">Caricamento lista...</div>
-        <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:10px">Caricamento lista...</div>
-        <!-- PROGRESS -->
-        <div id="logs-progress-wrap" style="height:10px;background:#222;border:1px solid #333;border-radius:999px;overflow:hidden">
-          <div id="logs-progress-bar" style="height:100%;width:0%;background:#97c93e;transition:width .12s linear"></div>
-        </div>
-        <div id="logs-progress-pct" style="margin-top:6px;color:#777;font-size:11px">0%</div>
-        <div id="logs-list" style="display:flex;flex-direction:column;gap:8px;max-height:55vh;overflow:auto"></div>
+      <div id="logs-status" style="color:#aaa;font-size:12px;margin-bottom:8px">
+        Caricamento lista...
       </div>
-    </div>
+
+      <div id="logs-progress-container"
+          style="display:none; margin-top:4px; margin-bottom:4px;">
+        <div id="logs-progress-wrap"
+            style="height:10px;background:#222;border:1px solid #333;border-radius:999px;overflow:hidden">
+          <div id="logs-progress-bar"
+              style="height:100%;width:0%;background:#97c93e;transition:width .12s linear"></div>
+        </div>
+        <div id="logs-progress-pct" style="margin-top:4px;color:#777;font-size:11px">0%</div>
+      </div>
+
   `;
 
   modal.addEventListener("click", (e) => {
@@ -1875,33 +1879,34 @@ function resetReplayState() {
 }
 
 async function loadPastActivity(logName) {
-  // helper: safe yield UI
   const yieldUI = () => new Promise((r) => setTimeout(r, 0));
 
   try {
-    // --- helper UI status/progress (se la modale è aperta) ---
+    // UI elementi
     const statusEl = document.getElementById("logs-status");
-    const barEl = document.getElementById("logs-progress-bar");
-    const pctEl = document.getElementById("logs-progress-pct");
+    const contEl   = document.getElementById("logs-progress-container");
+    const barEl    = document.getElementById("logs-progress-bar");
+    const pctEl    = document.getElementById("logs-progress-pct");
 
     const setStatus = (t) => { if (statusEl) statusEl.textContent = t; };
     const setProgress = (p) => {
       const v = Math.max(0, Math.min(100, Number(p) || 0));
-      if (barEl) barEl.style.width = v.toFixed(1) + "%";
+      if (barEl) barEl.style.width = v + "%";
       if (pctEl) pctEl.textContent = Math.round(v) + "%";
     };
 
+    // mostra barra SOLO durante il caricamento
+    if (contEl) contEl.style.display = "block";
+    setProgress(0);
     setStatus(`Caricamento ${logName}...`);
-    setProgress(1);
 
-    // --- fetch log (UNA SOLA VOLTA) ---
+    // fetch (qui la UI può bloccare finché non arriva la risposta, è normale)
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
-    setProgress(6);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    setProgress(12);
+    const data = await resp.json();  // JSON parsing: breve rispetto al loop GPS
+    setProgress(10);
 
-    // --- PROFILO (da log) ---
+    // --- PROFILO ---
     setStatus("Parsing profilo...");
     const profArr = Array.isArray(data.profile) ? data.profile : [];
     if (profArr.length) {
@@ -1909,14 +1914,11 @@ async function loadPastActivity(logName) {
         const bt = (best && best.t != null) ? Number(best.t)
           : (best && best.timestamp) ? new Date(best.timestamp).getTime()
           : -Infinity;
-
         const pt = (p && p.t != null) ? Number(p.t)
           : (p && p.timestamp) ? new Date(p.timestamp).getTime()
           : -Infinity;
-
         return pt >= bt ? p : best;
       }, profArr[0]);
-
       updateProfileUI(lastProf);
     } else {
       const nameEl = document.getElementById("profile-name-header");
@@ -1926,7 +1928,7 @@ async function loadPastActivity(logName) {
     }
     setProgress(18);
 
-    // --- 1) Reset stati/array (replay) ---
+    // --- RESET stato ---
     setStatus("Reset stato...");
     gpsSamples = [];
     bpmSamples = [];
@@ -1950,17 +1952,12 @@ async function loadPastActivity(logName) {
     lastSecFix = null;
     lastLiveBpm = "--";
 
-    // pulizia route precedenti (se esistono)
     if (typeof clearFullRouteSegments === "function") clearFullRouteSegments();
     if (typeof clearProgressRouteSegments === "function") clearProgressRouteSegments();
 
     updateBpmValue("--");
     updateSpeedDistanceUI(null, null);
     setProgress(22);
-
-    // --- 2) Sensori calzini (costruisce anche sockChartData) ---
-    setStatus("Parsing sensori...");
-    const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
 
     const getTimeMs = (obj) => {
       if (!obj || typeof obj !== "object") return null;
@@ -1976,16 +1973,17 @@ async function loadPastActivity(logName) {
       return null;
     };
 
-    // scegli un sessionStartTimeMs sensato (se possibile) prima dei tRelSec
+    // --- SENSORS (calzini) ---
+    setStatus("Parsing sensori...");
+    const sensorsData = Array.isArray(data.sensors) ? data.sensors : [];
+
     const firstSensorT = sensorsData.length ? getTimeMs(sensorsData[0]) : null;
     const firstGpsT = (Array.isArray(data.gps) && data.gps.length) ? getTimeMs(data.gps[0]) : null;
     const firstBpmT = (Array.isArray(data.bpm) && data.bpm.length) ? getTimeMs(data.bpm[0]) : null;
-
     const candidates = [firstSensorT, firstGpsT, firstBpmT].filter((x) => Number.isFinite(x));
     if (candidates.length) sessionStartTimeMs = Math.min(...candidates);
 
     if (sensorsData.length > 0) {
-      // se ancora null (timestamp strani), fallback su primo sensore
       if (sessionStartTimeMs == null && firstSensorT != null) sessionStartTimeMs = firstSensorT;
 
       sensorsData.forEach((sensorItem) => {
@@ -2021,42 +2019,38 @@ async function loadPastActivity(logName) {
         }
       });
     }
-
     setProgress(35);
     await yieldUI();
 
-    // --- 3) GPS bulk-load con progress reale ---
+    // --- GPS (bulk load con progress reale) ---
     setStatus("Parsing GPS...");
     const gpsArr = Array.isArray(data.gps) ? data.gps : [];
     if (!gpsArr.length) {
       setStatus("Nessun GPS nel log.");
       setProgress(100);
+      if (contEl) contEl.style.display = "none";
       return;
     }
 
     isBulkLoading = true;
-
     const CHUNK = 1000;
+
     for (let i = 0; i < gpsArr.length; i += CHUNK) {
       const end = Math.min(i + CHUNK, gpsArr.length);
-
       const frac = gpsArr.length ? (end / gpsArr.length) : 1;
-      setProgress(35 + frac * 45); // 35% -> 80%
-
+      setProgress(35 + frac * 45); // 35 -> 80
       setStatus(`Parsing GPS... ${end}/${gpsArr.length}`);
 
       for (let j = i; j < end; j++) {
-        // onGpsUpdate già gestisce più formati e con isBulkLoading evita UI/map per punto
         onGpsUpdate(gpsArr[j], { updateUi: false, updateMap: false });
       }
-
       await yieldUI();
     }
 
     isBulkLoading = false;
     setProgress(82);
 
-    // --- 4) BPM ---
+    // --- BPM ---
     setStatus("Parsing BPM...");
     const bpmArr = Array.isArray(data.bpm) ? data.bpm : [];
     if (bpmArr.length) {
@@ -2070,7 +2064,7 @@ async function loadPastActivity(logName) {
     setProgress(88);
     await yieldUI();
 
-    // --- 5) Rendering grafici calzini ---
+    // --- Grafici calzini ---
     setStatus("Rendering grafici calzini...");
     initSockCharts();
     if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
@@ -2078,54 +2072,45 @@ async function loadPastActivity(logName) {
     setProgress(92);
     await yieldUI();
 
-    // --- 6) Rendering mappa/route UNA volta ---
+    // --- Mappa / route ---
     setStatus("Rendering mappa...");
     if (gpsSamples.length) {
       const first = gpsSamples[0];
       ensureMapInitialized(first.lat, first.lng);
-
-      // route completa colorata (downsample metri)
       rebuildColoredFullRouteFromGpsSamples(2.0);
-
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
     setProgress(96);
     await yieldUI();
 
-    // --- 7) Finalizzazione replay ---
+    // --- Replay / bounds ---
     setStatus("Finalizzazione replay...");
     sessionEndTimeMs = getSessionEndMs();
     rebuildSpeedBySecFromGps();
     updateReplayUiBounds();
     showReplayOverlayIfReady();
-
-    // vai all'inizio attività (entra in replay mode)
     enterReplayAtSecond(0);
 
     setProgress(100);
     setStatus("Caricato.");
 
-    console.log(
-      "✅ Log caricato:",
-      logName,
-      "GPS:", gpsSamples.length,
-      "BPM:", bpmSamples.length,
-      "Left socks:", leftSockSamples.length,
-      "Right socks:", rightSockSamples.length
-    );
-  } catch (error) {
-    isBulkLoading = false;
-    console.error("Errore durante il caricamento dell'attività:", error);
+    // nascondi barra a fine lavoro (se preferisci lasciarla piena, rimuovi questa riga)
+    if (contEl) contEl.style.display = "none";
 
+  } catch (err) {
+    console.error("Errore loadPastActivity:", err);
     const statusEl = document.getElementById("logs-status");
     if (statusEl) statusEl.textContent = "Errore durante il caricamento dell'attività.";
-
-    const barEl = document.getElementById("logs-progress-bar");
-    const pctEl = document.getElementById("logs-progress-pct");
+    const contEl = document.getElementById("logs-progress-container");
+    const barEl  = document.getElementById("logs-progress-bar");
+    const pctEl  = document.getElementById("logs-progress-pct");
     if (barEl) barEl.style.width = "0%";
     if (pctEl) pctEl.textContent = "0%";
+    if (contEl) contEl.style.display = "none";
+    isBulkLoading = false;
   }
 }
+
 
 // ==========================================
 // OPTIONAL: clear API (client)
