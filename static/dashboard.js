@@ -1880,6 +1880,26 @@ async function loadPastActivity(logName) {
     const resp = await fetch(`/api/logs/load?name=${encodeURIComponent(logName)}`);
     const data = await resp.json();
 
+    // --- PROFILO (da log) ---
+    const profArr = Array.isArray(data.profile) ? data.profile : [];
+    if (profArr.length) {
+      // prendi l'ultimo profilo (per t o timestamp)
+      const lastProf = profArr.reduce((best, p) => {
+        const bt = best?.t ? Number(best.t) : (best?.timestamp ? new Date(best.timestamp).getTime() : -Infinity);
+        const pt = p?.t ? Number(p.t) : (p?.timestamp ? new Date(p.timestamp).getTime() : -Infinity);
+        return pt >= bt ? p : best;
+      }, profArr[0]);
+
+      updateProfileUI(lastProf); // aggiorna #profile-name-header e #profile-meta-header
+    } else {
+      // opzionale: reset UI profilo
+      const nameEl = document.getElementById("profile-name-header");
+      const metaEl = document.getElementById("profile-meta-header");
+      if (nameEl) nameEl.textContent = "--";
+      if (metaEl) metaEl.textContent = "Peso -- kg  Et --";
+    }
+
+
     // 1) Reset stati/array
     gpsSamples = [];
     bpmSamples = [];
