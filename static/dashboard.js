@@ -1339,7 +1339,7 @@ function processIncomingData(data) {
 }
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
-const BI_LATERAL_AXIS = 'x';
+const BI_LATERAL_AXIS = 'z';
 const BI_AVG_WINDOW_MS = 850;
 
 const biAgg = {
@@ -1351,7 +1351,6 @@ let biAvgTimer = null;
 
 
 function calculateBI(payload) {
-  // prova più chiavi possibili
   const ax = Number(payload.accelx ?? payload.ax ?? payload.accelX ?? payload.AccelX);
   const ay = Number(payload.accely ?? payload.ay ?? payload.accelY ?? payload.AccelY);
   const az = Number(payload.accelz ?? payload.az ?? payload.accelZ ?? payload.AccelZ);
@@ -1359,12 +1358,11 @@ function calculateBI(payload) {
   if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(az)) return 0;
 
   const norm = Math.sqrt(ax*ax + ay*ay + az*az);
-  if (!Number.isFinite(norm) || norm < 0.1) return 0;
+  if (!Number.isFinite(norm) || norm < 1e-6) return 0;
 
-  // BI: percentuale del contributo di X (come avevi impostato tu)
-  return Math.abs(ax / norm) * 100;
+  const aLat = (BILATERAL_AXIS === "z") ? az : (BILATERAL_AXIS === "y") ? ay : ax;
+  return Math.abs(aLat / norm) * 100;
 }
-
 
 function initSockCharts() {
   const leftEl = document.getElementById("chart-left-p");
