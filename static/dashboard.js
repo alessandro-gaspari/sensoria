@@ -111,27 +111,35 @@ var sockChartData = {
 };
 var replayCursorSec = null;
 
-function replayCenterLinePlugin() {
+function centerLinePlugin() {
   return {
     hooks: {
-      draw: (u) => {
-        if (!isReplayMode || replayCursorSec == null) return;
+      draw: [
+        (u) => {
+          const ctx = u.ctx;
 
-        const ctx = u.ctx;
-        const x = u.valToPos(replayCursorSec, "x", true);
+          // xVal = replay cursor in replay, else mid-window in live
+          let xVal = null;
+          if (isReplayMode && replayCursorSec != null) {
+            xVal = replayCursorSec;
+          } else if (u.scales?.x) {
+            xVal = (u.scales.x.min + u.scales.x.max) / 2;
+          }
+          if (xVal == null) return;
 
-        ctx.save();
-        ctx.strokeStyle = "rgba(151,201,62,0.9)"; // verde sensoria
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 6]);
+          const x = u.valToPos(xVal, "x", true);
 
-        ctx.beginPath();
-        ctx.moveTo(x, u.bbox.top);
-        ctx.lineTo(x, u.bbox.top + u.bbox.height);
-        ctx.stroke();
-
-        ctx.restore();
-      }
+          ctx.save();
+          ctx.strokeStyle = "rgba(151,201,62,0.9)";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 6]);
+          ctx.beginPath();
+          ctx.moveTo(x, u.bbox.top);
+          ctx.lineTo(x, u.bbox.top + u.bbox.height);
+          ctx.stroke();
+          ctx.restore();
+        }
+      ]
     }
   };
 }
@@ -1368,6 +1376,19 @@ function goLive() {
   updateReplayUiBounds();
   clearProgressRouteSegments();
   rebuildColoredProgressRouteToTime(getSessionEndMs(), 2.0);
+  replayCursorSec = null;
+
+  ["left", "right"].forEach((side) => {
+    const ch = sockCharts[side];
+    const d = sockChartData[side];
+    if (!ch || !d || !d[0]?.length) return;
+
+    const WINSEC = 4;
+    const xMax = d[0][d[0].length - 1];
+    const xMin = Math.max(0, xMax - WINSEC);
+    ch.setScale("x", { min: xMin, max: xMax });
+    ch.redraw();
+  });
 
   if (gpsSamples.length) {
     var lastG = gpsSamples[gpsSamples.length - 1];
@@ -1559,7 +1580,7 @@ function initSockCharts() {
   const makeOpts = (container, title) => ({
     width: Math.max(container.offsetWidth, container.clientWidth),
     height: Math.max(240, container.clientHeight),
-    plugins: [replayCenterLinePlugin()],
+    plugins: [centerLinePlugin()],
     scales: {
       x: { time: false }, // secondi dall'inizio attività
       y: { auto: true }
@@ -1679,7 +1700,7 @@ function updateSocksUI(side, data, bi) {
     d[3].push(val2);
 
     // buffer punti: 100Hz * 5s = 500 punti visibili; teniamone un po' di più
-    const MAX_POINTS = 500;
+    const MAX_POINTS = 400;
     if (d[0].length > MAX_POINTS) {
       const cut = d[0].length - MAX_POINTS;
       d.forEach(arr => arr.splice(0, cut));
