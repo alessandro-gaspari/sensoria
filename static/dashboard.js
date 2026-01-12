@@ -792,7 +792,7 @@ function onGpsUpdate(data, opts) {
   const prevSpeed = prevSample.speedKmh ?? 0;
 
   if (goodFix) {
-    if (stepM < GPSMINSTEPM) {
+    if (stepM < GPS_MIN_STEP_M) {
       usedStepM = 0;
       speedKmh = prevSpeed;     // invece di 0
     } else {
@@ -800,7 +800,7 @@ function onGpsUpdate(data, opts) {
       const instantSpeed = (stepM / dtSec) * 3.6;
       speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
       if (!isFinite(speedKmh)) speedKmh = 0;
-      speedKmh = Math.min(Math.max(0, speedKmh), MAXSPEEDKMH);
+      speedKmh = Math.min(Math.max(0, speedKmh), MAX_SPEED_KMH);
     }
   } else {
     speedKmh = prevSpeed;
