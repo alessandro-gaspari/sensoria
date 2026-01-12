@@ -1485,11 +1485,10 @@ function processIncomingData(data) {
   p.magy  = p.magy  ?? p.magY  ?? p.mag_y  ?? p.MagY  ?? p.magY;
   p.magz  = p.magz  ?? p.magZ  ?? p.mag_z  ?? p.MagZ  ?? p.magZ;
 
-  // --- Pressioni: accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2 ---
   p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
-  p.pressure1 = p.pressure1 ?? p.pressure_1
-   ?? p.p1;
+  p.pressure1 = p.pressure1 ?? p.pressure_1 ?? p.p1;
   p.pressure2 = p.pressure2 ?? p.pressure_2 ?? p.p2;
+
 
   // Alias p0/p1/p2 (utile per updateSocksUI che ha fallback multipli)
   p.p0 = p.p0 ?? p.pressure0;
@@ -1716,53 +1715,72 @@ function updateSocksUI(side, data, bi) {
 // SENSOR CARDS UI (minimal)
 // ==========================================
 
-function createSensorCard(name) {
-  var grid = document.getElementById("sensors-grid");
-  if (!grid) return;
+function createSensorCard(name, data) {
+    var grid = document.getElementById('sensors-grid');
+    if (!grid) return;
 
-  var div = document.createElement("div");
-  div.className = "sensor-card sensor-col connected";
-  div.setAttribute("data-sensor", name);
+    var div = document.createElement('div');
+    div.className = "sensor-card sensor-col connected";
+    div.setAttribute('data-sensor', name);
 
-  div.innerHTML = `
-    <div class="sensor-header">
-      <span class="name">${name}</span>
-      <div class="status-indicator active"></div>
-    </div>
+    // Controlla quali dati sono presenti nel primo pacchetto
+    const hasAccel = (data.accelx != null || data.accel_x != null);
+    const hasGyro = (data.gyrox != null || data.gyro_x != null);
+    const hasMag = (data.magx != null || data.mag_x != null);
+    
+    // Controlla se ci sono pressioni (normalizzate o grezze)
+    const p0 = data.pressure0 ?? data.pressure_0 ?? data.p0;
+    const hasPressure = (p0 != null && Number.isFinite(Number(p0)));
 
-    <div class="sensor-data-section">
+    let rows = '';
 
-      <div class="sensor-data-row"><span class="sensor-data-label">Ax</span><span class="sensor-value" data-key="accelx">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">Ay</span><span class="sensor-value" data-key="accely">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">Az</span><span class="sensor-value" data-key="accelz">--</span></div>
+    if (hasAccel) {
+        rows += `
+            <div class="sensor-data-row"><span class="sensor-data-label">Ax</span><span class="sensor-value" data-key="accelx">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">Ay</span><span class="sensor-value" data-key="accely">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">Az</span><span class="sensor-value" data-key="accelz">--</span></div>`;
+    }
+    if (hasGyro) {
+        rows += `
+            <div class="sensor-data-row"><span class="sensor-data-label">Gx</span><span class="sensor-value" data-key="gyrox">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">Gy</span><span class="sensor-value" data-key="gyroy">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">Gz</span><span class="sensor-value" data-key="gyroz">--</span></div>`;
+    }
+    if (hasMag) {
+        rows += `
+            <div class="sensor-data-row"><span class="sensor-data-label">Mx</span><span class="sensor-value" data-key="magx">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">My</span><span class="sensor-value" data-key="magy">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">Mz</span><span class="sensor-value" data-key="magz">--</span></div>`;
+    }
+    if (hasPressure) {
+        rows += `
+            <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
+            <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>`;
+    }
 
-      <div class="sensor-data-row"><span class="sensor-data-label">Gx</span><span class="sensor-value" data-key="gyrox">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">Gy</span><span class="sensor-value" data-key="gyroy">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">Gz</span><span class="sensor-value" data-key="gyroz">--</span></div>
+    div.innerHTML = `
+        <div class="sensor-header">
+            <span class="name">${name}</span>
+            <div class="status-indicator active"></div>
+        </div>
+        <div class="sensor-data-section">
+            ${rows}
+        </div>
+    `;
 
-      <div class="sensor-data-row"><span class="sensor-data-label">Mx</span><span class="sensor-value" data-key="magx">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">My</span><span class="sensor-value" data-key="magy">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">Mz</span><span class="sensor-value" data-key="magz">--</span></div>
-
-      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>
-
-    </div>
-  `;
-
-  grid.appendChild(div);
+    grid.appendChild(div);
 }
 
 function updateSensorCardUI(name, data) {
-  if (!name || !data) return;
 
-  var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  if (!card) {
-    createSensorCard(name);
-    card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  }
-  if (!card) return;
+    if (!name || !data) return;
+    var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
+    if (!card) {
+        createSensorCard(name, data); // <--- Passiamo 'data' qui!
+        card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
+    }
+    if (!card) return;
 
   const setVal = (key, val, decimals) => {
     const el = card.querySelector(`[data-key="${key}"]`);
