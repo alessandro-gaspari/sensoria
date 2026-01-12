@@ -432,12 +432,12 @@ function initSocket() {
     }
   });
 
-  socket.on("sensor_update", (data) => processIncomingData(data));
-  socket.on("bpm_update", (val) => onBpmUpdate(val));
-  socket.on("profile_update", (data) => updateProfileUI(data));
-  socket.on("gps_update", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
+  socket.on("sensorupdate", (data) => processIncomingData(data));
+  socket.on("bpmupdate", (val) => onBpmUpdate(val));
+  socket.on("profileupdate", (data) => updateProfileUI(data));
+  socket.on("gpsupdate", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
 
-  socket.on("data_cleared", () => {
+  socket.on("datacleared", () => {
     if (sessionStartTimeMs != null) {
       sessionEndTimeMs = getNowMs();
       updateReplayUiBounds();
