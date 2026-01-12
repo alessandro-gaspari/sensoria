@@ -116,17 +116,11 @@ function centerLinePlugin() {
     hooks: {
       draw: [
         (u) => {
+          // Se NON siamo in replay, non disegnare nulla (exit early)
+          if (!isReplayMode || replayCursorSec == null) return;
+
           const ctx = u.ctx;
-
-          // xVal = replay cursor in replay, else mid-window in live
-          let xVal = null;
-          if (isReplayMode && replayCursorSec != null) {
-            xVal = replayCursorSec;
-          } else if (u.scales?.x) {
-            xVal = (u.scales.x.min + u.scales.x.max) / 2;
-          }
-          if (xVal == null) return;
-
+          const xVal = replayCursorSec;
           const x = u.valToPos(xVal, "x", true);
 
           ctx.save();
@@ -143,6 +137,7 @@ function centerLinePlugin() {
     }
   };
 }
+
 
 // ==========================================
 // BPM -> colore traccia
@@ -1283,7 +1278,30 @@ function enterReplayAtSecond(sec) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
+  // Se i grafici sono vuoti o parziali (perché magari in live usavi un buffer rotante),
+  // ricarica TUTTI i dati storici accumulati (leftSockSamples / rightSockSamples)
+  if (leftSockSamples.length > sockChartData.left[0].length) {
+      // Ricostruisci sockChartData.left dai samples completi
+      sockChartData.left = [
+          leftSockSamples.map(s => (s.t - sessionStartTimeMs)/1000), // x (sec)
+          leftSockSamples.map(s => s.p0),
+          leftSockSamples.map(s => s.p1),
+          leftSockSamples.map(s => s.p2)
+      ];
+      if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
+  }
 
+  if (rightSockSamples.length > sockChartData.right[0].length) {
+      // Idem per destra
+      sockChartData.right = [
+          rightSockSamples.map(s => (s.t - sessionStartTimeMs)/1000),
+          rightSockSamples.map(s => s.p0),
+          rightSockSamples.map(s => s.p1),
+          rightSockSamples.map(s => s.p2)
+      ];
+      if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
+  }
+  
   // 1) clamp tempo
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
