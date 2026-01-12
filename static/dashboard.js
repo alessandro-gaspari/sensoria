@@ -1371,46 +1371,128 @@ function goLive() {
   }
 }
 
+function normalizeLivePayload(p) {
+  if (!p || typeof p !== "object") return null;
+  const o = { ...p };
+
+  // Nome sensore (supporta anche sensor_name come nei log)
+  o.sensorname = o.sensorname ?? o.sensorName ?? o.sensor_name ?? o.name ?? null;
+
+  // IMU (supporta accel_x ecc)
+  o.accelx = o.accelx ?? o.accelX ?? o.accel_x;
+  o.accely = o.accely ?? o.accelY ?? o.accel_y;
+  o.accelz = o.accelz ?? o.accelZ ?? o.accel_z;
+
+  o.gyrox = o.gyrox ?? o.gyroX ?? o.gyro_x;
+  o.gyroy = o.gyroy ?? o.gyroY ?? o.gyro_y;
+  o.gyroz = o.gyroz ?? o.gyroZ ?? o.gyro_z;
+
+  o.magx = o.magx ?? o.magX ?? o.mag_x;
+  o.magy = o.magy ?? o.magY ?? o.mag_y;
+  o.magz = o.magz ?? o.magZ ?? o.mag_z;
+
+  // Pressioni (supporta pressure_0 ecc)
+  o.pressure0 = o.pressure0 ?? o.pressure_0 ?? o.p0;
+  o.pressure1 = o.pressure1 ?? o.pressure_1 ?? o.p1;
+  o.pressure2 = o.pressure2 ?? o.pressure_2 ?? o.p2;
+
+  return o;
+}
+
+
 // ==========================================
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
 function processIncomingData(data) {
-  var payload = data && typeof data === "object" && data.data ? data.data : data;
-  if (!payload || (!payload.sensorname && !payload.name && !payload.sensor_name)) return;
+  // 0) unwrap: a volte arriva { sensorname: "...",  {...} }
+  let payload = (data && typeof data === "object" && data.data && typeof data.data === "object")
+    ? data.data
+    : data;
 
-  // SUPPORTA: sensor_name, sensorname, name
-  const name = String(payload.sensor_name ?? payload.sensorname ?? payload.name ?? "unknown").toLowerCase();
+  if (!payload || typeof payload !== "object") return;
+
+  // 1) trova nome sensore: può stare fuori (wrapper) o dentro (payload)
+  const outerName =
+    (data && typeof data === "object")
+      ? (data.sensorname ?? data.sensor_name ?? data.sensorName ?? data.name)
+      : null;
+
+  const sensorName = String(
+    payload.sensorname ??
+    payload.sensorName ??
+    payload.sensor_name ??
+    payload.name ??
+    outerName ??
+    ""
+  ).trim();
+
+  if (!sensorName) return;
+
+  // 2) normalizza campi in un oggetto unico (mantieni anche gli originali)
+  const p = { ...payload, sensorname: sensorName, name: sensorName };
+
+  // Timestamp (non forziamo conversioni qui: il resto del codice usa Date.now())
+  p.timestamp = p.timestamp ?? p.ts ?? p.time ?? p.t;
+
+  // --- IMU: accetta sia camel che snake_case ---
+  p.accelx = p.accelx ?? p.accelX ?? p.accel_x ?? p.AccelX ?? p.accelX;
+  p.accely = p.accely ?? p.accelY ?? p.accel_y ?? p.AccelY ?? p.accelY;
+  p.accelz = p.accelz ?? p.accelZ ?? p.accel_z ?? p.AccelZ ?? p.accelZ;
+
+  p.gyrox = p.gyrox ?? p.gyroX ?? p.gyro_x ?? p.GyroX ?? p.gyroX;
+  p.gyroy = p.gyroy ?? p.gyroY ?? p.gyro_y ?? p.GyroY ?? p.gyroY;
+  p.gyroz = p.gyroz ?? p.gyroZ ?? p.gyro_z ?? p.GyroZ ?? p.gyroZ;
+
+  p.magx  = p.magx  ?? p.magX  ?? p.mag_x  ?? p.MagX  ?? p.magX;
+  p.magy  = p.magy  ?? p.magY  ?? p.mag_y  ?? p.MagY  ?? p.magY;
+  p.magz  = p.magz  ?? p.magZ  ?? p.mag_z  ?? p.MagZ  ?? p.magZ;
+
+  // --- Pressioni: accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2 ---
+  p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
+  p.pressure1 = p.pressure1 ?? p.pressure_1 ?? p.p1;
+  p.pressure2 = p.pressure2 ?? p.pressure_2 ?? p.p2;
+
+  // Alias p0/p1/p2 (utile per updateSocksUI che ha fallback multipli)
+  p.p0 = p.p0 ?? p.pressure0;
+  p.p1 = p.p1 ?? p.pressure1;
+  p.p2 = p.p2 ?? p.pressure2;
+
+  // 3) timeline
   const tMs = getNowMs();
   ensureSessionStart(tMs);
 
-  // Calzini: mapping campi flessibile
-  const p0 = Number(payload.pressure_0 ?? payload.p0 ?? payload.pressure0 ?? 0);
-  const p1 = Number(payload.pressure_1 ?? payload.p1 ?? payload.pressure1 ?? 0);
-  const p2 = Number(payload.pressure_2 ?? payload.p2 ?? payload.pressure2 ?? 0);
-  const bi = calculateBI(payload);
+  // 4) calzini: aggiorna UI + grafico mini + BI
+  const nameLower = sensorName.toLowerCase();
+  const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
+  const isLeft = nameLower.includes("sx") || nameLower.includes("left");
+  const isRight = nameLower.includes("dx") || nameLower.includes("right");
 
-  if (name.includes("sx") || name.includes("dx")) {
-  console.log("SOCK PAYLOAD", name, "ax=", payload.accelx, "ay=", payload.accely, "az=", payload.accelz, "bi=", bi);  
+  if (isSock && (isLeft || isRight)) {
+    const v0 = Number(p.pressure0);
+    const v1 = Number(p.pressure1);
+    const v2 = Number(p.pressure2);
+
+    const p0 = Number.isFinite(v0) ? v0 : 0;
+    const p1 = Number.isFinite(v1) ? v1 : 0;
+    const p2 = Number.isFinite(v2) ? v2 : 0;
+
+    const bi = calculateBI(p);
+
+    if (isLeft) {
+      leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
+      if (!isReplayMode) updateSocksUI("left", { p0, p1, p2, pressure0: p0, pressure1: p1, pressure2: p2 }, bi);
+    } else if (isRight) {
+      rightSockSamples.push({ t: tMs, p0, p1, p2, bi });
+      if (!isReplayMode) updateSocksUI("right", { p0, p1, p2, pressure0: p0, pressure1: p1, pressure2: p2 }, bi);
+    }
   }
 
-  if (name.includes("sx") || name.includes("left")) {
-    leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) {
-      updateSocksUI("left", { p0, p1, p2 }, bi);
-    }
-  } else if (name.includes("dx") || name.includes("right")) {
-    rightSockSamples.push({ t: tMs, p0, p1, p2, bi });
-    if (!isReplayMode) {
-      updateSocksUI("right", { p0, p1, p2 }, bi);
-    }
-  }
-
-  sensors[payload.sensor_name ?? payload.sensorname ?? payload.name] = payload;
-
-  updateSensorCardUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
-  // charts: se selezionato
-  updateChartsUI(payload.sensor_name ?? payload.sensorname ?? payload.name, payload);
+  // 5) RAW cards + charts (IMU/pressioni)
+  sensors[sensorName] = p;
+  updateSensorCardUI(sensorName, p);
+  updateChartsUI(sensorName, p);
 }
+
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
 const BILATERAL_AXIS = 'z';
