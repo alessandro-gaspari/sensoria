@@ -1603,13 +1603,13 @@ function initSockCharts() {
   }
 }
 
+// --- CORREZIONE 2: Fix per grafico live che non scorre ---
 function scheduleSockRender(side) {
   if (sockRenderScheduled[side]) return;
   sockRenderScheduled[side] = true;
 
   requestAnimationFrame(() => {
     sockRenderScheduled[side] = false;
-
     const chart = sockCharts[side];
     if (!chart) return;
 
@@ -1617,13 +1617,18 @@ function scheduleSockRender(side) {
     ensureSockChartSize(side);
     chart.setData(d);
 
-    // finestra visibile in live (secondi)
-    const WIN_SEC = 4;
-    const xMax = d[0].length ? d[0][d[0].length - 1] : 0;
-    const xMin = Math.max(0, xMax - WIN_SEC);
+    // Finestra visibile in live (secondi)
+    const WINSEC = 4;
+    // Prendi l'ultimo X valido
+    const xMax = (d[0].length > 0) ? d[0][d[0].length - 1] : 0;
+    
+    // Safety check: se xMax non è valido, esci
+    if (!Number.isFinite(xMax)) return;
 
-    chart.setScale("x", { min: xMin, max: xMax });
-    chart.redraw();
+    const xMin = Math.max(0, xMax - WINSEC);
+    
+    // Aggiungi +0.1 a xMax per dare un po' di "respiro" al grafico a destra
+    chart.setScale("x", { min: xMin, max: xMax + 0.1 });
   });
 }
 
@@ -1674,10 +1679,9 @@ function updateSocksUI(side, data, bi) {
 
     // x in secondi dall'inizio (monotono anche se arrivano burst)
     let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
-    if (x <= sockLastX[side]) x = sockLastX[side] + 0.001; // evita x duplicati/non crescenti
+    // if (x <= sockLastX[side]) x = sockLastX[side] + 0.001; // evita x duplicati/non crescenti
     sockLastX[side] = x;
-    // se stai ripartendo dopo replay/vecchia sessione, la X del live riparte da 0.
-    // se l'ultimo punto che avevi è molto avanti, pulisci tutto o uPlot impazzisce.
+
     const lastX = d[0].length ? d[0][d[0].length - 1] : null;
     if (lastX != null && x < lastX - 1) {
       sockChartData[side] = [[], [], [], []];
@@ -1811,33 +1815,48 @@ function updateSensorCardUI(name, data) {
   setVal("pressure2", data.pressure2 ?? data.p2, 0);
 }
 
-
 function updateSensorCardUI(name, data) {
-  if (!name) return;
+    if (!name || !data) return;
 
-  var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  if (!card) {
-    createSensorCard(name, data);
-    card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-  }
-  if (!card) return;
-
-  // aggiorna valori noti
-  const p0 = data.pressure_0 ?? data.p0 ?? data.pressure0;
-  const p1 = data.pressure_1 ?? data.p1 ?? data.pressure1;
-  const p2 = data.pressure_2 ?? data.p2 ?? data.pressure2;
-
-  const set = (key, val) => {
-    const el = card.querySelector(`[data-key="${key}"]`);
-    if (el && val != null && isFinite(val)) {
-      el.textContent = String(Math.round(val));
+    // Cerca la card, se non c'è creala
+    let card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
+    if (!card) {
+        createSensorCard(name, data);
+        card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
     }
-  };
+    if (!card) return;
 
-  set("pressure_0", p0);
-  set("pressure_1", p1);
-  set("pressure_2", p2);
+    // Aggiorna valori
+    const setVal = (key, val, decimals) => {
+        const el = card.querySelector(`[data-key="${key}"]`);
+        if (el) {
+            const n = Number(val);
+            if (!Number.isFinite(n)) return;
+            el.textContent = (typeof decimals === 'number') ? n.toFixed(decimals) : String(Math.round(n));
+        }
+    };
+
+    // Mappa i dati normalizzati
+    setVal('accelx', data.accelx, 3);
+    setVal('accely', data.accely, 3);
+    setVal('accelz', data.accelz, 3);
+    setVal('gyrox', data.gyrox, 3);
+    setVal('gyroy', data.gyroy, 3);
+    setVal('gyroz', data.gyroz, 3);
+    setVal('magx', data.magx, 3);
+    setVal('magy', data.magy, 3);
+    setVal('magz', data.magz, 3);
+
+    // Pressioni (gestisce anche underscore)
+    const p0 = data.pressure0 ?? data.pressure_0 ?? data.p0;
+    const p1 = data.pressure1 ?? data.pressure_1 ?? data.p1;
+    const p2 = data.pressure2 ?? data.pressure_2 ?? data.p2;
+
+    setVal('pressure0', p0, 0);
+    setVal('pressure1', p1, 0);
+    setVal('pressure2', p2, 0);
 }
+
 
 // ==========================================
 // uPlot charts (minimal, compat)
