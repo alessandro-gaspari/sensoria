@@ -1441,54 +1441,44 @@ function normalizeLivePayload(p) {
 // ==========================================
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
+// ==========================================
+// SENSOR UPDATE (parsing calzini)
+// ==========================================
 function processIncomingData(data) {
-  // 0) unwrap: a volte arriva { sensorname: "...",  {...} }
-  let payload = (data && typeof data === "object" && data.data && typeof data.data === "object")
-    ? data.data
-    : data;
-
+  // 0) unwrap: a volte arriva { sensorname: ...,  {...} }
+  let payload = (data && typeof data === "object" && data.data && typeof data.data === "object") ? data.data : data;
   if (!payload || typeof payload !== "object") return;
 
-  // 1) trova nome sensore: può stare fuori (wrapper) o dentro (payload)
-  const outerName =
-    (data && typeof data === "object")
-      ? (data.sensorname ?? data.sensor_name ?? data.sensorName ?? data.name)
-      : null;
-
+  // 1) trova nome sensore (può stare fuori wrapper o dentro payload)
+  const outerName = (data && typeof data === "object") ? (data.sensorname ?? data.sensorName ?? data.name) : null;
   const sensorName = String(
-    payload.sensorname ??
-    payload.sensorName ??
-    payload.sensor_name ??
-    payload.name ??
-    outerName ??
-    ""
+    payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? ""
   ).trim();
-
   if (!sensorName) return;
 
   // 2) normalizza campi in un oggetto unico (mantieni anche gli originali)
   const p = { ...payload, sensorname: sensorName, name: sensorName };
 
-  // Timestamp (non forziamo conversioni qui: il resto del codice usa Date.now())
+  // Timestamp (non forziamo conversioni qui, il resto del codice usa Date.now())
   p.timestamp = p.timestamp ?? p.ts ?? p.time ?? p.t;
 
-  // --- IMU: accetta sia camel che snake_case ---
-  p.accelx = p.accelx ?? p.accelX ?? p.accel_x ?? p.AccelX ?? p.accelX;
-  p.accely = p.accely ?? p.accelY ?? p.accel_y ?? p.AccelY ?? p.accelY;
-  p.accelz = p.accelz ?? p.accelZ ?? p.accel_z ?? p.AccelZ ?? p.accelZ;
+  // --- IMU (accetta sia camel che snake_case) ---
+  p.accelx = p.accelx ?? p.accel_x ?? p.accelX ?? p.AccelX;
+  p.accely = p.accely ?? p.accel_y ?? p.accelY ?? p.AccelY;
+  p.accelz = p.accelz ?? p.accel_z ?? p.accelZ ?? p.AccelZ;
 
-  p.gyrox = p.gyrox ?? p.gyroX ?? p.gyro_x ?? p.GyroX ?? p.gyroX;
-  p.gyroy = p.gyroy ?? p.gyroY ?? p.gyro_y ?? p.GyroY ?? p.gyroY;
-  p.gyroz = p.gyroz ?? p.gyroZ ?? p.gyro_z ?? p.GyroZ ?? p.gyroZ;
+  p.gyrox = p.gyrox ?? p.gyro_x ?? p.gyroX ?? p.GyroX;
+  p.gyroy = p.gyroy ?? p.gyro_y ?? p.gyroY ?? p.GyroY;
+  p.gyroz = p.gyroz ?? p.gyro_z ?? p.gyroZ ?? p.GyroZ;
 
-  p.magx  = p.magx  ?? p.magX  ?? p.mag_x  ?? p.MagX  ?? p.magX;
-  p.magy  = p.magy  ?? p.magY  ?? p.mag_y  ?? p.MagY  ?? p.magY;
-  p.magz  = p.magz  ?? p.magZ  ?? p.mag_z  ?? p.MagZ  ?? p.magZ;
+  p.magx = p.magx ?? p.mag_x ?? p.magX ?? p.MagX;
+  p.magy = p.magy ?? p.mag_y ?? p.magY ?? p.MagY;
+  p.magz = p.magz ?? p.mag_z ?? p.magZ ?? p.MagZ;
 
+  // --- Pressioni (accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2) ---
   p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
   p.pressure1 = p.pressure1 ?? p.pressure_1 ?? p.p1;
   p.pressure2 = p.pressure2 ?? p.pressure_2 ?? p.p2;
-
 
   // Alias p0/p1/p2 (utile per updateSocksUI che ha fallback multipli)
   p.p0 = p.p0 ?? p.pressure0;
@@ -1499,7 +1489,7 @@ function processIncomingData(data) {
   const tMs = getNowMs();
   ensureSessionStart(tMs);
 
-  // 4) calzini: aggiorna UI + grafico mini + BI
+  // 4) calzini: aggiorna UI + grafico + mini BI
   const nameLower = sensorName.toLowerCase();
   const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
   const isLeft = nameLower.includes("sx") || nameLower.includes("left");
@@ -1525,7 +1515,7 @@ function processIncomingData(data) {
     }
   }
 
-  // 5) RAW cards + charts (IMU/pressioni)
+  // 5) RAW cards & charts (IMU/pressioni)
   sensors[sensorName] = p;
   updateSensorCardUI(sensorName, p);
   updateChartsUI(sensorName, p);
@@ -1582,7 +1572,7 @@ function initSockCharts() {
     plugins: [centerLinePlugin()],
     scales: {
       x: { time: false }, // secondi dall'inizio attività
-      y: { auto: true }
+      y: { auto: false, range: [0, 1100] }
     },
     series: [
       {},
@@ -1703,7 +1693,7 @@ function updateSocksUI(side, data, bi) {
     d[3].push(val2);
 
     // buffer punti: 100Hz * 5s = 500 punti visibili; teniamone un po' di più
-    const MAX_POINTS = 400;
+    const MAX_POINTS = 600;
     if (d[0].length > MAX_POINTS) {
       const cut = d[0].length - MAX_POINTS;
       d.forEach(arr => arr.splice(0, cut));
