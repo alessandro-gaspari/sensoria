@@ -444,6 +444,8 @@ function initSocket() {
   socket.on("gpsupdate", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
 
   socket.on("datacleared", () => {
+    isReplayMode = false;
+    showReplayOverlayIfReady();
     leftSockSamples = [];
     rightSockSamples = [];
     sockChartData.left  = [[], [], [], []];
@@ -1090,7 +1092,11 @@ function createReplayOverlayControls() {
   slider.addEventListener("mousedown", (e) => e.stopPropagation());
   slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
 
-  btnLive.addEventListener("click", goLive);
+  btnLive.addEventListener("click", function() {
+    if (isReplayMode) {
+      goLive();
+    }
+  });
 }
 
 function updateReplayTimeLabel(sec) {
@@ -1104,25 +1110,58 @@ function updateReplayTimeLabel(sec) {
 
 function showReplayOverlayIfReady() {
   var overlay = document.getElementById("replay-overlay");
-  if (!overlay) return;
+  var slider = document.getElementById("replay-slider");
+  var btnLive = document.getElementById("btn-live");
+  
+  if (!overlay || !slider || !btnLive) return;
+
+  // Mostra l'overlay se abbiamo dati (durata > 0)
   if (getDurationSec() > 0 && gpsSamples.length >= 1) {
     overlay.style.display = "flex";
+
+    if (isReplayMode) {
+      // MODALITÀ REPLAY (File caricato):
+      // Mostra slider, Nascondi tasto LIVE (o usalo per tornare al 100% se vuoi)
+      slider.style.display = "block";
+      slider.disabled = false;
+      btnLive.style.display = "block"; 
+      btnLive.textContent = "LIVE"; // O "GOTO END"
+    } else {
+      // MODALITÀ LIVE (Streaming):
+      // NASCONDI LO SLIDER. Lascia solo il tempo.
+      slider.style.display = "none"; 
+      
+      // Il tasto LIVE diventa solo un badge passivo (indicatore)
+      btnLive.style.display = "block";
+      btnLive.style.background = "rgba(151,201,62,0.8)"; // Verde pieno
+      btnLive.style.color = "#000";
+      btnLive.textContent = "REC ●"; // O semplicemente "LIVE"
+      btnLive.style.cursor = "default";
+    }
   } else {
+    // Niente dati, nascondi tutto
     overlay.style.display = "none";
   }
 }
+
 
 function updateReplayUiBounds() {
   var slider = document.getElementById("replay-slider");
   if (!slider) return;
 
   var maxSec = getDurationSec();
+  
+  // Aggiorna attributi slider (servono se poi passi in replay)
   slider.max = String(maxSec);
   slider.step = "0.1";
 
+  // Se siamo in LIVE, aggiorna solo il testo del tempo!
   if (!isReplayMode) {
     slider.value = maxSec.toFixed(1);
     updateReplayTimeLabel(maxSec);
+    
+    // Assicurati che l'interfaccia sia coerente (nascondi slider)
+    showReplayOverlayIfReady();
   }
 }
 
