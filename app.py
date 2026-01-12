@@ -1,16 +1,18 @@
 import sys
 sys.stdout.reconfigure(line_buffering=True)
+
 import eventlet
 eventlet.monkey_patch()
-from flask import Flask, render_template, jsonify, request
+
+from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 from flask_socketio import SocketIO
 from flask_cors import CORS
+
 import json
 import time
 import os
 import re
 from datetime import datetime, timezone
-from flask import Flask, render_template, jsonify, request, Response, stream_with_context
 import paramiko
 
 # --------------------------------------------------------------------
@@ -39,13 +41,13 @@ last_profile_data = {}  # Profilo atleta
 last_gps_data = {}      # GPS
 last_bpm_data = 0       # Battito cardiaco
 
-
 # --------------------------------------------------------------------
 # ROUTES
 # --------------------------------------------------------------------
 @app.route('/')
 def index():
     return render_template('dashboard.html')
+
 
 @app.get("/api/logs/raw")
 def api_logs_raw():
@@ -78,15 +80,18 @@ def api_logs_raw():
                         yield chunk
                 finally:
                     try:
-                        if f: f.close()
+                        if f:
+                            f.close()
                     except:
                         pass
                     try:
-                        if sftp: sftp.close()
+                        if sftp:
+                            sftp.close()
                     except:
                         pass
                     try:
-                        if ssh: ssh.close()
+                        if ssh:
+                            ssh.close()
                     except:
                         pass
 
@@ -98,11 +103,13 @@ def api_logs_raw():
 
         except FileNotFoundError:
             try:
-                if f: f.close()
+                if f:
+                    f.close()
             except:
                 pass
             try:
-                if sftp: sftp.close()
+                if sftp:
+                    sftp.close()
             except:
                 pass
             try:
@@ -127,7 +134,7 @@ def get_sensors():
 
 
 # --------------------------------------------------------------------
-# NEW: LOG BROWSER API
+# FUNZIONI UTILI LOG BROWSER
 # --------------------------------------------------------------------
 def _safe_filename(name: str) -> bool:
     if not name:
@@ -154,7 +161,6 @@ def _parse_time_ms(obj: dict):
             try:
                 v = obj[key]
                 if isinstance(v, (int, float)):
-                    # euristica: se < 1e12 probabilmente è in secondi
                     return int(v * 1000) if v < 1e12 else int(v)
                 if isinstance(v, str) and v.strip().isdigit():
                     n = int(v.strip())
@@ -197,27 +203,65 @@ def _extract_json_from_line(line: str):
     except:
         return None
 
+
 def _normalize_sensor_fields(d: dict) -> dict:
+    """
+    Normalizza solo i campi che ti servono nel JS:
+    - accel_x/accel_y/accel_z -> accelx/accely/accelz
+    - gyro_x/gyro_y/gyro_z   -> gyrox/gyroy/gyroz
+    - mag_x/mag_y/mag_z     -> magx/magy/magz
+    - pressure_0/1/2        -> pressure0/1/2 e alias p0/p1/p2
+    - sensor_name           -> sensorname
+    """
     if not isinstance(d, dict):
         return d
+
     out = dict(d)
 
-    # accel (underscore -> no underscore)
-    if "accel_x" in out: out["accelx"] = out.get("accel_x")
-    if "accel_y" in out: out["accely"] = out.get("accel_y")
-    if "accel_z" in out: out["accelz"] = out.get("accel_z")
+    # nome sensore
+    if "sensorname" not in out:
+        if "sensor_name" in out:
+            out["sensorname"] = out.get("sensor_name")
+        elif "name" in out:
+            out["sensorname"] = out.get("name")
+
+    # accel
+    if "accel_x" in out:
+        out["accelx"] = out.get("accel_x")
+    if "accel_y" in out:
+        out["accely"] = out.get("accel_y")
+    if "accel_z" in out:
+        out["accelz"] = out.get("accel_z")
 
     # gyro
-    if "gyro_x" in out: out["gyrox"] = out.get("gyro_x")
-    if "gyro_y" in out: out["gyroy"] = out.get("gyro_y")
-    if "gyro_z" in out: out["gyroz"] = out.get("gyro_z")
+    if "gyro_x" in out:
+        out["gyrox"] = out.get("gyro_x")
+    if "gyro_y" in out:
+        out["gyroy"] = out.get("gyro_y")
+    if "gyro_z" in out:
+        out["gyroz"] = out.get("gyro_z")
 
     # mag
-    if "mag_x" in out: out["magx"] = out.get("mag_x")
-    if "mag_y" in out: out["magy"] = out.get("mag_y")
-    if "mag_z" in out: out["magz"] = out.get("mag_z")
+    if "mag_x" in out:
+        out["magx"] = out.get("mag_x")
+    if "mag_y" in out:
+        out["magy"] = out.get("mag_y")
+    if "mag_z" in out:
+        out["magz"] = out.get("mag_z")
+
+    # pressure
+    if "pressure_0" in out:
+        out["pressure0"] = out.get("pressure_0")
+        out["p0"] = out["pressure0"]
+    if "pressure_1" in out:
+        out["pressure1"] = out.get("pressure_1")
+        out["p1"] = out["pressure1"]
+    if "pressure_2" in out:
+        out["pressure2"] = out.get("pressure_2")
+        out["p2"] = out["pressure2"]
 
     return out
+
 
 def create_ssh_client():
     print("🔄 [SSH] Connessione...", flush=True)
@@ -273,6 +317,7 @@ def get_latest_remote_file(sftp):
     if not logs:
         return None
     return os.path.join(REMOTE_LOG_DIR, logs[0]["name"])
+
 
 @app.post("/api/clear")
 def api_clear():
@@ -400,7 +445,6 @@ def api_logs_load():
                 sensors.append(item)
                 continue
 
-        # Normalizza: se manca t (None), li lasciamo così e il frontend può fare fallback su Date.now()
         return jsonify({
             "name": name,
             "gps": gps,
@@ -512,7 +556,7 @@ def background_watcher():
                                     val = int(data["bpm"])
                                     if val > 0:
                                         last_bpm_data = val
-                                        socketio.emit("bpmupdate", val)   # <-- prima era "bpm_update"
+                                        socketio.emit("bpmupdate", val)
                                 except:
                                     pass
                                 continue
@@ -522,31 +566,30 @@ def background_watcher():
                                     val = int(data["heart_rate"])
                                     if val > 0:
                                         last_bpm_data = val
-                                        socketio.emit("bpmupdate", val)   # <-- prima era "bpm_update"
+                                        socketio.emit("bpmupdate", val)
                                 except:
                                     pass
                                 continue
 
                             # 2) Sensori
                             if ("accel_x" in data) or ("gyro_x" in data) or ("mag_x" in data) or ("pressure_0" in data):
-                                s_name = data.get("sensor_name", "Unknown")
+                                s_name = data.get("sensor_name", data.get("sensorname", data.get("name", "Unknown")))
                                 norm = _normalize_sensor_fields(data)
                                 sensors_data[s_name] = norm
-                                socketio.emit("sensorupdate", {"sensorname": s_name, "data": norm})  # <-- prima "sensor_update"
+                                socketio.emit("sensorupdate", {"sensorname": s_name, "data": norm})
                                 continue
 
                             # 3) GPS
                             if "latitude" in data and "longitude" in data:
                                 last_gps_data = data
-                                socketio.emit("gpsupdate", data)  # <-- prima "gps_update"
+                                socketio.emit("gpsupdate", data)
                                 continue
 
                             # 4) Profilo
                             if "name" in data:
                                 last_profile_data = data
-                                socketio.emit("profileupdate", data)  # <-- prima "profile_update"
+                                socketio.emit("profileupdate", data)
                                 continue
-
 
                     else:
                         socketio.sleep(0.05)

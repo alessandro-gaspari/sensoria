@@ -100,6 +100,9 @@ var MIN_ZOOM_RANGE = 0.5;
 // Calzini (pressure)
 // ==========================================
 var leftSockSamples = [];
+// ---- SOCK CHART RENDER THROTTLE (LIVE) ----
+var sockRenderScheduled = { left: false, right: false };
+var sockLastX = { left: 0, right: 0 };
 var rightSockSamples = [];
 var sockCharts = { left: null, right: null };
 var sockChartData = {
@@ -1552,6 +1555,30 @@ function initSockCharts() {
   }
 }
 
+function scheduleSockRender(side) {
+  if (sockRenderScheduled[side]) return;
+  sockRenderScheduled[side] = true;
+
+  requestAnimationFrame(() => {
+    sockRenderScheduled[side] = false;
+
+    const chart = sockCharts[side];
+    if (!chart) return;
+
+    const d = sockChartData[side];
+    chart.setData(d);
+
+    // finestra visibile in live (secondi)
+    const WIN_SEC = 5;
+    const xMax = d[0].length ? d[0][d[0].length - 1] : 0;
+    const xMin = Math.max(0, xMax - WIN_SEC);
+
+    chart.setScale("x", { min: xMin, max: xMax });
+    chart.redraw();
+  });
+}
+
+
 // FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
   console.log("updateSocksUI called", side, bi, data);
@@ -1586,27 +1613,35 @@ function updateSocksUI(side, data, bi) {
     if (el_destra) el_destra.textContent = Math.round(val0);
   }
 
-  // aggiorna grafico live calzino
+   // aggiorna grafico live calzino (THROTTLED)
   if (!isReplayMode) {
-    if (!sockCharts.left) initSockCharts();
-    const chart = sockCharts[side];
-    if (chart) {
-      const d = sockChartData[side];
-      const tRel = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
-      d[0].push(tRel);
-      d[1].push(val0);
-      d[2].push(val1);
-      d[3].push(val2);
-      if (d[0].length > 100) d.forEach((a) => a.shift());
-      chart.setData(d);
-      // ZOOM live: mostra solo gli ultimi N secondi
-      const N = 4; // prova 3 / 4 / 5 (più piccolo = più zoom)
-      const xMax = d[0].length ? d[0][d[0].length - 1] : 0;
-      const xMin = Math.max(0, xMax - N);
+    // inizializza grafici se mancano
+    if (!sockCharts.left || !sockCharts.right) initSockCharts();
 
-      chart.setScale("x", { min: xMin, max: xMax });
-      chart.redraw();
+    const chart = sockCharts[side];
+    if (!chart) return;
+
+    const d = sockChartData[side];
+
+    // x in secondi dall'inizio (monotono anche se arrivano burst)
+    let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
+    if (x <= sockLastX[side]) x = sockLastX[side] + 0.001; // evita x duplicati/non crescenti
+    sockLastX[side] = x;
+
+    d[0].push(x);
+    d[1].push(val0);
+    d[2].push(val1);
+    d[3].push(val2);
+
+    // buffer punti: 100Hz * 5s = 500 punti visibili; teniamone un po' di più
+    const MAX_POINTS = 2000;
+    if (d[0].length > MAX_POINTS) {
+      const cut = d[0].length - MAX_POINTS;
+      d.forEach(arr => arr.splice(0, cut));
     }
+
+    // ridisegna max a frame, non 100Hz
+    scheduleSockRender(side);
   }
 }
 
@@ -1614,7 +1649,8 @@ function updateSocksUI(side, data, bi) {
 // ==========================================
 // SENSOR CARDS UI (minimal)
 // ==========================================
-function createSensorCard(name, data) {
+
+function createSensorCard(name) {
   var grid = document.getElementById("sensors-grid");
   if (!grid) return;
 
@@ -1624,18 +1660,73 @@ function createSensorCard(name, data) {
 
   div.innerHTML = `
     <div class="sensor-header">
-      <span class="emoji">📡</span>
       <span class="name">${name}</span>
       <div class="status-indicator active"></div>
     </div>
+
     <div class="sensor-data-section">
-      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure_0">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure_1">0</span></div>
-      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure_2">0</span></div>
+
+      <div class="sensor-data-row"><span class="sensor-data-label">Ax</span><span class="sensor-value" data-key="accelx">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">Ay</span><span class="sensor-value" data-key="accely">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">Az</span><span class="sensor-value" data-key="accelz">--</span></div>
+
+      <div class="sensor-data-row"><span class="sensor-data-label">Gx</span><span class="sensor-value" data-key="gyrox">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">Gy</span><span class="sensor-value" data-key="gyroy">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">Gz</span><span class="sensor-value" data-key="gyroz">--</span></div>
+
+      <div class="sensor-data-row"><span class="sensor-data-label">Mx</span><span class="sensor-value" data-key="magx">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">My</span><span class="sensor-value" data-key="magy">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">Mz</span><span class="sensor-value" data-key="magz">--</span></div>
+
+      <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
+      <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>
+
     </div>
   `;
+
   grid.appendChild(div);
 }
+
+function updateSensorCardUI(name, data) {
+  if (!name || !data) return;
+
+  var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
+  if (!card) {
+    createSensorCard(name);
+    card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
+  }
+  if (!card) return;
+
+  const setVal = (key, val, decimals) => {
+    const el = card.querySelector(`[data-key="${key}"]`);
+    if (!el) return;
+
+    const n = Number(val);
+    if (!Number.isFinite(n)) return;
+
+    if (typeof decimals === "number") el.textContent = n.toFixed(decimals);
+    else el.textContent = String(Math.round(n));
+  };
+
+  // NOTA: processIncomingData già normalizza accelx/gyrox/magx/pressure0 ecc. [file:176]
+  setVal("accelx", data.accelx, 3);
+  setVal("accely", data.accely, 3);
+  setVal("accelz", data.accelz, 3);
+
+  setVal("gyrox", data.gyrox, 3);
+  setVal("gyroy", data.gyroy, 3);
+  setVal("gyroz", data.gyroz, 3);
+
+  setVal("magx", data.magx, 3);
+  setVal("magy", data.magy, 3);
+  setVal("magz", data.magz, 3);
+
+  setVal("pressure0", data.pressure0 ?? data.p0, 0);
+  setVal("pressure1", data.pressure1 ?? data.p1, 0);
+  setVal("pressure2", data.pressure2 ?? data.p2, 0);
+}
+
 
 function updateSensorCardUI(name, data) {
   if (!name) return;
