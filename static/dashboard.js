@@ -441,11 +441,9 @@ function initSocket() {
   socket.on("gpsupdate", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
 
   socket.on("datacleared", () => {
-    if (sessionStartTimeMs != null) {
-      sessionEndTimeMs = getNowMs();
-      updateReplayUiBounds();
-      showReplayOverlayIfReady();
-    }
+    resetLiveState();
+    updateReplayUiBounds();
+    showReplayOverlayIfReady();
   });
 }
 
@@ -1659,7 +1657,7 @@ function updateSocksUI(side, data, bi) {
     d[3].push(val2);
 
     // buffer punti: 100Hz * 5s = 500 punti visibili; teniamone un po' di più
-    const MAX_POINTS = 2000;
+    const MAX_POINTS = 500;
     if (d[0].length > MAX_POINTS) {
       const cut = d[0].length - MAX_POINTS;
       d.forEach(arr => arr.splice(0, cut));
@@ -2066,6 +2064,46 @@ async function openLogsModal() {
   }
 }
 
+function resetLiveState() {
+  // timeline
+  sessionStartTimeMs = null;
+  sessionEndTimeMs = null;
+  isReplayMode = false;
+
+  // dati
+  gpsSamples = [];
+  bpmSamples = [];
+  lastLiveBpm = "--";
+
+  leftSockSamples = [];
+  rightSockSamples = [];
+
+  sockChartData.left  = [[], [], [], []];
+  sockChartData.right = [[], [], [], []];
+
+  sockLastX = { left: 0, right: 0 };
+  sockRenderScheduled = { left: false, right: false };
+
+  // mappa
+  clearFullRouteSegments();
+  clearProgressRouteSegments();
+
+  // UI cards
+  updateBpmValue("--");
+  updateSpeedDistanceUI(null, null);
+
+  // svuota subito i grafici calzini (così spariscono i “dati vecchi”)
+  if (sockCharts.left) {
+    sockCharts.left.setData(sockChartData.left);
+    sockCharts.left.setScale("x", { min: 0, max: 4 }); // finestra come prima (4s)
+    sockCharts.left.redraw();
+  }
+  if (sockCharts.right) {
+    sockCharts.right.setData(sockChartData.right);
+    sockCharts.right.setScale("x", { min: 0, max: 4 }); // finestra come prima (4s)
+    sockCharts.right.redraw();
+  }
+}
 
 function resetReplayState() {
   gpsSamples = [];
