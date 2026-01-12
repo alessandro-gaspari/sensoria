@@ -1301,7 +1301,7 @@ function enterReplayAtSecond(sec) {
       ];
       if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
   }
-  
+
   // 1) clamp tempo
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
@@ -1390,42 +1390,41 @@ function enterReplayAtSecond(sec) {
 }
 
 function goLive() {
+  // 1) esci dalla modalità replay
   isReplayMode = false;
-  updateReplayUiBounds();
-  clearProgressRouteSegments();
-  rebuildColoredProgressRouteToTime(getSessionEndMs(), 2.0);
   replayCursorSec = null;
 
-  ["left", "right"].forEach((side) => {
+  // 2) aggiorna slider (ora updateReplayUiBounds vede isReplayMode=false
+  updateReplayUiBounds();
+
+  // 3) route progressiva e mappa
+  clearProgressRouteSegments();
+  rebuildColoredProgressRouteToTime(getSessionEndMs(), 2.0);
+
+  // 4) grafici calzini: finestra ultimi 4s
+  ["left", "right"].forEach(side => {
     const ch = sockCharts[side];
-    const d = sockChartData[side];
+    const d  = sockChartData[side];
     if (!ch || !d || !d[0]?.length) return;
 
     const WINSEC = 4;
     const xMax = d[0][d[0].length - 1];
     const xMin = Math.max(0, xMax - WINSEC);
-    ch.setScale("x", { min: xMin, max: xMax });
+    ch.setScale("x", { min: xMin, max: xMax + 0.1 });
     ch.redraw();
   });
 
+  // 5) metriche live (speed, dist, bpm)
   if (gpsSamples.length) {
     var lastG = gpsSamples[gpsSamples.length - 1];
     updateSpeedDistanceUI(lastG.speedKmh, lastG.cumDistM);
-
-    if (mapMarker) {
-      mapMarker.setLatLng([lastG.lat, lastG.lng]);
-    }
-    if (map) {
-      map.panTo([lastG.lat, lastG.lng], { animate: false });
-    }
-
+    if (mapMarker) mapMarker.setLatLng([lastG.lat, lastG.lng]);
+    if (map) map.panTo([lastG.lat, lastG.lng], { animate: false });
     updateProgressRouteToTime(getSessionEndMs());
   }
-
-  if (lastLiveBpm !== "--") {
-    updateBpmValue(lastLiveBpm);
-  }
+  if (lastLiveBpm !== "--") updateBpmValue(lastLiveBpm);
 }
+
 
 function normalizeLivePayload(p) {
   if (!p || typeof p !== "object") return null;
@@ -1640,86 +1639,93 @@ function scheduleSockRender(side) {
   });
 }
 
+function updateSockNumbers(side, data, bi) {
+  const prefix = (side === "left") ? "l" : "r";
+
+  // BI
+  const biEl = document.getElementById(`bi-val-${side}`);
+  if (biEl && bi != null && isFinite(bi)) {
+    biEl.textContent = `BI ${bi.toFixed(1)}`;
+    biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
+  }
+
+  // Valori pressioni nelle label grandi
+  const val0 = data.p0 ?? data.pressure0 ?? 0;
+  const val1 = data.p1 ?? data.pressure1 ?? 0;
+  const val2 = data.p2 ?? data.pressure2 ?? 0;
+
+  const elPost = document.getElementById(`${prefix}-posteriore`);
+  const elSin  = document.getElementById(`${prefix}-sinistra`);
+  const elDes  = document.getElementById(`${prefix}-destra`);
+
+  if (side === "left") {
+    if (elPost) elPost.textContent = Math.round(val2); // posteriore = P2
+    if (elSin)  elSin.textContent  = Math.round(val0); // sinistra   = P0
+    if (elDes)  elDes.textContent  = Math.round(val1); // destra     = P1
+  } else {
+    if (elPost) elPost.textContent = Math.round(val2); // posteriore = P2
+    if (elSin)  elSin.textContent  = Math.round(val1); // sinistra   = P1
+    if (elDes)  elDes.textContent  = Math.round(val0); // destra     = P0
+  }
+}
 
 // FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
   console.log("updateSocksUI called", side, bi, data);
-  const prefix = side === "left" ? "l" : "r";
-  
-  // BI (Balance Index) - se hai questo dato
-  const biEl = document.getElementById(`bi-val-${side}`);
-  if (biEl) {
-    biEl.textContent = `BI: ${bi.toFixed(1)}%`;
-    biEl.style.color = bi > 40 ? "#ff4444" : SENSORIA_GREEN;
+
+  // 1) Aggiorna solo numeri/BI (valido in live e replay)
+  updateSockNumbers(side, data, bi);
+
+  // 2) Se siamo in replay, STOP: non aggiornare grafico live
+  if (isReplayMode) return;
+
+  // --- Da qui in giù resta la logica del live che avevi ---
+  const val0 = data.p0 ?? data.pressure0 ?? 0;
+  const val1 = data.p1 ?? data.pressure1 ?? 0;
+  const val2 = data.p2 ?? data.pressure2 ?? 0;
+
+  if (!sockCharts.left && !sockCharts.right) initSockCharts();
+  const chart = sockCharts[side];
+  if (!chart) return;
+  const d = sockChartData[side];
+
+  let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
+
+  // reset se il tempo torna indietro tanto (nuova sessione)
+  if (x < sockLastX[side] - 1.0) {
+    sockChartData[side] = [[], [], [], []];
+    sockLastX[side] = 0;
+    chart.setData(sockChartData[side]);
   }
 
-  // Estrai i valori con fallback multipli
-  const val0 = data.p0 ?? data.pressure_0 ?? data.pressure0 ?? 0;
-  const val1 = data.p1 ?? data.pressure_1 ?? data.pressure1 ?? 0;
-  const val2 = data.p2 ?? data.pressure_2 ?? data.pressure2 ?? 0;
+  if (x < sockLastX[side] + 0.001) {
+    x = sockLastX[side] + 0.001;
+  }
+  sockLastX[side] = x;
 
-  // MAPPING CORRETTO PER CALZINO SX E DX
-  const el_posteriore = document.getElementById(`${prefix}-posteriore`);
-  const el_sinistra = document.getElementById(`${prefix}-sinistra`);
-  const el_destra = document.getElementById(`${prefix}-destra`);
-
-  if (side === "left") {
-    // CALZINO SX: posteriore=p2, sinistra=p0, destra=p1
-    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
-    if (el_sinistra) el_sinistra.textContent = Math.round(val0);
-    if (el_destra) el_destra.textContent = Math.round(val1);
-  } else {
-    // CALZINO DX: posteriore=p2, sinistra=p1, destra=p0
-    if (el_posteriore) el_posteriore.textContent = Math.round(val2);
-    if (el_sinistra) el_sinistra.textContent = Math.round(val1);
-    if (el_destra) el_destra.textContent = Math.round(val0);
+  const d0 = d[0];
+  const lastX = d0.length ? d0[d0.length - 1] : null;
+  if (lastX != null && x < lastX - 1) {
+    sockChartData[side] = [[], [], [], []];
+    sockLastX[side] = 0;
+    chart.setData(sockChartData[side]);
   }
 
-   // aggiorna grafico live calzino (THROTTLED)
-  if (!isReplayMode) {
-    // inizializza grafici se mancano
-    if (!sockCharts.left || !sockCharts.right) initSockCharts();
+  const d1 = d[1], d2 = d[2], d3 = d[3];
 
-    const chart = sockCharts[side];
-    if (!chart) return;
+  d0.push(x);
+  d1.push(val0);
+  d2.push(val1);
+  d3.push(val2);
 
-    const d = sockChartData[side];
-
-    // x in secondi dall'inizio (monotono anche se arrivano burst)
-    let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
-    // if (x <= sockLastX[side]) x = sockLastX[side] + 0.001; // evita x duplicati/non crescenti
-    sockLastX[side] = x;
-
-    const lastX = d[0].length ? d[0][d[0].length - 1] : null;
-    if (lastX != null && x < lastX - 1) {
-      sockChartData[side] = [[], [], [], []];
-      sockLastX[side] = 0;
-
-      // riallinea la reference locale
-      d[0] = sockChartData[side][0];
-      d[1] = sockChartData[side][1];
-      d[2] = sockChartData[side][2];
-      d[3] = sockChartData[side][3];
-
-      if (sockCharts[side]) sockCharts[side].setData(sockChartData[side]);
-    }
-
-
-    d[0].push(x);
-    d[1].push(val0);
-    d[2].push(val1);
-    d[3].push(val2);
-
-    // buffer punti: 100Hz * 5s = 500 punti visibili; teniamone un po' di più
-    const MAX_POINTS = 600;
-    if (d[0].length > MAX_POINTS) {
-      const cut = d[0].length - MAX_POINTS;
-      d.forEach(arr => arr.splice(0, cut));
-    }
-
-    // ridisegna max a frame, non 100Hz
-    scheduleSockRender(side);
+  const MAXPOINTS = 600;
+  if (d0.length > MAXPOINTS) {
+    const cut = d0.length - MAXPOINTS;
+    [d0, d1, d2, d3].forEach(arr => arr.splice(0, cut));
   }
+
+  chart.setData(d);
+  scheduleSockRender(side);
 }
 
 
