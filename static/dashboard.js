@@ -756,7 +756,8 @@ function onGpsUpdate(data, opts) {
 
   const lat = Number(data.latitude ?? data.lat);
   const lng = Number(data.longitude ?? data.lng ?? data.lon);
-  const acc = Number(data.accuracy ?? data.acc ?? 10);
+  const acc = Number(data.accuracy ?? data.acc ?? data.hdop ?? 999);
+
 
   let tMs = null;
   if (data.t != null) tMs = Number(data.t);
@@ -788,23 +789,23 @@ function onGpsUpdate(data, opts) {
   let speedKmh = 0;
 
   const goodFix = dtSecRaw >= GPS_MIN_DT_S && dtSecRaw <= 5.0 && acc <= GPS_MAX_ACCURACY_FOR_DIST_M;
+  const prevSpeed = prevSample.speedKmh ?? 0;
 
   if (goodFix) {
-    if (stepM < GPS_MIN_STEP_M) {
-      speedKmh = 0;
+    if (stepM < GPSMINSTEPM) {
       usedStepM = 0;
+      speedKmh = prevSpeed;     // invece di 0
     } else {
       usedStepM = stepM;
       const instantSpeed = (stepM / dtSec) * 3.6;
-      const prevSpeed = prevSample.speedKmh ?? 0;
       speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
-
-      if (!isFinite(speedKmh) || speedKmh < 0) speedKmh = 0;
-      speedKmh = Math.min(speedKmh, MAX_SPEED_KMH);
+      if (!isFinite(speedKmh)) speedKmh = 0;
+      speedKmh = Math.min(Math.max(0, speedKmh), MAXSPEEDKMH);
     }
   } else {
-    speedKmh = prevSample.speedKmh ?? 0;
+    speedKmh = prevSpeed;
   }
+
 
   const newCumDistM = (prevSample.cumDistM ?? 0) + usedStepM;
   const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
