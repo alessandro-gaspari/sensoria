@@ -441,9 +441,14 @@ function initSocket() {
   socket.on("gpsupdate", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
 
   socket.on("datacleared", () => {
-    resetLiveState();
-    updateReplayUiBounds();
-    showReplayOverlayIfReady();
+    leftSockSamples = [];
+    rightSockSamples = [];
+    sockChartData.left  = [[], [], [], []];
+    sockChartData.right = [[], [], [], []];
+    sockLastX = { left: 0, right: 0 };
+
+    if (sockCharts.left)  sockCharts.left.setData(sockChartData.left);
+    if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
   });
 }
 
@@ -1461,7 +1466,8 @@ function processIncomingData(data) {
 
   // --- Pressioni: accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2 ---
   p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
-  p.pressure1 = p.pressure1 ?? p.pressure_1 ?? p.p1;
+  p.pressure1 = p.pressure1 ?? p.pressure_1
+   ?? p.p1;
   p.pressure2 = p.pressure2 ?? p.pressure_2 ?? p.p2;
 
   // Alias p0/p1/p2 (utile per updateSocksUI che ha fallback multipli)
@@ -1650,6 +1656,22 @@ function updateSocksUI(side, data, bi) {
     let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
     if (x <= sockLastX[side]) x = sockLastX[side] + 0.001; // evita x duplicati/non crescenti
     sockLastX[side] = x;
+    // se stai ripartendo dopo replay/vecchia sessione, la X del live riparte da 0.
+    // se l'ultimo punto che avevi è molto avanti, pulisci tutto o uPlot impazzisce.
+    const lastX = d[0].length ? d[0][d[0].length - 1] : null;
+    if (lastX != null && x < lastX - 1) {
+      sockChartData[side] = [[], [], [], []];
+      sockLastX[side] = 0;
+
+      // riallinea la reference locale
+      d[0] = sockChartData[side][0];
+      d[1] = sockChartData[side][1];
+      d[2] = sockChartData[side][2];
+      d[3] = sockChartData[side][3];
+
+      if (sockCharts[side]) sockCharts[side].setData(sockChartData[side]);
+    }
+
 
     d[0].push(x);
     d[1].push(val0);
