@@ -664,23 +664,34 @@ function updateSpeedDistanceUI(speedKmh, distMeters) {
 // ==========================================
 // BPM (LIVE / TIMELINE)
 // ==========================================
-function onBpmUpdate(val) {
-  var bpmInt = parseInt(val, 10);
-  if (isNaN(bpmInt) || bpmInt <= 0) return;
+function onBpmUpdate(payload) {
+  let bpmInt = null;
+  let tMs = null;
 
-  var tMs = getNowMs();
+  // nuovo formato dal server: { bpm, t }
+  if (payload && typeof payload === "object") {
+    bpmInt = parseInt(payload.bpm, 10);
+    tMs = Number(payload.t);
+  } else {
+    // fallback vecchio formato: numero secco
+    bpmInt = parseInt(payload, 10);
+    tMs = getNowMs();
+  }
+
+  if (!Number.isFinite(bpmInt) || bpmInt <= 0) return;
+  if (!Number.isFinite(tMs)) tMs = getNowMs();
+
   ensureSessionStart(tMs);
 
   lastLiveBpm = bpmInt;
   bpmSamples.push({ t: tMs, bpm: bpmInt });
 
-  if (!isReplayMode) {
-    updateBpmValue(bpmInt);
-  }
+  if (!isReplayMode) updateBpmValue(bpmInt);
 
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
+
 
 // ==========================================
 // GPS NORMALIZATION (live + replay)
@@ -1523,6 +1534,19 @@ function calculateBI(payload) {
   return Math.abs(aLat / norm) * 100;
 }
 
+function ensureSockChartSize(side) {
+  const el = document.getElementById(side === "left" ? "chart-left-p" : "chart-right-p");
+  const chart = sockCharts[side];
+  if (!el || !chart) return;
+
+  const w = Math.max(10, el.clientWidth || el.offsetWidth || 0);
+  const h = Math.max(240, el.clientHeight || 240);
+
+  // se uPlot è partito con width 0 o size vecchia, correggi
+  chart.setSize({ width: w, height: h });
+}
+
+
 function initSockCharts() {
   const leftEl = document.getElementById("chart-left-p");
   const rightEl = document.getElementById("chart-right-p");
@@ -1566,10 +1590,11 @@ function scheduleSockRender(side) {
     if (!chart) return;
 
     const d = sockChartData[side];
+    ensureSockChartSize(side);
     chart.setData(d);
 
     // finestra visibile in live (secondi)
-    const WIN_SEC = 5;
+    const WIN_SEC = 4;
     const xMax = d[0].length ? d[0][d[0].length - 1] : 0;
     const xMin = Math.max(0, xMax - WIN_SEC);
 
