@@ -1109,41 +1109,38 @@ function updateReplayTimeLabel(sec) {
 }
 
 function showReplayOverlayIfReady() {
-  var overlay = document.getElementById("replay-overlay");
-  var slider = document.getElementById("replay-slider");
-  var btnLive = document.getElementById("btn-live");
-  
+  const overlay = document.getElementById("replay-overlay");
+  const slider = document.getElementById("replay-slider");
+  const btnLive = document.getElementById("btn-live");
   if (!overlay || !slider || !btnLive) return;
 
-  // Mostra l'overlay se abbiamo dati (durata > 0)
-  if (getDurationSec() > 0 && gpsSamples.length >= 1) {
-    overlay.style.display = "flex";
-
-    if (isReplayMode) {
-      // MODALITÀ REPLAY (File caricato):
-      // Mostra slider, Nascondi tasto LIVE (o usalo per tornare al 100% se vuoi)
-      slider.style.display = "block";
-      slider.disabled = false;
-      btnLive.style.display = "block"; 
-      btnLive.textContent = "LIVE"; // O "GOTO END"
-    } else {
-      // MODALITÀ LIVE (Streaming):
-      // NASCONDI LO SLIDER. Lascia solo il tempo.
-      slider.style.display = "none"; 
-      
-      // Il tasto LIVE diventa solo un badge passivo (indicatore)
-      btnLive.style.display = "block";
-      btnLive.style.background = "rgba(151,201,62,0.8)"; // Verde pieno
-      btnLive.style.color = "#000";
-      btnLive.textContent = "REC ●"; // O semplicemente "LIVE"
-      btnLive.style.cursor = "default";
-    }
-  } else {
-    // Niente dati, nascondi tutto
+  const ready = (getDurationSec() > 0 && gpsSamples.length >= 1);
+  if (!ready) {
     overlay.style.display = "none";
+    return;
+  }
+
+  overlay.style.display = "flex";
+
+  if (isReplayMode) {
+    // REPLAY: slider visibile e usabile
+    slider.style.display = "block";
+    slider.disabled = false;
+
+    btnLive.style.display = "block";
+    btnLive.textContent = "LIVE";
+    btnLive.style.cursor = "pointer";
+  } else {
+    // LIVE: niente scrubbing
+    slider.style.display = "none";
+    slider.disabled = true;
+
+    // Puoi anche nascondere il bottone, oppure tenerlo come badge
+    btnLive.style.display = "block";
+    btnLive.textContent = "LIVE";
+    btnLive.style.cursor = "default";
   }
 }
-
 
 function updateReplayUiBounds() {
   var slider = document.getElementById("replay-slider");
@@ -2627,9 +2624,14 @@ async function loadPastActivity(logName) {
     setStatus("Finalizzazione replay...");
     sessionEndTimeMs = getSessionEndMs();
     rebuildSpeedBySecFromGps();
+    // Siamo in REPLAY (log caricato), quindi abilita modalità replay PRIMA di mostrare overlay/slider
+    isReplayMode = true;
+
     updateReplayUiBounds();
     showReplayOverlayIfReady();
-    enterReplayAtSecond(0);
+    enterReplayAtSecond(0);   // posiziona a inizio (o metti getDurationSec() per andare alla fine)
+    showReplayOverlayIfReady(); // ridondante ma utile se in futuro cambi enterReplayAtSecond
+
 
     setProgress(100);
     setStatus(usedStreaming ? "Caricato (stream)." : "Caricato.");
