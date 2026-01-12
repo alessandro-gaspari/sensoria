@@ -276,11 +276,11 @@ def get_latest_remote_file(sftp):
 
 @app.post("/api/clear")
 def api_clear():
-    global lastprofiledata, lastgpsdata, lastbpmdata
+    global last_profile_data, last_gps_data, last_bpm_data
     sensors_data.clear()
-    lastprofiledata = {}
-    lastgpsdata = {}
-    lastbpmdata = 0
+    last_profile_data = {}
+    last_gps_data = {}
+    last_bpm_data = 0
     socketio.emit("datacleared")
     return jsonify({"ok": True})
 
@@ -470,7 +470,7 @@ def background_watcher():
                 last_profile_data = {}
                 last_gps_data = {}
                 last_bpm_data = 0
-                socketio.emit("data_cleared")
+                socketio.emit("datacleared")
 
                 try:
                     remote_file = sftp.open(current_file_path, "r")
@@ -506,12 +506,13 @@ def background_watcher():
                             if not data:
                                 continue
 
-                            # 1) BPM (priorità)
+                            # 1) BPM
                             if "bpm" in data:
                                 try:
                                     val = int(data["bpm"])
-                                    last_bpm_data = val
-                                    socketio.emit("bpm_update", val)
+                                    if val > 0:
+                                        last_bpm_data = val
+                                        socketio.emit("bpmupdate", val)   # <-- prima era "bpm_update"
                                 except:
                                     pass
                                 continue
@@ -519,8 +520,9 @@ def background_watcher():
                             if "heart_rate" in data:
                                 try:
                                     val = int(data["heart_rate"])
-                                    last_bpm_data = val
-                                    socketio.emit("bpm_update", val)
+                                    if val > 0:
+                                        last_bpm_data = val
+                                        socketio.emit("bpmupdate", val)   # <-- prima era "bpm_update"
                                 except:
                                     pass
                                 continue
@@ -530,20 +532,21 @@ def background_watcher():
                                 s_name = data.get("sensor_name", "Unknown")
                                 norm = _normalize_sensor_fields(data)
                                 sensors_data[s_name] = norm
-                                socketio.emit("sensor_update", {"sensor_name": s_name, "data": norm})
+                                socketio.emit("sensorupdate", {"sensorname": s_name, "data": norm})  # <-- prima "sensor_update"
                                 continue
 
                             # 3) GPS
                             if "latitude" in data and "longitude" in data:
                                 last_gps_data = data
-                                socketio.emit("gps_update", data)
+                                socketio.emit("gpsupdate", data)  # <-- prima "gps_update"
                                 continue
 
                             # 4) Profilo
                             if "name" in data:
                                 last_profile_data = data
-                                socketio.emit("profile_update", data)
+                                socketio.emit("profileupdate", data)  # <-- prima "profile_update"
                                 continue
+
 
                     else:
                         socketio.sleep(0.05)
