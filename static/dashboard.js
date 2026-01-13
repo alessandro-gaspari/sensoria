@@ -1343,125 +1343,77 @@ function avgBiInWindow(samples, tMs, windowMs) {
 
 function enterReplayAtSecond(sec) {
   if (sessionStartTimeMs == null) return;
-
-  // modalità replay
+  
+  // Attiva modalità replay
   isReplayMode = true;
 
-  // stop animazioni live marker se presenti
+  // Ferma animazioni live marker se presenti
   if (animationFrameId) {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = null;
   }
-  // Se i grafici sono vuoti o parziali (perché magari in live usavi un buffer rotante),
-  // ricarica TUTTI i dati storici accumulati (leftSockSamples / rightSockSamples)
-  if (leftSockSamples.length > sockChartData.left[0].length) {
-      // Ricostruisci sockChartData.left dai samples completi
-      sockChartData.left = [
-          leftSockSamples.map(s => (s.t - sessionStartTimeMs)/1000), // x (sec)
-          leftSockSamples.map(s => s.p0),
-          leftSockSamples.map(s => s.p1),
-          leftSockSamples.map(s => s.p2)
-      ];
-      if (sockCharts.left) sockCharts.left.setData(sockChartData.left);
-  }
 
-  if (rightSockSamples.length > sockChartData.right[0].length) {
-      // Idem per destra
-      sockChartData.right = [
-          rightSockSamples.map(s => (s.t - sessionStartTimeMs)/1000),
-          rightSockSamples.map(s => s.p0),
-          rightSockSamples.map(s => s.p1),
-          rightSockSamples.map(s => s.p2)
-      ];
-      if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
-  }
-
-  // 1) clamp tempo
+  // --- 1. Calcola il tempo assoluto (timestamp) del cursore ---
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
-  const lMax = lastSockSec("left");
-  const rMax = lastSockSec("right");
-  if (sockCharts.left)  setSockWindow(sockCharts.left,  clampedSec, 5, lMax);
-  if (sockCharts.right) setSockWindow(sockCharts.right, clampedSec, 5, rMax);
-  replayCursorSec = clampedSec;
-  if (sockCharts.left) sockCharts.left.redraw();
-  if (sockCharts.right) sockCharts.right.redraw();
-  const tMs = sessionStartTimeMs + clampedSec * 1000;
+  const tMs = sessionStartTimeMs + (clampedSec * 1000);
 
-  // 2) label mm:ss
+  // --- 2. Aggiorna UI Tempo e Slider ---
   updateReplayTimeLabel(clampedSec);
+  replayCursorSec = clampedSec; // Serve per la linea verticale sui grafici
 
-  // 3) mappa: posizione interpolata + progress route
+  // --- 3. Sincronizza Mappa e Percorso ---
   const pos = getInterpolatedGpsAtTime(tMs);
-  if (pos && mapMarker) {
-    mapMarker.setLatLng([pos.lat, pos.lng]);
-    currentMapPos = { lat: pos.lat, lng: pos.lng };
+  if (pos) {
+    if (!mapMarker) { 
+       // Init marker se non c'è (raro)
+    } else { 
+       mapMarker.setLatLng([pos.lat, pos.lng]); 
+    }
+    
     if (map) map.panTo([pos.lat, pos.lng], { animate: false });
+    currentMapPos = { lat: pos.lat, lng: pos.lng }; 
   }
   updateProgressRouteToTime(tMs);
 
-  // 4) BPM: step ultimo noto a tMs
+  // --- 4. Sincronizza Metriche (BPM, Speed, Dist) ---
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
 
-  // 5) distanza continua + velocita a scatti ogni secondo
   const dist = getDistanceAtTime(tMs);
-  const wholeSec = Math.max(0, Math.floor(clampedSec));
-
-  // velocita a scatti: se manca il valore per quel secondo, usa ultimo valore noto (no flash a 0)
-  let speed = null;
-  if (Array.isArray(speedBySec) && speedBySec.length) {
-    if (speedBySec[wholeSec] != null) {
-      speed = speedBySec[wholeSec];
-    } else {
-      for (let s = wholeSec - 1; s >= 0; s--) {
-        if (speedBySec[s] != null) {
-          speed = speedBySec[s];
-          break;
-        }
-      }
-    }
-  }
-  if (speed == null || !isFinite(speed)) speed = 0;
-  speed = Math.max(0, speed);
-
+  const wholeSec = Math.floor(clampedSec);
+  let speed = (speedBySec && speedBySec[wholeSec] != null) ? speedBySec[wholeSec] : 0;
   updateSpeedDistanceUI(speed, dist);
 
-  // 6) calzini: finestra zoom + valori istantanei
-  const windowHalf = 2;
-  const tMin = Math.max(0, clampedSec - windowHalf);
-  const tMax = tMin + windowHalf * 2;
-
-  if (sockCharts.left) {
-    sockCharts.left.setScale("x", { min: tMin, max: tMax });
-  }
-  if (sockCharts.right) {
-    sockCharts.right.setScale("x", { min: tMin, max: tMax });
+  // --- 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay) ---
+  const sampleL = findSampleAtTime(leftSockSamples, tMs);
+  if (sampleL) {
+    // Grafico BI/Pressioni
+    updateSocksUI('left', {p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2}, sampleL.bi);
+    // Dati RAW (Accel, Gyro, Mag)
+    updateSensorCardUI(sampleL.sensorname || "Calzino SX", sampleL); 
   }
 
-  // AGGIORNA VALORI ISTANTANEI CALZINI
-  const lS = findSampleAtTime(leftSockSamples, tMs);
-  if (lS) {
-    const biL = avgBiInWindow(leftSockSamples, tMs, 150);
-    updateSocksUI("left", { p0: lS.p0, p1: lS.p1, p2: lS.p2 }, biL ?? lS.bi);
+  const sampleR = findSampleAtTime(rightSockSamples, tMs);
+  if (sampleR) {
+    updateSocksUI('right', {p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2}, sampleR.bi);
+    updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
   }
 
-  const rS = findSampleAtTime(rightSockSamples, tMs);
-  if (rS) {
-    const biR = avgBiInWindow(rightSockSamples, tMs, 150);
-    updateSocksUI("right", { p0: rS.p0, p1: rS.p1, p2: rS.p2 }, biR ?? rS.bi);
-  }
+  // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
+  // Hack per forzare redraw cursore
+  if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10}); 
+  if (sockCharts.right) sockCharts.right.setCursor({left: -10, top: -10});
 
+  // Centra finestra temporale (es. 5 secondi)
+  const windowHalf = 2.5; 
+  const minX = Math.max(0, clampedSec - windowHalf);
+  const maxX = minX + (windowHalf * 2);
 
-  // 7) sync slider (solo se non stai trascinando in modo fine)
-  const slider = document.getElementById("replay-slider");
-  if (slider) {
-    const v = parseFloat(slider.value) || 0;
-    if (!isFinite(v) || Math.abs(v - clampedSec) > 0.5) {
-      slider.value = clampedSec.toFixed(1);
-    }
-  }
+  if (sockCharts.left) sockCharts.left.setScale('x', {min: minX, max: maxX});
+  if (sockCharts.right) sockCharts.right.setScale('x', {min: minX, max: maxX});
 }
+
 
 function goLive() {
   // 1) esci dalla modalità replay
@@ -1539,101 +1491,73 @@ function processIncomingData(data) {
   lastDataTimestamp = Date.now();
   lastDataTime = Date.now();
   isStreamActive = true;
-  // 0) unwrap: a volte arriva { sensorname: ...,  {...} }
-  let payload = (data && typeof data === "object" && data.data && typeof data.data === "object") ? data.data : data;
-  if (!payload || typeof payload !== "object") return;
 
-  // 1) trova nome sensore (può stare fuori wrapper o dentro payload)
-  const outerName = (data && typeof data === "object") ? (data.sensorname ?? data.sensorName ?? data.name) : null;
-  const sensorName = String(
-    payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? ""
-  ).trim();
+  // 0. Unwrap: a volte arriva {sensorname: "...",  {...}}
+  let payload = data;
+  if (typeof data === 'object' && data.data && typeof data.data === 'object') {
+    payload = data.data; // unwrap
+  }
+  if (!payload || typeof payload !== 'object') return;
+
+  // 1. Trova nome sensore
+  const outerName = (typeof data === 'object') ? (data.sensorname ?? data.sensorName ?? data.name) : null;
+  const sensorName = String(payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? "").trim();
   if (!sensorName) return;
 
-  // 2) normalizza campi in un oggetto unico (mantieni anche gli originali)
+  // 2. Normalizza campi in un oggetto unico
   const p = { ...payload, sensorname: sensorName, name: sensorName };
-
-  // Timestamp (non forziamo conversioni qui, il resto del codice usa Date.now())
+  
+  // Timestamp: non forziamo conversioni qui, il resto del codice usa Date.now() se manca
   p.timestamp = p.timestamp ?? p.ts ?? p.time ?? p.t;
 
-    // --- IMU (normalizzazione base) ---
-  let ax = p.accelx ?? p.accel_x ?? p.accelX ?? p.AccelX;
-  let ay = p.accely ?? p.accel_y ?? p.accelY ?? p.AccelY;
-  let az = p.accelz ?? p.accel_z ?? p.accelZ ?? p.AccelZ;
+  // --- IMU: normalizzazione base ---
+  let ax = p.accelx ?? p.accelx ?? p.accelX ?? p.AccelX;
+  let ay = p.accely ?? p.accely ?? p.accelY ?? p.AccelY;
+  let az = p.accelz ?? p.accelz ?? p.accelZ ?? p.AccelZ;
+  
+  let gx = p.gyrox ?? p.gyrox ?? p.gyroX ?? p.GyroX;
+  let gy = p.gyroy ?? p.gyroy ?? p.gyroY ?? p.GyroY;
+  let gz = p.gyroz ?? p.gyroz ?? p.gyroZ ?? p.GyroZ;
+  
+  let mx = p.magx ?? p.magx ?? p.magX ?? p.MagX;
+  let my = p.magy ?? p.magy ?? p.magY ?? p.MagY;
+  let mz = p.magz ?? p.magz ?? p.magZ ?? p.MagZ;
 
-  let gx = p.gyrox ?? p.gyro_x ?? p.gyroX ?? p.GyroX;
-  let gy = p.gyroy ?? p.gyro_y ?? p.gyroY ?? p.GyroY;
-  let gz = p.gyroz ?? p.gyro_z ?? p.gyroZ ?? p.GyroZ;
-
-  let mx = p.magx ?? p.mag_x ?? p.magX ?? p.MagX;
-  let my = p.magy ?? p.mag_y ?? p.magY ?? p.MagY;
-  let mz = p.magz ?? p.mag_z ?? p.magZ ?? p.MagZ;
-
-  // === FILTRO DELTA (ANTI-SPIKE) ===
-  // Inizializza memoria per questo sensore se non esiste
+  // FILTRO DELTA (ANTI-SPIKE) - Opzionale ma consigliato
   if (!lastValidIMU[sensorName]) {
-    lastValidIMU[sensorName] = {
-      ax: 0, ay: 0, az: 0,
-      gx: 0, gy: 0, gz: 0,
-      mx: 0, my: 0, mz: 0
-    };
+    lastValidIMU[sensorName] = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0, mx: 0, my: 0, mz: 0 };
   }
-
   const last = lastValidIMU[sensorName];
+  const MAX_DELTA_ACCEL = 500; 
+  const MAX_DELTA_GYRO = 800;
+  const MAX_DELTA_MAG = 500;
 
-  // Configura le soglie massime di "salto" per ogni tipo di dato
-  // Se il valore cambia più di questo in un singolo campione, viene scartato.
-  // ADATTA QUESTI VALORI AL TUO CASO:
-  const MAX_DELTA_ACCEL = 500; // Es. se accelera di colpo > 500 unità
-  const MAX_DELTA_GYRO  = 800; 
-  const MAX_DELTA_MAG   = 500; 
-
-  function filterVal(newVal, lastVal, maxDelta) {
-      const v = Number(newVal);
-      if (!Number.isFinite(v)) return lastVal; // Se invalido, tieni vecchio
-      
-      // Se è il primo valore (lastVal a 0 potrebbe essere un caso, ma ok per start)
-      // O se la differenza è accettabile
-      if (Math.abs(v - lastVal) <= maxDelta) {
-          return v; // Accetta
-      }
-      
-      // Spike rilevato! Ritorna il vecchio valore (così il grafico è piatto invece di schizzare)
-      // console.log(`Spike su ${sensorName}: ${v} (prev: ${lastVal})`);
-      return lastVal; 
-  }
-
-  // Applica filtro e aggiorna memoria
   p.accelx = last.ax = filterVal(ax, last.ax, MAX_DELTA_ACCEL);
   p.accely = last.ay = filterVal(ay, last.ay, MAX_DELTA_ACCEL);
   p.accelz = last.az = filterVal(az, last.az, MAX_DELTA_ACCEL);
+  
+  p.gyrox = last.gx = filterVal(gx, last.gx, MAX_DELTA_GYRO);
+  p.gyroy = last.gy = filterVal(gy, last.gy, MAX_DELTA_GYRO);
+  p.gyroz = last.gz = filterVal(gz, last.gz, MAX_DELTA_GYRO);
+  
+  p.magx = last.mx = filterVal(mx, last.mx, MAX_DELTA_MAG);
+  p.magy = last.my = filterVal(my, last.my, MAX_DELTA_MAG);
+  p.magz = last.mz = filterVal(mz, last.mz, MAX_DELTA_MAG);
 
-  p.gyrox  = last.gx = filterVal(gx, last.gx, MAX_DELTA_GYRO);
-  p.gyroy  = last.gy = filterVal(gy, last.gy, MAX_DELTA_GYRO);
-  p.gyroz  = last.gz = filterVal(gz, last.gz, MAX_DELTA_GYRO);
-
-  p.magx   = last.mx = filterVal(mx, last.mx, MAX_DELTA_MAG);
-  p.magy   = last.my = filterVal(my, last.my, MAX_DELTA_MAG);
-  p.magz   = last.mz = filterVal(mz, last.mz, MAX_DELTA_MAG);
-  // =================================
-
-  // --- Pressioni (accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2) ---
-  p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
-  p.pressure1 = p.pressure1 ?? p.pressure_1 ?? p.p1;
-  p.pressure2 = p.pressure2 ?? p.pressure_2 ?? p.p2;
-
-  // Alias p0/p1/p2 (utile per updateSocksUI che ha fallback multipli)
+  // --- Pressioni ---
+  p.pressure0 = p.pressure0 ?? p.pressure0 ?? p.p0;
+  p.pressure1 = p.pressure1 ?? p.pressure1 ?? p.p1;
+  p.pressure2 = p.pressure2 ?? p.pressure2 ?? p.p2;
+  // Alias p0/p1/p2
   p.p0 = p.p0 ?? p.pressure0;
   p.p1 = p.p1 ?? p.pressure1;
   p.p2 = p.p2 ?? p.pressure2;
 
-  
-
-  // 3) timeline
+  // 3. Timeline
   const tMs = getNowMs();
   ensureSessionStart(tMs);
 
-  // 4) calzini: aggiorna UI + grafico + mini BI
+  // 4. Calzini: aggiorna UI grafico mini + BI + RAW
   const nameLower = sensorName.toLowerCase();
   const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
   const isLeft = nameLower.includes("sx") || nameLower.includes("left");
@@ -1643,27 +1567,50 @@ function processIncomingData(data) {
     const v0 = Number(p.pressure0);
     const v1 = Number(p.pressure1);
     const v2 = Number(p.pressure2);
-
+    
     const p0 = Number.isFinite(v0) ? v0 : 0;
     const p1 = Number.isFinite(v1) ? v1 : 0;
     const p2 = Number.isFinite(v2) ? v2 : 0;
 
     const bi = calculateBI(p);
+    
+    // Oggetto COMPLETO da salvare per il Replay
+    const fullSample = {
+      t: tMs,
+      p0: p0, p1: p1, p2: p2,
+      bi: bi,
+      // Dati Raw Normalizzati
+      accelx: p.accelx, accely: p.accely, accelz: p.accelz,
+      gyrox: p.gyrox, gyroy: p.gyroy, gyroz: p.gyroz,
+      magx: p.magx, magy: p.magy, magz: p.magz,
+      // Dati originali (utile per debug o altri campi)
+      sensorname: sensorName,
+      ...p
+    };
 
     if (isLeft) {
-      leftSockSamples.push({ t: tMs, p0, p1, p2, bi });
-      if (!isReplayMode) updateSocksUI("left", { p0, p1, p2, pressure0: p0, pressure1: p1, pressure2: p2 }, bi);
+      leftSockSamples.push(fullSample);
+      if (!isReplayMode) {
+        // LIVE UI
+        updateSocksUI('left', { p0, p1, p2 }, bi);
+        updateSensorCardUI(sensorName, p); // Mostra raw live
+      }
     } else if (isRight) {
-      rightSockSamples.push({ t: tMs, p0, p1, p2, bi });
-      if (!isReplayMode) updateSocksUI("right", { p0, p1, p2, pressure0: p0, pressure1: p1, pressure2: p2 }, bi);
+      rightSockSamples.push(fullSample);
+      if (!isReplayMode) {
+        // LIVE UI
+        updateSocksUI('right', { p0, p1, p2 }, bi);
+        updateSensorCardUI(sensorName, p); // Mostra raw live
+      }
     }
   }
 
-  // 5) RAW cards & charts (IMU/pressioni)
-  sensors[sensorName] = p;
-  updateSensorCardUI(sensorName, p);
-  updateChartsUI(sensorName, p);
+  // 5. RAW cards (charts IMU/pressioni) - per sensori generici non-calzini o logica chart dedicata
+  // sensors[sensorName] = p; // se serve storico globale
+  // updateSensorCardUI(sensorName, p); // Già chiamato sopra per i calzini
+  // updateChartsUI(sensorName, p); // Se usi uPlot real-time per accel/gyro
 }
+
 
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
@@ -1917,44 +1864,41 @@ function createSensorCard(name, data) {
     grid.appendChild(div);
 }
 
-function updateSensorCardUI(name, data) {
+function updateSensorCardUI(sensorName, data) {
+    if (!sensorName || !data) return;
 
-    if (!name || !data) return;
-    var card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-    if (!card) {
-        createSensorCard(name, data); // <--- Passiamo 'data' qui!
-        card = document.querySelector(`[data-sensor="${CSS.escape(name)}"]`);
-    }
-    if (!card) return;
+    const isLeft = sensorName.toLowerCase().includes("sx") || sensorName.toLowerCase().includes("left");
+    const suffix = isLeft ? "sx" : "dx"; 
+    // Nota: verifica che nel tuo HTML gli ID siano tipo "accel-x-sx", "gyro-z-dx", ecc.
 
-  const setVal = (key, val, decimals) => {
-    const el = card.querySelector(`[data-key="${key}"]`);
-    if (!el) return;
+    // Helper formattazione
+    const f = (n) => (n != null && Number.isFinite(Number(n))) ? Number(n).toFixed(2) : "--";
 
-    const n = Number(val);
-    if (!Number.isFinite(n)) return;
+    // --- ACCELEROMETRO ---
+    const axEl = document.getElementById(`accel-x-${suffix}`);
+    if (axEl) axEl.textContent = f(data.accelx);
+    const ayEl = document.getElementById(`accel-y-${suffix}`);
+    if (ayEl) ayEl.textContent = f(data.accely);
+    const azEl = document.getElementById(`accel-z-${suffix}`);
+    if (azEl) azEl.textContent = f(data.accelz);
 
-    if (typeof decimals === "number") el.textContent = n.toFixed(decimals);
-    else el.textContent = String(Math.round(n));
-  };
-
-  // NOTA: processIncomingData già normalizza accelx/gyrox/magx/pressure0 ecc. [file:176]
-  setVal("accelx", data.accelx, 3);
-  setVal("accely", data.accely, 3);
-  setVal("accelz", data.accelz, 3);
-
-  setVal("gyrox", data.gyrox, 3);
-  setVal("gyroy", data.gyroy, 3);
-  setVal("gyroz", data.gyroz, 3);
-
-  setVal("magx", data.magx, 3);
-  setVal("magy", data.magy, 3);
-  setVal("magz", data.magz, 3);
-
-  setVal("pressure0", data.pressure0 ?? data.p0, 0);
-  setVal("pressure1", data.pressure1 ?? data.p1, 0);
-  setVal("pressure2", data.pressure2 ?? data.p2, 0);
+    // --- GIROSCOPIO ---
+    const gxEl = document.getElementById(`gyro-x-${suffix}`);
+    if (gxEl) gxEl.textContent = f(data.gyrox);
+    const gyEl = document.getElementById(`gyro-y-${suffix}`);
+    if (gyEl) gyEl.textContent = f(data.gyroy);
+    const gzEl = document.getElementById(`gyro-z-${suffix}`);
+    if (gzEl) gzEl.textContent = f(data.gyroz);
+    
+    // --- MAGNETOMETRO (Opzionale) ---
+    const mxEl = document.getElementById(`mag-x-${suffix}`);
+    if (mxEl) mxEl.textContent = f(data.magx);
+    const myEl = document.getElementById(`mag-y-${suffix}`);
+    if (myEl) myEl.textContent = f(data.magy);
+    const mzEl = document.getElementById(`mag-z-${suffix}`);
+    if (mzEl) mzEl.textContent = f(data.magz);
 }
+
 
 function updateSensorCardUI(name, data) {
     if (!name || !data) return;
