@@ -809,8 +809,6 @@ function normalizeGpsPoint(raw) {
 
 function onGpsUpdate(data, opts) {
 
-  lastDataTime = Date.now();
-  isStreamActive = true;
   opts = opts || { updateUi: true, updateMap: true };
   if (!data) return;
 
@@ -1559,6 +1557,9 @@ function normalizeLivePayload(p) {
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
 function processIncomingData(data) {
+
+  lastDataTime = Date.now();
+  isStreamActive = true;
   // 0) unwrap: a volte arriva { sensorname: ...,  {...} }
   let payload = (data && typeof data === "object" && data.data && typeof data.data === "object") ? data.data : data;
   if (!payload || typeof payload !== "object") return;
