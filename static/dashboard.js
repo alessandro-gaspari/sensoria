@@ -43,6 +43,7 @@ var bpmSamples = []; // { t, bpm }
 var lastLiveBpm = "--";
 
 var isBulkLoading = false;
+var lastValidIMU = {};
 
 var speedBySec = [];
 var secPos = [];
@@ -1515,18 +1516,66 @@ function processIncomingData(data) {
   // Timestamp (non forziamo conversioni qui, il resto del codice usa Date.now())
   p.timestamp = p.timestamp ?? p.ts ?? p.time ?? p.t;
 
-  // --- IMU (accetta sia camel che snake_case) ---
-  p.accelx = p.accelx ?? p.accel_x ?? p.accelX ?? p.AccelX;
-  p.accely = p.accely ?? p.accel_y ?? p.accelY ?? p.AccelY;
-  p.accelz = p.accelz ?? p.accel_z ?? p.accelZ ?? p.AccelZ;
+    // --- IMU (normalizzazione base) ---
+  let ax = p.accelx ?? p.accel_x ?? p.accelX ?? p.AccelX;
+  let ay = p.accely ?? p.accel_y ?? p.accelY ?? p.AccelY;
+  let az = p.accelz ?? p.accel_z ?? p.accelZ ?? p.AccelZ;
 
-  p.gyrox = p.gyrox ?? p.gyro_x ?? p.gyroX ?? p.GyroX;
-  p.gyroy = p.gyroy ?? p.gyro_y ?? p.gyroY ?? p.GyroY;
-  p.gyroz = p.gyroz ?? p.gyro_z ?? p.gyroZ ?? p.GyroZ;
+  let gx = p.gyrox ?? p.gyro_x ?? p.gyroX ?? p.GyroX;
+  let gy = p.gyroy ?? p.gyro_y ?? p.gyroY ?? p.GyroY;
+  let gz = p.gyroz ?? p.gyro_z ?? p.gyroZ ?? p.GyroZ;
 
-  p.magx = p.magx ?? p.mag_x ?? p.magX ?? p.MagX;
-  p.magy = p.magy ?? p.mag_y ?? p.magY ?? p.MagY;
-  p.magz = p.magz ?? p.mag_z ?? p.magZ ?? p.MagZ;
+  let mx = p.magx ?? p.mag_x ?? p.magX ?? p.MagX;
+  let my = p.magy ?? p.mag_y ?? p.magY ?? p.MagY;
+  let mz = p.magz ?? p.mag_z ?? p.magZ ?? p.MagZ;
+
+  // === FILTRO DELTA (ANTI-SPIKE) ===
+  // Inizializza memoria per questo sensore se non esiste
+  if (!lastValidIMU[sensorName]) {
+    lastValidIMU[sensorName] = {
+      ax: 0, ay: 0, az: 0,
+      gx: 0, gy: 0, gz: 0,
+      mx: 0, my: 0, mz: 0
+    };
+  }
+
+  const last = lastValidIMU[sensorName];
+
+  // Configura le soglie massime di "salto" per ogni tipo di dato
+  // Se il valore cambia più di questo in un singolo campione, viene scartato.
+  // ADATTA QUESTI VALORI AL TUO CASO:
+  const MAX_DELTA_ACCEL = 500; // Es. se accelera di colpo > 500 unità
+  const MAX_DELTA_GYRO  = 800; 
+  const MAX_DELTA_MAG   = 500; 
+
+  function filterVal(newVal, lastVal, maxDelta) {
+      const v = Number(newVal);
+      if (!Number.isFinite(v)) return lastVal; // Se invalido, tieni vecchio
+      
+      // Se è il primo valore (lastVal a 0 potrebbe essere un caso, ma ok per start)
+      // O se la differenza è accettabile
+      if (Math.abs(v - lastVal) <= maxDelta) {
+          return v; // Accetta
+      }
+      
+      // Spike rilevato! Ritorna il vecchio valore (così il grafico è piatto invece di schizzare)
+      // console.log(`Spike su ${sensorName}: ${v} (prev: ${lastVal})`);
+      return lastVal; 
+  }
+
+  // Applica filtro e aggiorna memoria
+  p.accelx = last.ax = filterVal(ax, last.ax, MAX_DELTA_ACCEL);
+  p.accely = last.ay = filterVal(ay, last.ay, MAX_DELTA_ACCEL);
+  p.accelz = last.az = filterVal(az, last.az, MAX_DELTA_ACCEL);
+
+  p.gyrox  = last.gx = filterVal(gx, last.gx, MAX_DELTA_GYRO);
+  p.gyroy  = last.gy = filterVal(gy, last.gy, MAX_DELTA_GYRO);
+  p.gyroz  = last.gz = filterVal(gz, last.gz, MAX_DELTA_GYRO);
+
+  p.magx   = last.mx = filterVal(mx, last.mx, MAX_DELTA_MAG);
+  p.magy   = last.my = filterVal(my, last.my, MAX_DELTA_MAG);
+  p.magz   = last.mz = filterVal(mz, last.mz, MAX_DELTA_MAG);
+  // =================================
 
   // --- Pressioni (accetta pressure_0/1/2 e pressure0/1/2 e p0/p1/p2) ---
   p.pressure0 = p.pressure0 ?? p.pressure_0 ?? p.p0;
@@ -1537,6 +1586,8 @@ function processIncomingData(data) {
   p.p0 = p.p0 ?? p.pressure0;
   p.p1 = p.p1 ?? p.pressure1;
   p.p2 = p.p2 ?? p.pressure2;
+
+  
 
   // 3) timeline
   const tMs = getNowMs();

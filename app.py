@@ -400,26 +400,29 @@ def api_logs_load():
             if not data:
                 continue
 
-            tms = _parse_time_ms(data)
+            # subito dopo: data = extract_json_from_line(line)
+            tms = _parse_time_ms(data) or int(time.time() * 1000)
 
-            # BPM
             if "bpm" in data:
                 try:
-                    v = int(data["bpm"])
-                    if v > 0:
-                        bpm.append({"t": tms, "bpm": v})
+                    val = int(data["bpm"])
+                    if val > 0:
+                        lastbpmdata = val
+                        socketio.emit("bpmupdate", {"bpm": val, "t": tms})
                 except:
                     pass
                 continue
 
             if "heart_rate" in data:
                 try:
-                    v = int(data["heart_rate"])
-                    if v > 0:
-                        bpm.append({"t": tms, "bpm": v})
+                    val = int(data["heart_rate"])
+                    if val > 0:
+                        lastbpmdata = val
+                        socketio.emit("bpmupdate", {"bpm": val, "t": tms})
                 except:
                     pass
                 continue
+
 
             # GPS
             if "latitude" in data and "longitude" in data:
