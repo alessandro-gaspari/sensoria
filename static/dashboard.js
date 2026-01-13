@@ -304,6 +304,12 @@ document.addEventListener("DOMContentLoaded", function () {
   ensureMetricsCardsUI();
   initPastActivityLoader();
 
+  setInterval(() => {
+    if (!isReplayMode && sessionStartTimeMs) {
+      updateReplayUiBounds();
+    }
+  }, 1000);
+
   if (!biAvgTimer) {
     biAvgTimer = setInterval(() => {
       // LEFT
@@ -505,15 +511,17 @@ function rebuildSpeedBySecFromGps() {
 
 function getSessionEndMs() {
   if (!gpsSamples.length) return sessionStartTimeMs || Date.now();
+  if (!isReplayMode) return Date.now();
+  
   const lastGps = gpsSamples[gpsSamples.length - 1].t;
 
-  // guard-rail: se durata enorme, probabile timestamp errato -> fallback 1s per campione
   const diff = lastGps - sessionStartTimeMs;
   if (diff > 7200000) {
     console.warn("Rilevato timestamp anomalo, tronco la durata.");
     return sessionStartTimeMs + gpsSamples.length * 1000;
   }
-  return lastGps;
+  
+  return lastGps.t;
 }
 
 function getDurationSec() {
@@ -979,126 +987,132 @@ function applyMapRotation(deg) {
 function createReplayOverlayControls() {
   var mapDiv = document.getElementById("map");
   if (!mapDiv) return;
-  if (document.getElementById("replay-overlay")) return;
 
-  var overlay = document.createElement("div");
-  overlay.id = "replay-overlay";
-  overlay.style.cssText = `
-    position:absolute;
-    left:16px;
-    right:16px;
-    bottom:16px;
-    z-index:30000;
-    display:none;
-    align-items:center;
-    gap:12px;
-    padding:10px 12px;
-    border-radius:12px;
-    background: rgba(10,10,10,0.85);
-    border: 1px solid rgba(255,255,255,0.10);
-    backdrop-filter: blur(6px);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.55);
-  `;
+  // A) OVERLAY TEMPO + SLIDER (basso-sinistra / centro)
+  if (!document.getElementById("replay-overlay")) {
+    var overlay = document.createElement("div");
+    overlay.id = "replay-overlay";
+    overlay.style.cssText = `
+      position: absolute; left: 16px; right: 16px; bottom: 20px; z-index: 30000;
+      display: none; align-items: center; gap: 12px; padding: 10px 18px;
+      border-radius: 12px; background: rgba(10,10,10,0.85);
+      border: 1px solid rgba(255,255,255,0.10); backdrop-filter: blur(6px);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+    `;
 
-  overlay.innerHTML = `
-    <div style="min-width:64px;display:flex;flex-direction:column;gap:2px">
-      <div style="font-size:10px;letter-spacing:1px;color:#9aa;font-weight:700">TIME</div>
-      <div id="replay-time-label" style="font-family:monospace;font-size:13px;color:#fff;font-weight:700">00:00</div>
-    </div>
-    <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1" style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
-    <button id="btn-live" type="button" style="padding:6px 12px;border-radius:8px;border:1px solid ${SENSORIA_GREEN};background:rgba(151,201,62,0.18);color:${SENSORIA_GREEN}; font-weight:800;font-size:11px;letter-spacing:1px;cursor:pointer">
-      LIVE
-    </button>
-  `;
+    overlay.innerHTML = `
+      <div style="min-width:64px;display:flex;flex-direction:column;gap:2px">
+        <div style="font-size:10px;letter-spacing:1px;color:#9aa;font-weight:700">TIME</div>
+        <div id="replay-time-label" style="font-family:monospace;font-size:16px;color:#fff;font-weight:700">00:00</div>
+      </div>
+      <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1" 
+             style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
+    `;
 
-  mapDiv.appendChild(overlay);
-
-  var slider = document.getElementById("replay-slider");
-  var btnLive = document.getElementById("btn-live");
-
-  // blocca propagazione verso Leaflet
-  if (window.L && L.DomEvent) {
-    L.DomEvent.disableClickPropagation(overlay);
-    L.DomEvent.disableScrollPropagation(overlay);
-  }
-
-  let scrubbing = false;
-
-  function lockMapInteractions(lock) {
-    if (!map) return;
-    if (lock) {
-      if (map.dragging) map.dragging.disable();
-      if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
-      if (map.doubleClickZoom) map.doubleClickZoom.disable();
-      if (map.touchZoom) map.touchZoom.disable();
-      if (map.boxZoom) map.boxZoom.disable();
-      if (map.keyboard) map.keyboard.disable();
-    } else {
-      if (map.dragging) map.dragging.enable();
-      if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
-      if (map.doubleClickZoom) map.doubleClickZoom.enable();
-      if (map.touchZoom) map.touchZoom.enable();
-      if (map.boxZoom) map.boxZoom.enable();
-      if (map.keyboard) map.keyboard.enable();
+    // blocca propagazione verso Leaflet
+    if (window.L && L.DomEvent) {
+      L.DomEvent.disableClickPropagation(overlay);
+      L.DomEvent.disableScrollPropagation(overlay);
     }
-  }
+    mapDiv.appendChild(overlay);
 
-  function seekToSliderValue() {
-    const sec = parseFloat(slider.value) || 0;
-    enterReplayAtSecond(sec);
-  }
+    // Setup slider logic
+    var slider = document.getElementById("replay-slider");
+    let scrubbing = false;
 
-  function setSliderFromClientX(clientX) {
-    const rect = slider.getBoundingClientRect();
-    const x = clamp(clientX - rect.left, 0, rect.width);
-    const pct = rect.width > 0 ? x / rect.width : 0;
-    const min = parseFloat(slider.min) || 0;
-    const max = parseFloat(slider.max) || 0;
-    const val = min + pct * (max - min);
-    slider.value = val.toFixed(1);
-    seekToSliderValue();
-  }
-
-  slider.addEventListener("input", () => {
-    if (!scrubbing) seekToSliderValue();
-  });
-
-  slider.addEventListener("pointerdown", (e) => {
-    scrubbing = true;
-    slider.setPointerCapture(e.pointerId);
-    lockMapInteractions(true);
-    setSliderFromClientX(e.clientX);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  slider.addEventListener("pointermove", (e) => {
-    if (!scrubbing) return;
-    setSliderFromClientX(e.clientX);
-    e.preventDefault();
-    e.stopPropagation();
-  });
-
-  function endScrub(e) {
-    if (!scrubbing) return;
-    scrubbing = false;
-    lockMapInteractions(false);
-    if (e) e.stopPropagation();
-  }
-
-  slider.addEventListener("pointerup", endScrub);
-  slider.addEventListener("pointercancel", endScrub);
-
-  // fallback anti-pan
-  slider.addEventListener("mousedown", (e) => e.stopPropagation());
-  slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
-
-  btnLive.addEventListener("click", function() {
-    if (isReplayMode) {
-      goLive();
+    function lockMapInteractions(lock) {
+      if (!map) return;
+      if (lock) {
+        if (map.dragging) map.dragging.disable();
+        if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
+        if (map.doubleClickZoom) map.doubleClickZoom.disable();
+        if (map.touchZoom) map.touchZoom.disable();
+        if (map.boxZoom) map.boxZoom.disable();
+        if (map.keyboard) map.keyboard.disable();
+      } else {
+        if (map.dragging) map.dragging.enable();
+        if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
+        if (map.doubleClickZoom) map.doubleClickZoom.enable();
+        if (map.touchZoom) map.touchZoom.enable();
+        if (map.boxZoom) map.boxZoom.enable();
+        if (map.keyboard) map.keyboard.enable();
+      }
     }
-  });
+
+    function seekToSliderValue() {
+      const sec = parseFloat(slider.value) || 0;
+      enterReplayAtSecond(sec);
+    }
+
+    function setSliderFromClientX(clientX) {
+      const rect = slider.getBoundingClientRect();
+      const x = clamp(clientX - rect.left, 0, rect.width);
+      const pct = rect.width > 0 ? x / rect.width : 0;
+      const min = parseFloat(slider.min) || 0;
+      const max = parseFloat(slider.max) || 0;
+      const val = min + pct * (max - min);
+      slider.value = val.toFixed(1);
+      seekToSliderValue();
+    }
+
+    slider.addEventListener("input", () => {
+      if (!scrubbing) seekToSliderValue();
+    });
+
+    slider.addEventListener("pointerdown", (e) => {
+      scrubbing = true;
+      slider.setPointerCapture(e.pointerId);
+      lockMapInteractions(true);
+      setSliderFromClientX(e.clientX);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    slider.addEventListener("pointermove", (e) => {
+      if (!scrubbing) return;
+      setSliderFromClientX(e.clientX);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    function endScrub(e) {
+      if (!scrubbing) return;
+      scrubbing = false;
+      lockMapInteractions(false);
+      if (e) e.stopPropagation();
+    }
+
+    slider.addEventListener("pointerup", endScrub);
+    slider.addEventListener("pointercancel", endScrub);
+    slider.addEventListener("mousedown", (e) => e.stopPropagation());
+    slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+  }
+
+  // B) BOTTONE LIVE SEPARATO (Basso Destra)
+  if (!document.getElementById("btn-live")) {
+    var btnLive = document.createElement("button");
+    btnLive.id = "btn-live";
+    btnLive.type = "button";
+    btnLive.innerHTML = "LIVE";
+    btnLive.style.cssText = `
+      position: absolute; right: 16px; bottom: 90px; z-index: 30000;
+      display: none; padding: 8px 16px; border-radius: 8px;
+      border: 1px solid ${SENSORIA_GREEN}; background: rgba(151,201,62,0.18);
+      color: ${SENSORIA_GREEN}; font-weight: 800; font-size: 11px; letter-spacing: 1px;
+      cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      backdrop-filter: blur(4px);
+    `;
+
+    btnLive.addEventListener("click", function () {
+      if (isReplayMode) {
+        goLive();
+      }
+    });
+
+    mapDiv.appendChild(btnLive);
+  }
 }
+
 
 function updateReplayTimeLabel(sec) {
   var lab = document.getElementById("replay-time-label");
@@ -1113,35 +1127,48 @@ function showReplayOverlayIfReady() {
   const overlay = document.getElementById("replay-overlay");
   const slider = document.getElementById("replay-slider");
   const btnLive = document.getElementById("btn-live");
+  
   if (!overlay || !slider || !btnLive) return;
 
-  const ready = (getDurationSec() > 0 && gpsSamples.length >= 1);
-  if (!ready) {
-    overlay.style.display = "none";
-    return;
-  }
-
-  overlay.style.display = "flex";
-
-  if (isReplayMode) {
-    // REPLAY: slider visibile e usabile
-    slider.style.display = "block";
-    slider.disabled = false;
-
-    btnLive.style.display = "block";
-    btnLive.textContent = "LIVE";
-    btnLive.style.cursor = "pointer";
+  const hasData = (getDurationSec() > 0 && gpsSamples.length >= 1);
+  
+  if (hasData) {
+    // 1. Overlay (Tempo + Slider) sempre visibile se ci sono dati
+    overlay.style.display = "flex";
+    
+    if (isReplayMode) {
+      // --- MODALITÀ REPLAY ---
+      // Slider attivo
+      slider.style.display = "block";
+      slider.disabled = false;
+      
+      // Bottone LIVE visibile e cliccabile ("TORNA AL LIVE")
+      btnLive.style.display = "block";
+      btnLive.textContent = "TORNA AL LIVE";
+      btnLive.style.background = "rgba(151,201,62,0.18)";
+      btnLive.style.color = SENSORIA_GREEN;
+      btnLive.style.cursor = "pointer";
+      
+    } else {
+      // --- MODALITÀ LIVE ---
+      // Slider NASCOSTO (solo tempo visibile)
+      slider.style.display = "none";
+      slider.disabled = true;
+      
+      // Bottone LIVE: indicatore passivo ("LIVE ●")
+      btnLive.style.display = "block";
+      btnLive.innerHTML = "LIVE <span style='font-size:14px; vertical-align:middle; line-height:0'>●</span>";
+      btnLive.style.background = SENSORIA_GREEN; // Verde pieno
+      btnLive.style.color = "#000"; // Testo nero
+      btnLive.style.cursor = "default";
+    }
   } else {
-    // LIVE: niente scrubbing
-    slider.style.display = "none";
-    slider.disabled = true;
-
-    // Puoi anche nascondere il bottone, oppure tenerlo come badge
-    btnLive.style.display = "block";
-    btnLive.textContent = "LIVE";
-    btnLive.style.cursor = "default";
+    // Nessun dato: nascondi tutto
+    overlay.style.display = "none";
+    btnLive.style.display = "none";
   }
 }
+
 
 function updateReplayUiBounds() {
   var slider = document.getElementById("replay-slider");
@@ -1149,19 +1176,20 @@ function updateReplayUiBounds() {
 
   var maxSec = getDurationSec();
   
-  // Aggiorna attributi slider (servono se poi passi in replay)
+  // Aggiorna limiti slider
   slider.max = String(maxSec);
   slider.step = "0.1";
 
-  // Se siamo in LIVE, aggiorna solo il testo del tempo!
+  // Se siamo in LIVE, il cursore (virtuale) è alla fine
   if (!isReplayMode) {
     slider.value = maxSec.toFixed(1);
     updateReplayTimeLabel(maxSec);
     
-    // Assicurati che l'interfaccia sia coerente (nascondi slider)
+    // Aggiorna visibilità (ad es. per mostrare che siamo LIVE)
     showReplayOverlayIfReady();
   }
 }
+
 
 // ---- replay search helpers ----
 function upperBoundByTime(arr, tMs) {
