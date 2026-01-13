@@ -52,6 +52,7 @@ var secPos = [];
 var lastSpeedSec = null;
 var lastSecFix = null;
 var lastSpeedKmh = 0;
+var lastDataTimestamp = Date.now();
 
 // ==========================================
 // MAPPA
@@ -515,44 +516,47 @@ function rebuildSpeedBySecFromGps() {
 }
 
 function getSessionEndMs() {
-  if (!gpsSamples.length) return sessionStartTimeMs || Date.now();
-  if (!isReplayMode) return Date.now();
-  
-  const lastGps = gpsSamples[gpsSamples.length - 1].t;
+  if (!sessionStartTimeMs) return Date.now();
 
-  const diff = lastGps - sessionStartTimeMs;
-  if (diff > 7200000) {
-    console.warn("Rilevato timestamp anomalo, tronco la durata.");
-    return sessionStartTimeMs + gpsSamples.length * 1000;
+  // Se lo stop tracking ha fissato una fine sessione, congela lì (LIVE fermo)
+  if (!isReplayMode && sessionEndTimeMs != null) return sessionEndTimeMs;
+
+  // Replay: finisce sull'ultimo campione registrato
+  if (isReplayMode) {
+    if (!gpsSamples.length) return sessionEndTimeMs || sessionStartTimeMs;
+    return gpsSamples[gpsSamples.length - 1].t;
   }
 
-  return lastGps.t;
+  // Live attivo: fino ad adesso
+  return Date.now();
 }
+
 
 function getDurationSec() {
   if (!sessionStartTimeMs) return 0;
   
   let endMs;
+
   if (isReplayMode) {
-    // Replay: usa ultimo campione
+    // In Replay, la durata è fissa fino all'ultimo campione
     endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
   } else {
-    // Live: usa Date.now() MA SOLO SE lo stream è attivo da poco (es. < 5 secondi)
-    // Altrimenti usa l'ultimo momento in cui era attivo.
+    // In LIVE
     const now = Date.now();
-    const timeSinceLastData = now - lastDataTime;
-    
-    if (timeSinceLastData < 5000 && isStreamActive) {
-       endMs = now;
+    // Se non arrivano dati da 5 secondi, consideriamo lo stream "FERMO"
+    // e blocchiamo il tempo all'ultimo momento in cui era attivo.
+    if ((now - lastDataTimestamp) > 5000) {
+      // Stream fermo -> usa ultimo dato GPS disponibile
+      endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
     } else {
-       // Stream interrotto? Fermati all'ultimo dato valido o "congela" il tempo
-       // Se gpsSamples ha dati, usiamo l'ultimo timestamp GPS registrato.
-       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : now;
+      // Stream attivo -> tempo scorre fluido
+      endMs = now;
     }
   }
   
   return Math.max(0, (endMs - sessionStartTimeMs) / 1000);
 }
+
 
 
 // ==========================================
@@ -808,7 +812,7 @@ function normalizeGpsPoint(raw) {
 // ==========================================
 
 function onGpsUpdate(data, opts) {
-
+  lastDataTimestamp = Date.now();
   opts = opts || { updateUi: true, updateMap: true };
   if (!data) return;
 
@@ -1015,38 +1019,48 @@ function createReplayOverlayControls() {
   var mapDiv = document.getElementById("map");
   if (!mapDiv) return;
 
-  // A) OVERLAY TEMPO + SLIDER (basso-sinistra / centro)
+  // 1. OVERLAY "TIME" (Sinistra Basso)
   if (!document.getElementById("replay-overlay")) {
     var overlay = document.createElement("div");
     overlay.id = "replay-overlay";
     overlay.style.cssText = `
-      position: absolute; left: 16px; right: 16px; bottom: 20px; z-index: 30000;
-      display: none; align-items: center; gap: 12px; padding: 10px 18px;
-      border-radius: 12px; background: rgba(10,10,10,0.85);
-      border: 1px solid rgba(255,255,255,0.10); backdrop-filter: blur(6px);
-      box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+      position: absolute;
+      left: 16px;
+      bottom: 24px; /* Un po' di margine dal bordo */
+      z-index: 30000;
+      display: none; /* Gestito da showReplayOverlayIfReady */
+      align-items: center;
+      gap: 12px;
+      padding: 8px 14px;
+      border-radius: 12px;
+      background: rgba(10,10,10,0.85);
+      border: 1px solid rgba(255,255,255,0.15);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      height: 44px; /* Altezza fissa per allineamento */
+      box-sizing: border-box;
     `;
 
     overlay.innerHTML = `
-      <div style="min-width:64px;display:flex;flex-direction:column;gap:2px">
-        <div style="font-size:10px;letter-spacing:1px;color:#9aa;font-weight:700">TIME</div>
-        <div id="replay-time-label" style="font-family:monospace;font-size:16px;color:#fff;font-weight:700">00:00</div>
+      <div style="display:flex;flex-direction:column;justify-content:center;gap:0px;min-width:50px;">
+        <div style="font-size:9px;letter-spacing:1px;color:#9aa;font-weight:700;line-height:1.1">TIME</div>
+        <div id="replay-time-label" style="font-family:monospace;font-size:16px;color:#fff;font-weight:700;line-height:1.1">00:00</div>
       </div>
-      <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1" 
-             style="flex:1; accent-color:${SENSORIA_GREEN}; cursor:pointer" />
+      <!-- Slider: visibile solo in REPLAY -->
+      <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1"
+             style="display:none; width:180px; accent-color:${SENSORIA_GREEN}; cursor:pointer; margin:0;" />
     `;
-
-    // blocca propagazione verso Leaflet
+    
+    // Blocca click su mappa
     if (window.L && L.DomEvent) {
       L.DomEvent.disableClickPropagation(overlay);
       L.DomEvent.disableScrollPropagation(overlay);
     }
     mapDiv.appendChild(overlay);
 
-    // Setup slider logic
+    // -- LOGICA SLIDER (Invariata) --
     var slider = document.getElementById("replay-slider");
     let scrubbing = false;
-
     function lockMapInteractions(lock) {
       if (!map) return;
       if (lock) {
@@ -1065,75 +1079,66 @@ function createReplayOverlayControls() {
         if (map.keyboard) map.keyboard.enable();
       }
     }
-
     function seekToSliderValue() {
       const sec = parseFloat(slider.value) || 0;
       enterReplayAtSecond(sec);
     }
-
-    function setSliderFromClientX(clientX) {
-      const rect = slider.getBoundingClientRect();
-      const x = clamp(clientX - rect.left, 0, rect.width);
-      const pct = rect.width > 0 ? x / rect.width : 0;
-      const min = parseFloat(slider.min) || 0;
-      const max = parseFloat(slider.max) || 0;
-      const val = min + pct * (max - min);
-      slider.value = val.toFixed(1);
-      seekToSliderValue();
-    }
-
-    slider.addEventListener("input", () => {
-      if (!scrubbing) seekToSliderValue();
-    });
-
+    slider.addEventListener("input", () => { if (!scrubbing) seekToSliderValue(); });
     slider.addEventListener("pointerdown", (e) => {
       scrubbing = true;
       slider.setPointerCapture(e.pointerId);
       lockMapInteractions(true);
-      setSliderFromClientX(e.clientX);
-      e.preventDefault();
       e.stopPropagation();
     });
-
     slider.addEventListener("pointermove", (e) => {
       if (!scrubbing) return;
-      setSliderFromClientX(e.clientX);
-      e.preventDefault();
-      e.stopPropagation();
+      e.preventDefault(); e.stopPropagation();
+      // Logica semplice slider (aggiorna valore visuale se serve)
     });
-
     function endScrub(e) {
       if (!scrubbing) return;
       scrubbing = false;
       lockMapInteractions(false);
+      seekToSliderValue(); // Commit finale
       if (e) e.stopPropagation();
     }
-
     slider.addEventListener("pointerup", endScrub);
     slider.addEventListener("pointercancel", endScrub);
     slider.addEventListener("mousedown", (e) => e.stopPropagation());
     slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
   }
 
-  // B) BOTTONE LIVE SEPARATO (Basso Destra)
+  // 2. BOTTONE "LIVE" (Destra Basso)
   if (!document.getElementById("btn-live")) {
     var btnLive = document.createElement("button");
     btnLive.id = "btn-live";
     btnLive.type = "button";
     btnLive.innerHTML = "LIVE";
     btnLive.style.cssText = `
-      position: absolute; right: 16px; bottom: 90px; z-index: 30000;
-      display: none; padding: 8px 16px; border-radius: 8px;
-      border: 1px solid ${SENSORIA_GREEN}; background: rgba(151,201,62,0.18);
-      color: ${SENSORIA_GREEN}; font-weight: 800; font-size: 11px; letter-spacing: 1px;
-      cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      position: absolute;
+      right: 16px;
+      bottom: 24px; /* STESSO bottom di TIME */
+      z-index: 30000;
+      display: none;
+      height: 44px; /* STESSA altezza di TIME */
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 1px solid ${SENSORIA_GREEN};
+      background: rgba(151,201,62,0.18);
+      color: ${SENSORIA_GREEN};
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
       backdrop-filter: blur(4px);
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
     `;
-
+    
     btnLive.addEventListener("click", function () {
-      if (isReplayMode) {
-        goLive();
-      }
+      if (isReplayMode) goLive();
     });
 
     mapDiv.appendChild(btnLive);
@@ -1157,48 +1162,50 @@ function showReplayOverlayIfReady() {
   
   if (!overlay || !slider || !btnLive) return;
 
-  const hasData = (getDurationSec() > 0 && gpsSamples.length >= 1);
+  // Mostra interfaccia se c'è almeno un dato registrato (inizio sessione)
+  // Non controlliamo se "stanno arrivando dati ora", ma se "esiste una sessione"
+  const hasSession = (sessionStartTimeMs != null && gpsSamples.length > 0);
   
-  if (hasData) {
+  if (hasSession) {
     overlay.style.display = "flex";
-    
+    btnLive.style.display = "flex"; // Flex per centrare il testo
+
     if (isReplayMode) {
-      // --- REPLAY MODE ---
-      // Stile "Largo" con slider
-      overlay.style.width = "auto"; // o 100% meno margini
-      overlay.style.left = "16px";
-      overlay.style.right = "16px";
-      
+      // --- REPLAY ---
+      // Espandi overlay per slider
+      overlay.style.right = "16px"; // Occupa larghezza
+      overlay.style.width = "auto";
       slider.style.display = "block";
       slider.disabled = false;
-      
-      btnLive.style.display = "block";
-      btnLive.textContent = "TORNA AL LIVE";
+
+      // Bottone: Torna al live
+      btnLive.innerHTML = "TORNA AL LIVE";
       btnLive.style.background = "rgba(151,201,62,0.18)";
-      btnLive.style.color = "#97c93e";
+      btnLive.style.color = SENSORIA_GREEN;
       btnLive.style.cursor = "pointer";
-    } else {
-      // --- LIVE MODE ---
-      // Stile "Piccolo" solo tempo (riduci il box al minimo)
-      overlay.style.left = "16px";
-      overlay.style.right = "auto"; // Non espanderti a destra
-      overlay.style.width = "auto"; // Adattati al contenuto
+      btnLive.style.border = `1px solid ${SENSORIA_GREEN}`;
       
+    } else {
+      // --- LIVE (o STOPPED) ---
+      // Riduci overlay al solo tempo
+      overlay.style.right = "auto"; // Non espandere
+      overlay.style.width = "auto";
       slider.style.display = "none";
       slider.disabled = true;
-      
-      btnLive.style.display = "block";
-      btnLive.innerHTML = "LIVE <span style='font-size:14px; vertical-align:middle; line-height:0'>●</span>";
-      btnLive.style.background = "#97c93e";
-      btnLive.style.color = "#000";
+
+      // Bottone: Indicatore LIVE
+      btnLive.innerHTML = `LIVE <span style="margin-left:6px; font-size:14px; line-height:0">●</span>`;
+      btnLive.style.background = SENSORIA_GREEN; // Verde pieno
+      btnLive.style.color = "#000"; // Testo scuro
       btnLive.style.cursor = "default";
+      btnLive.style.border = "none";
     }
   } else {
+    // Nessuna sessione iniziata
     overlay.style.display = "none";
     btnLive.style.display = "none";
   }
 }
-
 
 function updateReplayUiBounds() {
   var slider = document.getElementById("replay-slider");
@@ -1557,7 +1564,7 @@ function normalizeLivePayload(p) {
 // SENSOR UPDATE (parsing calzini)
 // ==========================================
 function processIncomingData(data) {
-
+  lastDataTimestamp = Date.now();
   lastDataTime = Date.now();
   isStreamActive = true;
   // 0) unwrap: a volte arriva { sensorname: ...,  {...} }
