@@ -543,7 +543,7 @@ function getDurationSec() {
     // LIVE: controlla se lo stream è attivo
     const now = Date.now();
     // Se non arrivano dati da > 5 secondi, consideriamo l'attività FERMA
-    if (typeof lastDataTimestamp !== 'undefined' && (now - lastDataTimestamp) > 5000) {
+    if (typeof lastDataTimestamp !== 'undefined' && (now - lastDataTimestamp) > 3000) {
       // Stream fermo -> Blocca il tempo sull'ultimo dato GPS disponibile
       // NON resetta a 0, ma mantiene il valore raggiunto (es. 10:23)
       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
@@ -1017,16 +1017,17 @@ function createReplayOverlayControls() {
   var mapDiv = document.getElementById("map");
   if (!mapDiv) return;
 
-  // 1. OVERLAY "TIME" (Sinistra Basso)
+  // 1. OVERLAY "TIME" + SLIDER (Sinistra)
   if (!document.getElementById("replay-overlay")) {
     var overlay = document.createElement("div");
     overlay.id = "replay-overlay";
     overlay.style.cssText = `
       position: absolute;
       left: 16px;
-      bottom: 24px; /* Un po' di margine dal bordo */
+      right: 16px; /* Occupa tutta la larghezza meno i margini */
+      bottom: 24px;
       z-index: 30000;
-      display: none; /* Gestito da showReplayOverlayIfReady */
+      display: none;
       align-items: center;
       gap: 12px;
       padding: 8px 14px;
@@ -1035,110 +1036,90 @@ function createReplayOverlayControls() {
       border: 1px solid rgba(255,255,255,0.15);
       backdrop-filter: blur(6px);
       box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-      height: 44px; /* Altezza fissa per allineamento */
+      height: 44px;
       box-sizing: border-box;
     `;
 
     overlay.innerHTML = `
       <div style="display:flex;flex-direction:column;justify-content:center;gap:0px;min-width:50px;">
-        <div style="font-size:9px;letter-spacing:1px;color:#9aa;font-weight:700;line-height:1.1">TEMPO</div>
+        <div style="font-size:9px;letter-spacing:1px;color:#9aa;font-weight:700;line-height:1.1">TIME</div>
         <div id="replay-time-label" style="font-family:monospace;font-size:16px;color:#fff;font-weight:700;line-height:1.1">00:00</div>
       </div>
-      <!-- Slider: visibile solo in REPLAY -->
+      <!-- Slider: prende tutto lo spazio rimanente -->
       <input id="replay-slider" type="range" min="0" max="0" value="0" step="0.1"
-             style="display:none; width:180px; accent-color:${SENSORIA_GREEN}; cursor:pointer; margin:0;" />
+             style="display:none; flex:1; accent-color:#97c93e; cursor:pointer; margin:0; height:100%;" />
     `;
     
-    // Blocca click su mappa
+    // Blocca click sulla mappa sotto l'overlay
     if (window.L && L.DomEvent) {
       L.DomEvent.disableClickPropagation(overlay);
       L.DomEvent.disableScrollPropagation(overlay);
     }
     mapDiv.appendChild(overlay);
 
-    // -- LOGICA SLIDER (Invariata) --
+    // -- LOGICA SLIDER FLUIDO --
     var slider = document.getElementById("replay-slider");
-    let scrubbing = false;
-    function lockMapInteractions(lock) {
+    
+    // Funzione che aggiorna tutto istantaneamente
+    function onSliderInput() {
+      const sec = parseFloat(slider.value) || 0;
+      // Chiama la funzione di aggiornamento replay (senza ricaricare tutto se non serve)
+      enterReplayAtSecond(sec); 
+      // Aggiorna label tempo manualmente per reattività immediata
+      updateReplayTimeLabel(sec);
+    }
+
+    // "input" scatta continuamente mentre trascini -> FLUIDITÀ
+    slider.addEventListener("input", onSliderInput);
+
+    // Gestione interazioni mappa (blocca pan/zoom mentre trascini lo slider)
+    function lockMap(lock) {
       if (!map) return;
       if (lock) {
-        if (map.dragging) map.dragging.disable();
-        if (map.scrollWheelZoom) map.scrollWheelZoom.disable();
-        if (map.doubleClickZoom) map.doubleClickZoom.disable();
-        if (map.touchZoom) map.touchZoom.disable();
-        if (map.boxZoom) map.boxZoom.disable();
-        if (map.keyboard) map.keyboard.disable();
+        map.dragging.disable();
+        map.scrollWheelZoom.disable();
       } else {
-        if (map.dragging) map.dragging.enable();
-        if (map.scrollWheelZoom) map.scrollWheelZoom.enable();
-        if (map.doubleClickZoom) map.doubleClickZoom.enable();
-        if (map.touchZoom) map.touchZoom.enable();
-        if (map.boxZoom) map.boxZoom.enable();
-        if (map.keyboard) map.keyboard.enable();
+        map.dragging.enable();
+        map.scrollWheelZoom.enable();
       }
     }
-    function seekToSliderValue() {
-      const sec = parseFloat(slider.value) || 0;
-      enterReplayAtSecond(sec);
-    }
-    slider.addEventListener("input", () => { if (!scrubbing) seekToSliderValue(); });
-    slider.addEventListener("pointerdown", (e) => {
-      scrubbing = true;
-      slider.setPointerCapture(e.pointerId);
-      lockMapInteractions(true);
-      e.stopPropagation();
-    });
-    slider.addEventListener("pointermove", (e) => {
-      if (!scrubbing) return;
-      e.preventDefault(); e.stopPropagation();
-      // Logica semplice slider (aggiorna valore visuale se serve)
-    });
-    function endScrub(e) {
-      if (!scrubbing) return;
-      scrubbing = false;
-      lockMapInteractions(false);
-      seekToSliderValue(); // Commit finale
-      if (e) e.stopPropagation();
-    }
-    slider.addEventListener("pointerup", endScrub);
-    slider.addEventListener("pointercancel", endScrub);
-    slider.addEventListener("mousedown", (e) => e.stopPropagation());
-    slider.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+
+    slider.addEventListener("mousedown", () => lockMap(true));
+    slider.addEventListener("touchstart", () => lockMap(true), {passive: true});
+    
+    slider.addEventListener("mouseup", () => lockMap(false));
+    slider.addEventListener("touchend", () => lockMap(false));
   }
 
-  // 2. BOTTONE "LIVE" (Destra Basso)
+  // 2. BOTTONE "LIVE" (Destra)
+  // Lo creiamo ma lo gestiremo in showReplayOverlayIfReady per nasconderlo in Replay
   if (!document.getElementById("btn-live")) {
     var btnLive = document.createElement("button");
     btnLive.id = "btn-live";
-    btnLive.type = "button";
-    btnLive.innerHTML = "LIVE";
+    btnLive.innerHTML = `LIVE <span style="margin-left:6px; font-size:14px; line-height:0">●</span>`;
     btnLive.style.cssText = `
       position: absolute;
       right: 16px;
-      bottom: 24px; /* STESSO bottom di TIME */
-      z-index: 30000;
+      bottom: 24px;
+      z-index: 30001; /* Sopra l'overlay se si sovrappongono */
       display: none;
-      height: 44px; /* STESSA altezza di TIME */
+      height: 44px;
       padding: 0 16px;
       border-radius: 12px;
-      border: 1px solid ${SENSORIA_GREEN};
-      background: rgba(151,201,62,0.18);
-      color: ${SENSORIA_GREEN};
+      background: #97c93e;
+      color: #000;
       font-weight: 800;
       font-size: 12px;
       letter-spacing: 1px;
-      cursor: pointer;
+      border: none;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      backdrop-filter: blur(4px);
-      box-sizing: border-box;
-      align-items: center;
-      justify-content: center;
+      cursor: default;
     `;
-    
-    btnLive.addEventListener("click", function () {
-      if (isReplayMode) goLive();
+    // Se clicchi LIVE mentre sei in replay, magari vuoi tornare al live? 
+    // Se "non ci deve essere nessun tasto", lo nascondiamo proprio.
+    btnLive.addEventListener("click", () => {
+        if(isReplayMode) goLive();
     });
-
     mapDiv.appendChild(btnLive);
   }
 }
@@ -1160,46 +1141,39 @@ function showReplayOverlayIfReady() {
   
   if (!overlay || !slider || !btnLive) return;
 
-  // Mostra interfaccia se c'è almeno un dato registrato (inizio sessione)
-  // Non controlliamo se "stanno arrivando dati ora", ma se "esiste una sessione"
-  const hasSession = (sessionStartTimeMs != null && gpsSamples.length > 0);
+  const hasSession = (typeof sessionStartTimeMs !== 'undefined' && sessionStartTimeMs != null && gpsSamples.length > 0);
   
   if (hasSession) {
     overlay.style.display = "flex";
-    btnLive.style.display = "flex"; // Flex per centrare il testo
 
     if (isReplayMode) {
-      // --- REPLAY ---
-      // Espandi overlay per slider
-      overlay.style.right = "16px"; // Occupa larghezza
-      overlay.style.width = "auto";
+      // --- REPLAY MODE ---
+      // Slider visibile e attivo
       slider.style.display = "block";
       slider.disabled = false;
-
-      // Bottone: Torna al live
-      btnLive.innerHTML = "TORNA AL LIVE";
-      btnLive.style.background = "rgba(151,201,62,0.18)";
-      btnLive.style.color = SENSORIA_GREEN;
-      btnLive.style.cursor = "pointer";
-      btnLive.style.border = `1px solid ${SENSORIA_GREEN}`;
+      
+      // Overlay prende quasi tutta la larghezza (o adatta i margini come preferisci)
+      overlay.style.right = "16px"; 
+      
+      // NASCONDI IL TASTO LIVE (richiesta utente)
+      btnLive.style.display = "none";
       
     } else {
-      // --- LIVE (o STOPPED) ---
-      // Riduci overlay al solo tempo
-      overlay.style.right = "auto"; // Non espandere
-      overlay.style.width = "auto";
+      // --- LIVE MODE ---
+      // Slider nascosto
       slider.style.display = "none";
       slider.disabled = true;
-
-      // Bottone: Indicatore LIVE
-      btnLive.innerHTML = `LIVE <span style="margin-left:6px; font-size:14px; line-height:0">●</span>`;
-      btnLive.style.background = SENSORIA_GREEN; // Verde pieno
-      btnLive.style.color = "#000"; // Testo scuro
+      
+      // Overlay ridotto al solo tempo
+      overlay.style.right = "auto"; 
+      
+      // MOSTRA IL TASTO LIVE (solo indicatore)
+      btnLive.style.display = "flex";
       btnLive.style.cursor = "default";
-      btnLive.style.border = "none";
+      btnLive.style.background = "#97c93e";
+      btnLive.style.color = "#000";
     }
   } else {
-    // Nessuna sessione iniziata
     overlay.style.display = "none";
     btnLive.style.display = "none";
   }
@@ -1798,7 +1772,7 @@ function updateSockNumbers(side, data, bi) {
   // BI
   const biEl = document.getElementById(`bi-val-${side}`);
   if (biEl && bi != null && isFinite(bi)) {
-    biEl.textContent = `BI ${bi.toFixed(1)}`;
+    biEl.textContent = `BI ${bi.toFixed(1)}%`;
     biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
   }
 
