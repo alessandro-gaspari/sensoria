@@ -531,32 +531,30 @@ function getSessionEndMs() {
   return Date.now();
 }
 
-
 function getDurationSec() {
   if (!sessionStartTimeMs) return 0;
   
   let endMs;
 
   if (isReplayMode) {
-    // In Replay, la durata è fissa fino all'ultimo campione
+    // REPLAY: durata fissa fino alla fine dei campioni
     endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
   } else {
-    // In LIVE
+    // LIVE: controlla se lo stream è attivo
     const now = Date.now();
-    // Se non arrivano dati da 5 secondi, consideriamo lo stream "FERMO"
-    // e blocchiamo il tempo all'ultimo momento in cui era attivo.
-    if ((now - lastDataTimestamp) > 5000) {
-      // Stream fermo -> usa ultimo dato GPS disponibile
+    // Se non arrivano dati da > 5 secondi, consideriamo l'attività FERMA
+    if (typeof lastDataTimestamp !== 'undefined' && (now - lastDataTimestamp) > 5000) {
+      // Stream fermo -> Blocca il tempo sull'ultimo dato GPS disponibile
+      // NON resetta a 0, ma mantiene il valore raggiunto (es. 10:23)
       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
     } else {
-      // Stream attivo -> tempo scorre fluido
+      // Stream attivo -> Il tempo scorre fluido
       endMs = now;
     }
   }
   
   return Math.max(0, (endMs - sessionStartTimeMs) / 1000);
 }
-
 
 
 // ==========================================
@@ -1043,7 +1041,7 @@ function createReplayOverlayControls() {
 
     overlay.innerHTML = `
       <div style="display:flex;flex-direction:column;justify-content:center;gap:0px;min-width:50px;">
-        <div style="font-size:9px;letter-spacing:1px;color:#9aa;font-weight:700;line-height:1.1">TIME</div>
+        <div style="font-size:9px;letter-spacing:1px;color:#9aa;font-weight:700;line-height:1.1">TEMPO</div>
         <div id="replay-time-label" style="font-family:monospace;font-size:16px;color:#fff;font-weight:700;line-height:1.1">00:00</div>
       </div>
       <!-- Slider: visibile solo in REPLAY -->
