@@ -37,6 +37,8 @@ var sensors = {};
 var sessionStartTimeMs = null;
 var sessionEndTimeMs = null;
 var isReplayMode = false;
+var lastDataTime = Date.now();
+var isStreamActive = false;
 
 var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
@@ -430,6 +432,8 @@ function updateProfileHeaderUI(p) {
 // ==========================================
 function initSocket() {
   socket.on("connect", () => {
+    isStreamActive = true;
+    lastDataTime = Date.now();
     var el = document.getElementById("connection-status");
     if (el) {
       el.className = "";
@@ -438,6 +442,7 @@ function initSocket() {
   });
 
   socket.on("disconnect", () => {
+    isStreamActive = false;
     var el = document.getElementById("connection-status");
     if (el) {
       el.className = "disconnected";
@@ -520,14 +525,35 @@ function getSessionEndMs() {
     console.warn("Rilevato timestamp anomalo, tronco la durata.");
     return sessionStartTimeMs + gpsSamples.length * 1000;
   }
-  
+
   return lastGps.t;
 }
 
 function getDurationSec() {
   if (!sessionStartTimeMs) return 0;
-  return Math.max(0, (getSessionEndMs() - sessionStartTimeMs) / 1000);
+  
+  let endMs;
+  if (isReplayMode) {
+    // Replay: usa ultimo campione
+    endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
+  } else {
+    // Live: usa Date.now() MA SOLO SE lo stream è attivo da poco (es. < 5 secondi)
+    // Altrimenti usa l'ultimo momento in cui era attivo.
+    const now = Date.now();
+    const timeSinceLastData = now - lastDataTime;
+    
+    if (timeSinceLastData < 5000 && isStreamActive) {
+       endMs = now;
+    } else {
+       // Stream interrotto? Fermati all'ultimo dato valido o "congela" il tempo
+       // Se gpsSamples ha dati, usiamo l'ultimo timestamp GPS registrato.
+       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : now;
+    }
+  }
+  
+  return Math.max(0, (endMs - sessionStartTimeMs) / 1000);
 }
+
 
 // ==========================================
 // HAVERSINE + FORMAT
@@ -782,6 +808,9 @@ function normalizeGpsPoint(raw) {
 // ==========================================
 
 function onGpsUpdate(data, opts) {
+
+  lastDataTime = Date.now();
+  isStreamActive = true;
   opts = opts || { updateUi: true, updateMap: true };
   if (!data) return;
 
@@ -1133,37 +1162,40 @@ function showReplayOverlayIfReady() {
   const hasData = (getDurationSec() > 0 && gpsSamples.length >= 1);
   
   if (hasData) {
-    // 1. Overlay (Tempo + Slider) sempre visibile se ci sono dati
     overlay.style.display = "flex";
     
     if (isReplayMode) {
-      // --- MODALITÀ REPLAY ---
-      // Slider attivo
+      // --- REPLAY MODE ---
+      // Stile "Largo" con slider
+      overlay.style.width = "auto"; // o 100% meno margini
+      overlay.style.left = "16px";
+      overlay.style.right = "16px";
+      
       slider.style.display = "block";
       slider.disabled = false;
       
-      // Bottone LIVE visibile e cliccabile ("TORNA AL LIVE")
       btnLive.style.display = "block";
       btnLive.textContent = "TORNA AL LIVE";
       btnLive.style.background = "rgba(151,201,62,0.18)";
-      btnLive.style.color = SENSORIA_GREEN;
+      btnLive.style.color = "#97c93e";
       btnLive.style.cursor = "pointer";
-      
     } else {
-      // --- MODALITÀ LIVE ---
-      // Slider NASCOSTO (solo tempo visibile)
+      // --- LIVE MODE ---
+      // Stile "Piccolo" solo tempo (riduci il box al minimo)
+      overlay.style.left = "16px";
+      overlay.style.right = "auto"; // Non espanderti a destra
+      overlay.style.width = "auto"; // Adattati al contenuto
+      
       slider.style.display = "none";
       slider.disabled = true;
       
-      // Bottone LIVE: indicatore passivo ("LIVE ●")
       btnLive.style.display = "block";
       btnLive.innerHTML = "LIVE <span style='font-size:14px; vertical-align:middle; line-height:0'>●</span>";
-      btnLive.style.background = SENSORIA_GREEN; // Verde pieno
-      btnLive.style.color = "#000"; // Testo nero
+      btnLive.style.background = "#97c93e";
+      btnLive.style.color = "#000";
       btnLive.style.cursor = "default";
     }
   } else {
-    // Nessun dato: nascondi tutto
     overlay.style.display = "none";
     btnLive.style.display = "none";
   }
