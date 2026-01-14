@@ -1836,32 +1836,37 @@ function createSensorCard(name, data) {
 
     if (hasAccel) {
         rows += `
-            <div class="sensor-data-row"><span class="sensor-data-label">Ax</span><span class="sensor-value" data-key="accelx">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">Ay</span><span class="sensor-value" data-key="accely">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">Az</span><span class="sensor-value" data-key="accelz">--</span></div>`;
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="accelx">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="accely">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="accelz">--</span></div>
+        `;
     }
+
     if (hasGyro) {
         rows += `
-            <div class="sensor-data-row"><span class="sensor-data-label">Gx</span><span class="sensor-value" data-key="gyrox">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">Gy</span><span class="sensor-value" data-key="gyroy">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">Gz</span><span class="sensor-value" data-key="gyroz">--</span></div>`;
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="gyrox">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="gyroy">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="gyroz">--</span></div>
+        `;
     }
+
     if (hasMag) {
         rows += `
-            <div class="sensor-data-row"><span class="sensor-data-label">Mx</span><span class="sensor-value" data-key="magx">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">My</span><span class="sensor-value" data-key="magy">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">Mz</span><span class="sensor-value" data-key="magz">--</span></div>`;
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="magx">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="magy">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="magz">--</span></div>
+        `;
     }
 
     const nameLower = name.toLowerCase();
     const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
 
-    // Mostra le pressioni SOLO se i dati esistono E se è un calzino
-    if (hasPressure && isSock) { 
+    // Pressioni (solo calzini)
+    if (hasPressure && isSock) {
         rows += `
-        <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
-        <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
-        <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Prs<span style="color:#ffb74d;">0</span></span><span class="sensor-value" data-key="pressure0">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Prs<span style="color:#e91e63;">1</span></span><span class="sensor-value" data-key="pressure1">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Prs<span style="color:#4fc3f7;">2</span></span><span class="sensor-value" data-key="pressure2">--</span></div>
         `;
     }
 
