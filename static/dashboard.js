@@ -1070,34 +1070,32 @@ function createReplayOverlayControls() {
   }
 
   // 2. BOTTONE "LIVE" (Destra)
-  // Lo creiamo ma lo gestiremo in showReplayOverlayIfReady per nasconderlo in Replay
-  if (!document.getElementById("btn-live")) {
-    var btnLive = document.createElement("button");
-    btnLive.id = "btn-live";
-    btnLive.innerHTML = `LIVE <span style="margin-left:6px; font-size:14px; line-height:0">●</span>`;
-    btnLive.style.cssText = `
-      position: absolute;
-      right: 16px;
-      bottom: 24px;
-      z-index: 30001; /* Sopra l'overlay se si sovrappongono */
-      display: none;
-      height: 44px;
-      padding: 0 16px;
-      border-radius: 12px;
-      background: #97c93e;
-      color: #000;
-      font-weight: 800;
-      font-size: 12px;
-      letter-spacing: 1px;
-      border: none;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      cursor: default;
-    `;
+  if (!document.getElementById('btn-live')) {
+      var btnLive = document.createElement('div');  // ← Cambiato da 'button' a 'div'
+      btnLive.id = 'btn-live';
+      btnLive.innerHTML = `
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#97c93e; margin-right:6px;"></span>
+          <span style="color:#97c93e; font-weight:800; font-size:13px; letter-spacing:0.8px;">LIVE</span>
+      `;
+      btnLive.style.cssText = `
+          position: absolute;
+          right: 16px;
+          bottom: 28px;
+          z-index: 30001;
+          display: none;
+          align-items: center;
+          padding: 0;
+          background: none;
+          border: none;
+          cursor: default;
+          pointer-events: none;
+      `;
+
     // Se clicchi LIVE mentre sei in replay, magari vuoi tornare al live? 
     // Se "non ci deve essere nessun tasto", lo nascondiamo proprio.
-    btnLive.addEventListener("click", () => {
-        if(isReplayMode) goLive();
-    });
+    //btnLive.addEventListener("click", () => {
+    //    if(isReplayMode) goLive();
+    //});
     mapDiv.appendChild(btnLive);
   }
 }
