@@ -5,6 +5,7 @@ import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:geolocator/geolocator.dart'; // NECESSARIO PER IL GPS
 import 'dart:async';
 import '../utils/tcp_client.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 // --- ENUM QUALITÀ GPS (Stile Coospo) ---
 enum GpsSignalQuality {
@@ -134,39 +135,47 @@ class StreamingManager extends ChangeNotifier {
 
   void startTracking() {
     if (_isTrackingActive) {
-      debugPrint('⚠️ Tracking già attivo');
+      debugPrint('✅ Tracking già attivo');
       return;
     }
-    
+
     _isTrackingActive = true;
+    
+    // ← NUOVO: Attiva WakeLock per mantenere GPS attivo
+    WakelockPlus.enable();
+    debugPrint('🔒 WakeLock ATTIVATO');
+
     _tcpSender = TCPDataSender();
     _tcpSender?.connect();
-    
-    // AVVIA IL GPS CON SETTAGGI "RAW" (Aggressivi)
+
+    // AVVIA IL GPS
     initGpsStream();
-    // AVVIA IL MONITORAGGIO QUALITÀ (Polling 500ms)
     _startGpsQualityMonitoring();
-    
-    debugPrint('📍 Tracking avviato - GPS HIGH PRECISION Attivo');
+
+    debugPrint('▶️ Tracking avviato - GPS HIGH PRECISION Attivo');
     notifyListeners();
   }
 
   void stopTracking() {
-    if (!_isTrackingActive) {
-      return;
-    }
-    
+    if (!_isTrackingActive) return;
+
     // Ferma GPS
     _gpsSubscription?.cancel();
     _gpsSubscription = null;
-    
+
     // Ferma Qualità
     _gpsQualityTimer?.cancel();
     _currentGpsQuality = GpsSignalQuality.noSignal;
 
     _isTrackingActive = false;
+
+    // ← NUOVO: Disattiva WakeLock
+    WakelockPlus.disable();
+    debugPrint('🔓 WakeLock DISATTIVATO');
+
     _tcpSender?.disconnect();
     _tcpSender = null;
+
     debugPrint('⏹️ Tracking fermato');
     notifyListeners();
   }

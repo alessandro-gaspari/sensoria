@@ -1836,25 +1836,25 @@ function createSensorCard(name, data) {
 
     if (hasAccel) {
         rows += `
-          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="accelx">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="accely">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="accelz">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#97c93e;">X</span></span><span class="sensor-value" data-key="accelx">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#97c93e;">Y</span></span><span class="sensor-value" data-key="accely">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Acc<span style="color:#97c93e;">Z</span></span><span class="sensor-value" data-key="accelz">--</span></div>
         `;
     }
 
     if (hasGyro) {
         rows += `
-          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="gyrox">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="gyroy">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="gyroz">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#97c93e;">X</span></span><span class="sensor-value" data-key="gyrox">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#97c93e;">Y</span></span><span class="sensor-value" data-key="gyroy">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Gyr<span style="color:#97c93e;">Z</span></span><span class="sensor-value" data-key="gyroz">--</span></div>
         `;
     }
 
     if (hasMag) {
         rows += `
-          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#ffb74d;">X</span></span><span class="sensor-value" data-key="magx">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#e91e63;">Y</span></span><span class="sensor-value" data-key="magy">--</span></div>
-          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#4fc3f7;">Z</span></span><span class="sensor-value" data-key="magz">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#97c93e;">X</span></span><span class="sensor-value" data-key="magx">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#97c93e;">Y</span></span><span class="sensor-value" data-key="magy">--</span></div>
+          <div class="sensor-data-row"><span class="sensor-data-label">Mag<span style="color:#97c93e;">Z</span></span><span class="sensor-value" data-key="magz">--</span></div>
         `;
     }
 

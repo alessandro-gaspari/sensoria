@@ -55,6 +55,14 @@
 	<string>Sensoria necessita della tua posizione per tracciare le tue attività anche in background.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Sensoria necessita della tua posizione per tracciare le tue attività anche in background.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Sensoria ha bisogno del GPS in background per tracciare la tua attività anche a schermo spento.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sensoria usa il GPS per tracciare la tua corsa in tempo reale.</string>
 
 	<!-- Configurazione APPLE MAPS -->
 	<key>io.flutter.embedded_views_preview</key>
