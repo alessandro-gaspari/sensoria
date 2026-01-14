@@ -1476,13 +1476,25 @@ function normalizeLivePayload(p) {
   return o;
 }
 
+// --- HELPER FILTRO SEGNALE ---
+function filterVal(newVal, oldVal, maxDelta) {
+  if (!Number.isFinite(oldVal)) return newVal;
+  if (!Number.isFinite(newVal)) return oldVal;
+  
+  const delta = Math.abs(newVal - oldVal);
+  if (delta > maxDelta) {
+    // Se il salto è troppo grande (es. errore di trasmissione), mantieni il vecchio valore
+    // oppure limita la variazione (clamping). Qui usiamo un clamping semplice.
+    if (newVal > oldVal) return oldVal + maxDelta;
+    else return oldVal - maxDelta;
+  }
+  return newVal;
+}
+
 
 // ==========================================
 // SENSOR UPDATE (parsing calzini)
-// ==========================================
-// ==========================================
-// SENSOR UPDATE (parsing calzini)
-// ==========================================
+
 function processIncomingData(data) {
   lastDataTimestamp = Date.now();
   lastDataTime = Date.now();

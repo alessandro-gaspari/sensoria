@@ -25,6 +25,13 @@ class StreamingManager extends ChangeNotifier {
   final Map<String, Map<String, dynamic>> _latestData = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, String> _deviceProtocols = {};
+  Position? _lastValidGpsPosition;
+  DateTime? _lastGpsTimestamp;
+  double _estimatedSpeed = 0.0; // m/s
+  static const double MAX_REALISTIC_SPEED_MPS = 18.0; // ~58 km/h (pattinaggio veloce)
+  static const double MAX_REALISTIC_ACCELERATION = 8.0; // m/s²
+  static const double MIN_ACCURACY_THRESHOLD = 25.0; // metri
+  static const int MIN_TIME_DELTA_MS = 200; // minimo 200ms tra fix (5 Hz max)
 
   // ==================== HRM VARIABLES ====================
   int? _currentHeartRate;
@@ -136,7 +143,7 @@ class StreamingManager extends ChangeNotifier {
     _tcpSender?.connect();
     
     // AVVIA IL GPS CON SETTAGGI "RAW" (Aggressivi)
-    _initGpsStream();
+    initGpsStream();
     // AVVIA IL MONITORAGGIO QUALITÀ (Polling 500ms)
     _startGpsQualityMonitoring();
     
@@ -200,34 +207,132 @@ class StreamingManager extends ChangeNotifier {
     });
   }
 
-  Future<void> _initGpsStream() async {
-      // Controllo permessi base
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return;
-      }
+  Future<void> initGpsStream() async {
+    // 1. Permessi
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied) {
+      debugPrint("❌ GPS: Permessi negati");
+      return;
+    }
 
-      // CONFIGURAZIONE AGGRESSIVA "COOSPO"
-      // Rimuoviamo le distinzioni Android/iOS complesse per usare la configurazione
-      // "Best for Navigation" + "Distance Filter 0" che forza il massimo throughput.
-      const LocationSettings locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation, // Massima precisione possibile
-        distanceFilter: 0, // Nessun filtro di distanza: invia ogni singolo aggiornamento
-      );
+    // 2. CONFIGURAZIONE ULTRA-PRECISA
+    // ✅ bestForNavigation + distanceFilter ottimale
+    const LocationSettings locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.best, // Massima precisione HW
+      distanceFilter: 2, // ← 2 metri (sweet spot: elimina jitter, mantiene fluidità)
+      timeLimit: Duration(seconds: 10), // Timeout se fix GPS lento
+    );
 
-      _gpsSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-        (Position? position) {
-          if (position != null) {
-            // Invio immediato al server
-            sendGpsData(position.latitude, position.longitude, position.accuracy);
-            
-            // Nota: La mappa nell'UI avrà il suo listener diretto per fluidità locale,
-            // qui ci preoccupiamo solo di spedire i dati.
+    debugPrint("🛰️ GPS: Avvio stream ULTRA-PRECISION (2m filter, bestForNavigation)");
+
+    // 3. STREAM CON FILTRI KALMAN-STYLE
+    _gpsSubscription = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+      (Position position) {
+        // ========================================
+        // FILTRO 1: Accuracy troppo bassa → SCARTA
+        // ========================================
+        if (position.accuracy > MIN_ACCURACY_THRESHOLD) {
+          debugPrint("⚠️ GPS scartato: accuracy ${position.accuracy.toStringAsFixed(1)}m (soglia: ${MIN_ACCURACY_THRESHOLD}m)");
+          return;
+        }
+
+        // ========================================
+        // FILTRO 2: Timestamp duplicato → SCARTA
+        // ========================================
+        if (_lastGpsTimestamp != null) {
+          final timeDelta = position.timestamp.difference(_lastGpsTimestamp!).inMilliseconds;
+          if (timeDelta < MIN_TIME_DELTA_MS) {
+            debugPrint("⚠️ GPS duplicato: Δt = ${timeDelta}ms (min: ${MIN_TIME_DELTA_MS}ms)");
+            return;
           }
-        },
-        onError: (e) => debugPrint("❌ Errore GPS Stream: $e"),
-      );
+        }
+
+        // ========================================
+        // FILTRO 3: Velocità/Accelerazione impossibile → SCARTA
+        // ========================================
+        if (_lastValidGpsPosition != null && _lastGpsTimestamp != null) {
+          final distance = Geolocator.distanceBetween(
+            _lastValidGpsPosition!.latitude,
+            _lastValidGpsPosition!.longitude,
+            position.latitude,
+            position.longitude,
+          );
+
+          final timeDeltaSec = position.timestamp.difference(_lastGpsTimestamp!).inMilliseconds / 1000.0;
+
+          if (timeDeltaSec > 0.1) { // Evita divisioni per zero
+            final instantSpeed = distance / timeDeltaSec; // m/s
+            final acceleration = (instantSpeed - _estimatedSpeed).abs() / timeDeltaSec; // m/s²
+
+            // Scarta se velocità o accelerazione irrealistica
+            if (instantSpeed > MAX_REALISTIC_SPEED_MPS) {
+              debugPrint("⚠️ GPS scartato: velocità ${(instantSpeed * 3.6).toStringAsFixed(1)} km/h (max: ${(MAX_REALISTIC_SPEED_MPS * 3.6).toStringAsFixed(0)} km/h)");
+              return;
+            }
+
+            if (acceleration > MAX_REALISTIC_ACCELERATION) {
+              debugPrint("⚠️ GPS scartato: accelerazione ${acceleration.toStringAsFixed(1)} m/s² (max: $MAX_REALISTIC_ACCELERATION m/s²)");
+              return;
+            }
+
+            // Aggiorna stima velocità (EWMA per smoothing)
+            _estimatedSpeed = 0.7 * instantSpeed + 0.3 * _estimatedSpeed;
+          }
+        }
+
+        // ========================================
+        // FILTRO 4: EWMA Smoothing (Kalman-lite)
+        // ========================================
+        Position smoothedPosition = position;
+
+        if (_lastValidGpsPosition != null) {
+          // Peso dinamico in base all'accuracy:
+          // - accuracy bassa (3-5m) → alpha alto (0.8-0.9) = reattivo
+          // - accuracy alta (15-30m) → alpha basso (0.4-0.6) = più smooth
+          final alpha = (1.0 - (position.accuracy / MIN_ACCURACY_THRESHOLD)).clamp(0.5, 0.9);
+
+          smoothedPosition = Position(
+            latitude: alpha * position.latitude + (1.0 - alpha) * _lastValidGpsPosition!.latitude,
+            longitude: alpha * position.longitude + (1.0 - alpha) * _lastValidGpsPosition!.longitude,
+            timestamp: position.timestamp,
+            accuracy: position.accuracy,
+            altitude: position.altitude,
+            heading: position.heading,
+            speed: _estimatedSpeed, // Usa velocità filtrata
+            speedAccuracy: position.speedAccuracy,
+            altitudeAccuracy: position.altitudeAccuracy,
+            headingAccuracy: position.headingAccuracy,
+          );
+        }
+
+        // ========================================
+        // SALVA POSIZIONE VALIDA E INVIA
+        // ========================================
+        _lastValidGpsPosition = smoothedPosition;
+        _lastGpsTimestamp = position.timestamp;
+
+        // Invia al server
+        sendGpsData(
+          smoothedPosition.latitude,
+          smoothedPosition.longitude,
+          smoothedPosition.accuracy,
+        );
+
+        // Debug periodico (ogni 10 fix)
+        if (_lastGpsTimestamp!.millisecondsSinceEpoch % 10000 < 1000) {
+          debugPrint(
+            "✅ GPS OK: acc=${smoothedPosition.accuracy.toStringAsFixed(1)}m, "
+            "speed=${(_estimatedSpeed * 3.6).toStringAsFixed(1)}km/h"
+          );
+        }
+      },
+      onError: (e) {
+        debugPrint("❌ GPS Stream Error: $e");
+      },
+    );
   }
 
 
