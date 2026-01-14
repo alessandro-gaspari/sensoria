@@ -322,6 +322,16 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
           }
         });
         
+        device.connectionState.listen((BluetoothConnectionState state) {
+          if (state == BluetoothConnectionState.disconnected) {
+            debugPrint("⚠️ HRM disconnesso automaticamente!");
+            if (mounted) {
+              _disconnectHrm();
+              _showMessage("❌ HRM disconnesso");
+            }
+          }
+        });
+
         _showMessage("✅ Connesso a $name");
       } else {
         await device.disconnect();
@@ -357,30 +367,37 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
           _localBpm = null;
           _hrmDeviceName = '';
         });
-        _showMessage("Disconnesso da HRM");
       }
     } catch (_) {}
   }
 
-  // ==================== UI HELPERS ====================
-  void _showMessage(String message) {
+    // ==================== UI HELPERS ====================
+  void _showMessage(String message, {Color? backgroundColor, Color? borderColor}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           message, 
           style: GoogleFonts.barlow(
-            color: Colors.black, 
+            color: Colors.white, 
             fontWeight: FontWeight.w600
           )
         ),
-        backgroundColor: const Color.fromRGBO(151, 201, 62, 1),
+        backgroundColor: backgroundColor ?? Colors.transparent,
+        elevation: 0,
         duration: const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: borderColor ?? const Color.fromRGBO(151, 201, 62, 1),
+            width: 2,
+          ),
+        ),
       ),
     );
   }
+
 
   void _navigateToDeviceScreen(BluetoothDevice device, String deviceName, SensoriaDeviceType deviceType) {
     Navigator.push(
@@ -471,7 +488,6 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                   letterSpacing: 1.0
                 ),
               ),
-              // ... resto dello stile uguale ...
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.transparent,
                 foregroundColor: const Color.fromRGBO(151, 201, 62, 1),
@@ -594,7 +610,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                                     padding: const EdgeInsets.all(16),
                                     child: Row(
                                       children: [
-                                        const Text("❤️", style: TextStyle(fontSize: 22)),
+                                        const Text("🫀", style: TextStyle(fontSize: 22)),
                                         const SizedBox(width: 16),
                                         Expanded(
                                           child: Text(
@@ -646,9 +662,114 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
-        title: Image.asset('assets/logo_Clean.png', height: 28),
+        title: Image.asset('assets/logo_Clean.png', height: 35),
         centerTitle: true,
+        // ← NUOVO: Bottone HRM in alto a destra
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: GestureDetector(
+              onTap: () => setState(() => _showHrmOverlay = true),
+              child: SizedBox(
+                width: 50,
+                height: 50,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    // ← MOSTRA IL CUORE SOLO SE NON CONNESSO
+                    if (_connectedHrm == null) ...[
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.favorite,
+                          color: Color.fromRGBO(151, 201, 62, 1),
+                          size: 32, // ← Aumentato
+                        ),
+                      ),
+                      // "+" bianco in alto a destra
+                      Positioned(
+                        right: 2,
+                        top: 2,
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Center(
+                            child: Text(
+                              '+',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                height: 0.1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    
+                    // ← MOSTRA SOLO BPM QUANDO CONNESSO (nasconde cuore)
+                    if (_connectedHrm != null && _localBpm != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color.fromRGBO(151, 201, 62, 0.95),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color.fromRGBO(151, 201, 62, 1),
+                            width: 1.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '$_localBpm',
+                              style: GoogleFonts.barlowCondensed(
+                                color: Colors.black,
+                                fontSize: 20, // ← Aumentato
+                                fontWeight: FontWeight.bold,
+                                height: 1.0,
+                              ),
+                            ),
+                            Text(
+                              'BPM',
+                              style: GoogleFonts.barlowCondensed(
+                                color: Colors.black87,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                                height: 1.0,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+
       ),
+
       body: Stack(
         children: [
           Column(
@@ -940,52 +1061,6 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
                     ),
               )
             ],
-          ),
-
-          Positioned(
-            bottom: 30,
-            right: 20,
-            child: _connectedHrm != null
-              ? GestureDetector(
-                  onTap: () => setState(() => _showHrmOverlay = true),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color.fromRGBO(151, 201, 62, 1), width: 2),
-                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10)],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          "${_localBpm ?? '--'}",
-                          style: GoogleFonts.barlowCondensed(
-                            color: const Color.fromRGBO(151, 201, 62, 1), 
-                            fontSize: 32, 
-                            fontWeight: FontWeight.bold
-                          ),
-                        ),
-                        Text(
-                          "BPM", 
-                          style: GoogleFonts.barlowCondensed(
-                            color: Colors.white70, 
-                            fontSize: 12, 
-                            fontWeight: FontWeight.bold
-                          )
-                        )
-                      ],
-                    ),
-                  ),
-                )
-              : FloatingActionButton(
-                  onPressed: () => setState(() => _showHrmOverlay = true),
-                  backgroundColor: Colors.transparent,
-                  elevation: 0,
-                  highlightElevation: 0,
-                  child: const Text("❤️", style: TextStyle(fontSize: 44)),
-                ),
           ),
 
           if (_showHrmOverlay) _buildHrmOverlay(),

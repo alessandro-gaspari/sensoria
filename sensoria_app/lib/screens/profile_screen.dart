@@ -14,17 +14,75 @@ class ProfilesListScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Image.asset('assets/logo_Clean.png', height: 28),
+        title: Image.asset('assets/logo_Clean.png', height: 35),
         centerTitle: true,
         backgroundColor: Colors.black,
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add, color: Color.fromRGBO(151, 201, 62, 1)),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileFormScreen())),
-          )
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: GestureDetector(
+              onTap: () => Navigator.push(
+                context, 
+                MaterialPageRoute(builder: (_) => const ProfileFormScreen())
+              ),
+              child: SizedBox(
+                width: 50,
+                height: 50,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  alignment: Alignment.center,
+                  children: [
+                    // Icona persona verde
+                    // Icona persona verde
+                    Container(
+                      width: 50,
+                      height: 50,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.3),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.person,
+                        color: Color.fromRGBO(151, 201, 62, 1), // ← Verde Sensoria
+                        size: 32,
+                      ),
+                    ),
+
+                    // "+" verde in cerchietto nero con bordo verde
+                      Positioned(
+                        right: 2,
+                        top: 2,
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Center(
+                            child: Text(
+                              '+',
+                              style: TextStyle(
+                                color: Colors.black,
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                                height: 0.1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+
+                  ],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
+
       body: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: provider.profiles.length,
