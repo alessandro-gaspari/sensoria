@@ -1602,7 +1602,6 @@ function processIncomingData(data) {
         // LIVE UI: calcola BI medio su finestra 1500ms
         const biAvg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
         updateSocksUI('left', { p0, p1, p2 }, biAvg);
-        updateSensorCardUI(sensorName, p); // Mostra raw live
       }
     } else if (isRight) {
       rightSockSamples.push(fullSample);
@@ -1610,16 +1609,16 @@ function processIncomingData(data) {
         // LIVE UI: calcola BI medio su finestra 1500ms
         const biAvg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
         updateSocksUI('right', { p0, p1, p2 }, biAvg);
-        updateSensorCardUI(sensorName, p); // Mostra raw live
       }
     }
 
   }
 
-  // 5. RAW cards (charts IMU/pressioni) - per sensori generici non-calzini o logica chart dedicata
-  // sensors[sensorName] = p; // se serve storico globale
-  // updateSensorCardUI(sensorName, p); // Già chiamato sopra per i calzini
-  // updateChartsUI(sensorName, p); // Se usi uPlot real-time per accel/gyro
+  if (!isReplayMode) {
+    sensors[sensorName] = p; // se serve storico globale
+    updateSensorCardUI(sensorName, p); // Già chiamato sopra per i calzini
+    updateChartsUI(sensorName, p); // Se usi uPlot real-time per accel/gyro
+  }
 }
 
 
