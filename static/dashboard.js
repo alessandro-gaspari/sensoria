@@ -1401,17 +1401,18 @@ function enterReplayAtSecond(sec) {
     updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
   }
 
-  // --- AGGIUNTA: Aggiorna TUTTI i sensori (Unknown, Body, ecc.) ---
-  if (allSensorSamples) {
-      for (const [sensorName, samples] of Object.entries(allSensorSamples)) {
-          // Trova il sample al tempo tMs
+  // --- AGGIORNAMENTO GLOBALE SENSORI ---
+  if (typeof allSensorSamples !== 'undefined') {
+      for (const [sName, samples] of Object.entries(allSensorSamples)) {
+          // Trova il sample più vicino a tMs
           const s = findSampleAtTime(samples, tMs);
           if (s) {
-              // Aggiorna la card UI con TUTTI i dati (accel, gyro, ecc.)
-              updateSensorCardUI(sensorName, s);
+              // Aggiorna la card UI (Ax, Ay, Gx...)
+              updateSensorCardUI(sName, s);
           }
       }
   }
+
 
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
   // Hack per forzare redraw cursore
@@ -2567,10 +2568,10 @@ async function loadPastActivity(logName) {
     if (finiteTimes.length) sessionStartTimeMs = Math.min(...finiteTimes);
     if (sessionStartTimeMs == null) sessionStartTimeMs = Date.now();
 
-    // --- 5 SENSORI: parsing completo ---
+    // --- 5 SENSORI: parsing completo e corretto ---
     setStatus("Parsing sensori...");
 
-    // Reset delle strutture
+    // Reset
     allSensorSamples = {}; 
     leftSockSamples = [];
     rightSockSamples = [];
@@ -2582,54 +2583,68 @@ async function loadPastActivity(logName) {
         const tMs = (sensorItem && sensorItem.t != null) ? Number(sensorItem.t) : null;
         if (!Number.isFinite(tMs)) continue;
 
-        // Nome originale (NON minuscolo, per la UI)
+        // --- CORREZIONE NOME: Supporta sensor_name (dal log JSON) ---
         const nameRaw = String(
-            sensorItem.sensorname ?? sensorItem.sensorName ?? sensorItem.name ?? sensorItem.sensor ?? "Unknown"
+            sensorItem.sensor_name ?? // <--- FONDAMENTALE per i tuoi log
+            sensorItem.sensorname ?? 
+            sensorItem.sensorName ?? 
+            sensorItem.name ?? 
+            sensorItem.sensor ?? 
+            "Unknown"
         ).trim();
         
-        // Nome minuscolo per identificare i calzini
         const nameLower = nameRaw.toLowerCase();
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
 
-        // Pressioni
-        const p0 = Number(sensorItem.pressure0 ?? sensorItem.p0 ?? 0);
-        const p1 = Number(sensorItem.pressure1 ?? sensorItem.p1 ?? 0);
-        const p2 = Number(sensorItem.pressure2 ?? sensorItem.p2 ?? 0);
+        // --- CORREZIONE PRESSIONI: Supporta pressure_0 (dal log JSON) ---
+        const p0 = Number(sensorItem.pressure0 ?? sensorItem.pressure_0 ?? sensorItem.p0 ?? 0);
+        const p1 = Number(sensorItem.pressure1 ?? sensorItem.pressure_1 ?? sensorItem.p1 ?? 0);
+        const p2 = Number(sensorItem.pressure2 ?? sensorItem.pressure_2 ?? sensorItem.p2 ?? 0);
 
-        // Creiamo un sample COMPLETO (non solo pressioni!)
+        // Dati IMU (accelerometro ecc...)
+        // normSensorItem gestisce già accel_x -> accelx, quindi usiamo i campi normalizzati
+        // ma per sicurezza controlliamo entrambi
         const sample = {
             t: tMs,
-            sensorname: nameRaw, // Importante per la card
+            sensorname: nameRaw, 
 
-            // Dati IMU (fondamentali per vedere i numeri)
-            accelx: sensorItem.accelx, accely: sensorItem.accely, accelz: sensorItem.accelz,
-            gyrox: sensorItem.gyrox, gyroy: sensorItem.gyroy, gyroz: sensorItem.gyroz,
-            magx: sensorItem.magx, magy: sensorItem.magy, magz: sensorItem.magz,
+            // Dati IMU completi
+            accelx: sensorItem.accelx ?? sensorItem.accel_x, 
+            accely: sensorItem.accely ?? sensorItem.accel_y, 
+            accelz: sensorItem.accelz ?? sensorItem.accel_z,
+            gyrox: sensorItem.gyrox ?? sensorItem.gyro_x, 
+            gyroy: sensorItem.gyroy ?? sensorItem.gyro_y, 
+            gyroz: sensorItem.gyroz ?? sensorItem.gyro_z,
+            magx: sensorItem.magx ?? sensorItem.mag_x, 
+            magy: sensorItem.magy ?? sensorItem.mag_y, 
+            magz: sensorItem.magz ?? sensorItem.mag_z,
 
-            // Dati Pressione
+            // Pressioni
             pressure0: p0, pressure1: p1, pressure2: p2,
             p0: p0, p1: p1, p2: p2,
             
             bi: (typeof calculateBI === "function") ? calculateBI(sensorItem) : 0
         };
 
-        // 1. Salviamo SEMPRE in allSensorSamples
+        // 1. Salviamo TUTTO nel dizionario globale
         if (!allSensorSamples[nameRaw]) {
             allSensorSamples[nameRaw] = [];
         }
         allSensorSamples[nameRaw].push(sample);
 
-        // 2. Logica specifica per i grafici dei calzini (rimane invariata)
+        // 2. Logica specifica Calzini (per i grafici dedicati)
         const isLeft = nameLower.includes("sx") || nameLower.includes("left") || nameLower.includes("sinistro");
         const isRight = nameLower.includes("dx") || nameLower.includes("right") || nameLower.includes("destro");
+        // Escludiamo "ginocchio" o altri sensori che potrebbero avere "sx/dx" nel nome ma non sono calzini
+        const isSock = nameLower.includes("calzino") || nameLower.includes("sock"); 
 
-        if (isLeft) {
+        if (isSock && isLeft) {
             leftSockSamples.push(sample);
             sockChartData.left[0].push(tRelSec);
             sockChartData.left[1].push(p0);
             sockChartData.left[2].push(p1);
             sockChartData.left[3].push(p2);
-        } else if (isRight) {
+        } else if (isSock && isRight) {
             rightSockSamples.push(sample);
             sockChartData.right[0].push(tRelSec);
             sockChartData.right[1].push(p0);
@@ -2638,8 +2653,9 @@ async function loadPastActivity(logName) {
         }
     }
 
-    // Ordiniamo i campioni per tempo per il binary search
+    // Ordina per tempo
     Object.values(allSensorSamples).forEach(arr => arr.sort((a, b) => a.t - b.t));
+
 
 
     setProgress(72);
