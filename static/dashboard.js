@@ -1629,7 +1629,7 @@ function processIncomingData(data) {
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
 const BILATERAL_AXIS = 'z';
-const BI_AVG_WINDOW_MS = 850;
+const BI_AVG_WINDOW_MS = 1500;
 
 const biAgg = {
   left: { sum: 0, n: 0, last: null },
@@ -1858,11 +1858,17 @@ function createSensorCard(name, data) {
             <div class="sensor-data-row"><span class="sensor-data-label">My</span><span class="sensor-value" data-key="magy">--</span></div>
             <div class="sensor-data-row"><span class="sensor-data-label">Mz</span><span class="sensor-value" data-key="magz">--</span></div>`;
     }
-    if (hasPressure) {
+
+    const nameLower = name.toLowerCase();
+    const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
+
+    // Mostra le pressioni SOLO se i dati esistono E se è un calzino
+    if (hasPressure && isSock) { 
         rows += `
-            <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
-            <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>`;
+        <div class="sensor-data-row"><span class="sensor-data-label">P0</span><span class="sensor-value" data-key="pressure0">--</span></div>
+        <div class="sensor-data-row"><span class="sensor-data-label">P1</span><span class="sensor-value" data-key="pressure1">--</span></div>
+        <div class="sensor-data-row"><span class="sensor-data-label">P2</span><span class="sensor-value" data-key="pressure2">--</span></div>
+        `;
     }
 
     div.innerHTML = `
