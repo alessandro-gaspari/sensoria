@@ -69,6 +69,7 @@ var startMapPos = null;
 var animationStartTime = null;
 var animationFrameId = null;
 const ANIMATION_DURATION = 700;
+var allSensorSamples = {};
 
 var mapRotationDeg = 0;
 
@@ -1400,6 +1401,18 @@ function enterReplayAtSecond(sec) {
     updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
   }
 
+  // --- AGGIUNTA: Aggiorna TUTTI i sensori (Unknown, Body, ecc.) ---
+  if (allSensorSamples) {
+      for (const [sensorName, samples] of Object.entries(allSensorSamples)) {
+          // Trova il sample al tempo tMs
+          const s = findSampleAtTime(samples, tMs);
+          if (s) {
+              // Aggiorna la card UI con TUTTI i dati (accel, gyro, ecc.)
+              updateSensorCardUI(sensorName, s);
+          }
+      }
+  }
+
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
   // Hack per forzare redraw cursore
   if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10}); 
@@ -2554,43 +2567,80 @@ async function loadPastActivity(logName) {
     if (finiteTimes.length) sessionStartTimeMs = Math.min(...finiteTimes);
     if (sessionStartTimeMs == null) sessionStartTimeMs = Date.now();
 
-    // ============================================================
-    // 5) SENSORI calzini -> left/right + sockChartData
-    // ============================================================
+    // --- 5 SENSORI: parsing completo ---
     setStatus("Parsing sensori...");
+
+    // Reset delle strutture
+    allSensorSamples = {}; 
+    leftSockSamples = [];
+    rightSockSamples = [];
+    sockChartData.left = [[], [], [], []];
+    sockChartData.right = [[], [], [], []];
+
     for (const sensorItemRaw of data.sensors) {
-      const sensorItem = normSensorItem(sensorItemRaw);
-      const tMs = (sensorItem && sensorItem.t != null) ? Number(sensorItem.t) : null;
-      if (!Number.isFinite(tMs)) continue;
+        const sensorItem = normSensorItem(sensorItemRaw);
+        const tMs = (sensorItem && sensorItem.t != null) ? Number(sensorItem.t) : null;
+        if (!Number.isFinite(tMs)) continue;
 
-      const tRelSec = (tMs - sessionStartTimeMs) / 1000;
+        // Nome originale (NON minuscolo, per la UI)
+        const nameRaw = String(
+            sensorItem.sensorname ?? sensorItem.sensorName ?? sensorItem.name ?? sensorItem.sensor ?? "Unknown"
+        ).trim();
+        
+        // Nome minuscolo per identificare i calzini
+        const nameLower = nameRaw.toLowerCase();
+        const tRelSec = (tMs - sessionStartTimeMs) / 1000;
 
-      const name = String(
-        sensorItem.sensor_name ?? sensorItem.sensorname ?? sensorItem.sensorName ??
-        sensorItem.name ?? sensorItem.sensor ?? "unknown"
-      ).toLowerCase();
+        // Pressioni
+        const p0 = Number(sensorItem.pressure0 ?? sensorItem.p0 ?? 0);
+        const p1 = Number(sensorItem.pressure1 ?? sensorItem.p1 ?? 0);
+        const p2 = Number(sensorItem.pressure2 ?? sensorItem.p2 ?? 0);
 
-      const p0 = Number(sensorItem.pressure0 ?? sensorItem.pressure_0 ?? sensorItem.p0 ?? 0);
-      const p1 = Number(sensorItem.pressure1 ?? sensorItem.pressure_1 ?? sensorItem.p1 ?? 0);
-      const p2 = Number(sensorItem.pressure2 ?? sensorItem.pressure_2 ?? sensorItem.p2 ?? 0);
+        // Creiamo un sample COMPLETO (non solo pressioni!)
+        const sample = {
+            t: tMs,
+            sensorname: nameRaw, // Importante per la card
 
-      const biInst = (typeof calculateBI === "function") ? calculateBI(sensorItem) : 0;
-      const sample = { t: tMs, p0, p1, p2, bi: biInst };
+            // Dati IMU (fondamentali per vedere i numeri)
+            accelx: sensorItem.accelx, accely: sensorItem.accely, accelz: sensorItem.accelz,
+            gyrox: sensorItem.gyrox, gyroy: sensorItem.gyroy, gyroz: sensorItem.gyroz,
+            magx: sensorItem.magx, magy: sensorItem.magy, magz: sensorItem.magz,
 
-      if (name.includes("sx") || name.includes("left") || name.includes("sinistro")) {
-        leftSockSamples.push(sample);
-        sockChartData.left[0].push(tRelSec);
-        sockChartData.left[1].push(p0);
-        sockChartData.left[2].push(p1);
-        sockChartData.left[3].push(p2);
-      } else if (name.includes("dx") || name.includes("right") || name.includes("destro")) {
-        rightSockSamples.push(sample);
-        sockChartData.right[0].push(tRelSec);
-        sockChartData.right[1].push(p0);
-        sockChartData.right[2].push(p1);
-        sockChartData.right[3].push(p2);
-      }
+            // Dati Pressione
+            pressure0: p0, pressure1: p1, pressure2: p2,
+            p0: p0, p1: p1, p2: p2,
+            
+            bi: (typeof calculateBI === "function") ? calculateBI(sensorItem) : 0
+        };
+
+        // 1. Salviamo SEMPRE in allSensorSamples
+        if (!allSensorSamples[nameRaw]) {
+            allSensorSamples[nameRaw] = [];
+        }
+        allSensorSamples[nameRaw].push(sample);
+
+        // 2. Logica specifica per i grafici dei calzini (rimane invariata)
+        const isLeft = nameLower.includes("sx") || nameLower.includes("left") || nameLower.includes("sinistro");
+        const isRight = nameLower.includes("dx") || nameLower.includes("right") || nameLower.includes("destro");
+
+        if (isLeft) {
+            leftSockSamples.push(sample);
+            sockChartData.left[0].push(tRelSec);
+            sockChartData.left[1].push(p0);
+            sockChartData.left[2].push(p1);
+            sockChartData.left[3].push(p2);
+        } else if (isRight) {
+            rightSockSamples.push(sample);
+            sockChartData.right[0].push(tRelSec);
+            sockChartData.right[1].push(p0);
+            sockChartData.right[2].push(p1);
+            sockChartData.right[3].push(p2);
+        }
     }
+
+    // Ordiniamo i campioni per tempo per il binary search
+    Object.values(allSensorSamples).forEach(arr => arr.sort((a, b) => a.t - b.t));
+
 
     setProgress(72);
     await yieldUI();
