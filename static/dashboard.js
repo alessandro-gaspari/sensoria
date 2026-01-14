@@ -314,29 +314,6 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }, 1000);
 
-  if (!biAvgTimer) {
-    biAvgTimer = setInterval(() => {
-      // LEFT
-      if (biAgg.left.n > 0) {
-        biAgg.left.last = biAgg.left.sum / biAgg.left.n;
-        biAgg.left.sum = 0; biAgg.left.n = 0;
-
-        // aggiorna solo BI (pressioni restano quelle già mostrate)
-        const l = leftSockSamples.length ? leftSockSamples[leftSockSamples.length - 1] : null;
-        if (l && !isReplayMode) updateSocksUI('left', { p0: l.p0, p1: l.p1, p2: l.p2 }, biAgg.left.last);
-      }
-
-      // RIGHT
-      if (biAgg.right.n > 0) {
-        biAgg.right.last = biAgg.right.sum / biAgg.right.n;
-        biAgg.right.sum = 0; biAgg.right.n = 0;
-
-        const r = rightSockSamples.length ? rightSockSamples[rightSockSamples.length - 1] : null;
-        if (r && !isReplayMode) updateSocksUI('right', { p0: r.p0, p1: r.p1, p2: r.p2 }, biAgg.right.last);
-      }
-    }, BI_AVG_WINDOW_MS);
-  }
-
   var sel = document.getElementById("chart-sensor-select");
   if (sel) {
     sel.addEventListener("change", function (e) {
@@ -1389,17 +1366,22 @@ function enterReplayAtSecond(sec) {
   // --- 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay) ---
   const sampleL = findSampleAtTime(leftSockSamples, tMs);
   if (sampleL) {
-    // Grafico BI/Pressioni
-    updateSocksUI('left', {p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2}, sampleL.bi);
+    // Calcola BI medio su finestra 1500ms
+    const biLavg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
+    // Grafico BI+Pressioni
+    updateSocksUI('left', { p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2 }, biLavg);
     // Dati RAW (Accel, Gyro, Mag)
-    updateSensorCardUI(sampleL.sensorname || "Calzino SX", sampleL); 
+    updateSensorCardUI(sampleL.sensorname || 'Calzino SX', sampleL);
   }
 
   const sampleR = findSampleAtTime(rightSockSamples, tMs);
   if (sampleR) {
-    updateSocksUI('right', {p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2}, sampleR.bi);
-    updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
+    // Calcola BI medio su finestra 1500ms
+    const biRavg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
+    updateSocksUI('right', { p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2 }, biRavg);
+    updateSensorCardUI(sampleR.sensorname || 'Calzino DX', sampleR);
   }
+
 
   // --- AGGIORNAMENTO GLOBALE SENSORI ---
   if (typeof allSensorSamples !== 'undefined') {
@@ -1605,18 +1587,21 @@ function processIncomingData(data) {
     if (isLeft) {
       leftSockSamples.push(fullSample);
       if (!isReplayMode) {
-        // LIVE UI
-        updateSocksUI('left', { p0, p1, p2 }, bi);
+        // LIVE UI: calcola BI medio su finestra 1500ms
+        const biAvg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
+        updateSocksUI('left', { p0, p1, p2 }, biAvg);
         updateSensorCardUI(sensorName, p); // Mostra raw live
       }
     } else if (isRight) {
       rightSockSamples.push(fullSample);
       if (!isReplayMode) {
-        // LIVE UI
-        updateSocksUI('right', { p0, p1, p2 }, bi);
+        // LIVE UI: calcola BI medio su finestra 1500ms
+        const biAvg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
+        updateSocksUI('right', { p0, p1, p2 }, biAvg);
         updateSensorCardUI(sensorName, p); // Mostra raw live
       }
     }
+
   }
 
   // 5. RAW cards (charts IMU/pressioni) - per sensori generici non-calzini o logica chart dedicata
