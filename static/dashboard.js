@@ -918,7 +918,7 @@ function onGpsUpdate(data, opts) {
   }
 
   // combina A+B
-  let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * seedB;
+  let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * speedB;
   speedFinal = Math.min(Math.max(0, speedFinal), MAX_SPEED_KMH);
 
   newSample.speedKmh = speedFinal; // sovrascrivi per UI+replay coerenti
@@ -926,7 +926,7 @@ function onGpsUpdate(data, opts) {
 
   if (isBulkLoading) return;
 
-  if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(speedKmh, newCumDistM);
+  if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(newSample.speedKmh, newCumDistM);
 
   if (opts.updateMap && map && mapMarker) {
     setMapTarget(lat, lng);
