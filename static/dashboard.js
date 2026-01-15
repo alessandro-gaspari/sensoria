@@ -1142,13 +1142,13 @@ function createReplayOverlayControls() {
     slider.addEventListener("touchend", () => lockMap(false));
   }
 
-  // 2. BOTTONE "LIVE" (Destra)
+  // 2. BOTTONE LIVE (Destra)
   if (!document.getElementById('btn-live')) {
-      var btnLive = document.createElement('div');  // ← Cambiato da 'button' a 'div'
+      var btnLive = document.createElement('div');
       btnLive.id = 'btn-live';
       btnLive.innerHTML = `
           <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#97c93e; margin-right:6px;"></span>
-          <span style="color:#97c93e; font-weight:800; font-size:13px; letter-spacing:0.8px;">LIVE</span>
+          <span style="color:#ffffff; font-weight:800; font-size:13px; letter-spacing:0.8px;">LIVE</span>
       `;
       btnLive.style.cssText = `
           position: absolute;
@@ -1157,20 +1157,16 @@ function createReplayOverlayControls() {
           z-index: 30001;
           display: none;
           align-items: center;
-          padding: 0;
-          background: none;
-          border: none;
+          padding: 6px 12px;
+          background: rgba(0,0,0,0.75);
+          border: 1px solid rgba(151,201,62,0.4);
+          border-radius: 20px;
           cursor: default;
           pointer-events: none;
       `;
-
-    // Se clicchi LIVE mentre sei in replay, magari vuoi tornare al live? 
-    // Se "non ci deve essere nessun tasto", lo nascondiamo proprio.
-    //btnLive.addEventListener("click", () => {
-    //    if(isReplayMode) goLive();
-    //});
-    mapDiv.appendChild(btnLive);
+      mapDiv.appendChild(btnLive);
   }
+
 }
 
 
@@ -1187,6 +1183,7 @@ function showReplayOverlayIfReady() {
   const overlay = document.getElementById("replay-overlay");
   const slider = document.getElementById("replay-slider");
   const btnLive = document.getElementById("btn-live");
+  const liveInd = document.getElementById('live-indicator');
   
   if (!overlay || !slider || !btnLive) return;
 
@@ -1198,6 +1195,7 @@ function showReplayOverlayIfReady() {
     if (isReplayMode) {
       // --- REPLAY MODE ---
       // Slider visibile e attivo
+      if (liveInd) liveInd.style.display = 'none';
       slider.style.display = "block";
       slider.disabled = false;
       
@@ -1210,6 +1208,7 @@ function showReplayOverlayIfReady() {
     } else {
       // --- LIVE MODE ---
       // Slider nascosto
+      if (liveInd) liveInd.style.display = 'flex';
       slider.style.display = "none";
       slider.disabled = true;
       
@@ -1223,6 +1222,7 @@ function showReplayOverlayIfReady() {
       btnLive.style.color = "#000";
     }
   } else {
+    if(liveInd) liveInd.style.display = 'none';
     overlay.style.display = "none";
     btnLive.style.display = "none";
   }
@@ -1469,16 +1469,47 @@ function enterReplayAtSecond(sec) {
 
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
   // Hack per forzare redraw cursore
-  if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10}); 
+  if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10});
   if (sockCharts.right) sockCharts.right.setCursor({left: -10, top: -10});
-
-  // Centra finestra temporale (es. 5 secondi)
-  const windowHalf = 2.5; 
-  const minX = Math.max(0, clampedSec - windowHalf);
-  const maxX = minX + (windowHalf * 2);
-
-  if (sockCharts.left) sockCharts.left.setScale('x', {min: minX, max: maxX});
-  if (sockCharts.right) sockCharts.right.setScale('x', {min: minX, max: maxX});
+  
+  // ✅ FINESTRA ADATTIVA PER GRAFICI PRESSIONI
+  const WINDOW_SEC = 5; // Larghezza finestra (secondi)
+  
+  // Calcola la durata totale dei dati disponibili
+  const maxDataSec = getDurationSec(); // Funzione già presente nel tuo file
+  
+  let minX, maxX;
+  
+  if (maxDataSec <= WINDOW_SEC) {
+      // Se la durata totale è minore della finestra, mostra tutto
+      minX = 0;
+      maxX = maxDataSec;
+  } else {
+      // Finestra scorrevole intelligente
+      const halfWin = WINDOW_SEC / 2;
+      
+      if (clampedSec < halfWin) {
+          // INIZIO: Mostra da 0 fino a WINDOW_SEC
+          minX = 0;
+          maxX = WINDOW_SEC;
+      } else if (clampedSec > maxDataSec - halfWin) {
+          // FINE: Mostra ultimi WINDOW_SEC secondi
+          minX = Math.max(0, maxDataSec - WINDOW_SEC);
+          maxX = maxDataSec;
+      } else {
+          // CENTRO: Finestra centrata sul cursore
+          minX = clampedSec - halfWin;
+          maxX = clampedSec + halfWin;
+      }
+  }
+  
+  // Applica la finestra ai grafici
+  if (sockCharts.left) {
+      sockCharts.left.setScale('x', {min: minX, max: maxX});
+  }
+  if (sockCharts.right) {
+      sockCharts.right.setScale('x', {min: minX, max: maxX});
+  }
 }
 
 
