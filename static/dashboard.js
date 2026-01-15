@@ -1147,8 +1147,8 @@ function createReplayOverlayControls() {
       var btnLive = document.createElement('div');
       btnLive.id = 'btn-live';
       btnLive.innerHTML = `
-          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#97c93e; margin-right:6px;"></span>
-          <span style="color:#ffffff; font-weight:800; font-size:13px; letter-spacing:0.8px;">LIVE</span>
+          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff0000; margin-right:6px;"></span>
+          <span style="color:#000000; font-weight:900; font-size:13px; letter-spacing:0.8px;">LIVE</span>
       `;
       btnLive.style.cssText = `
           position: absolute;
@@ -1158,14 +1158,16 @@ function createReplayOverlayControls() {
           display: none;
           align-items: center;
           padding: 6px 12px;
-          background: rgba(0,0,0,0.75);
-          border: 1px solid rgba(151,201,62,0.4);
+          background: #97c93e;
+          border: 1px solid rgba(0,0,0,0.2);
           border-radius: 20px;
           cursor: default;
           pointer-events: none;
+          box-shadow: 0 4px 10px rgba(0,0,0,0.3);
       `;
       mapDiv.appendChild(btnLive);
   }
+
 
 }
 
