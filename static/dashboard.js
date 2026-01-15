@@ -918,8 +918,8 @@ function onGpsUpdate(data, opts) {
   }
 
   // combina A+B
-  let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * speedB;
-  speedFinal = Math.min(Math.max(0, speedFinal), MAXSPEEDKMH);
+  let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * seedB;
+  speedFinal = Math.min(Math.max(0, speedFinal), MAX_SPEED_KMH);
 
   newSample.speedKmh = speedFinal; // sovrascrivi per UI+replay coerenti
 
@@ -1431,7 +1431,7 @@ function enterReplayAtSecond(sec) {
 
   const dist = getDistanceAtTime(tMs);
   const wholeSec = Math.floor(clampedSec);
-  let speed = (speedBySec && speedBySec[wholeSec] != null) ? speedBySec[wholeSec] : 0;
+  const speed = getSpeedAtTime(tMs);
   updateSpeedDistanceUI(speed, dist);
 
   // --- 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay) ---
