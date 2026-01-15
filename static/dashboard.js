@@ -100,6 +100,9 @@ var selectedSensor = null;
 var chartsInitialized = false;
 var isUserInteracting = false;
 var MIN_ZOOM_RANGE = 0.5;
+const SPEED_WINDOW_SEC = 12;
+const SPEED_A_WEIGHT = 0.6
+let speedWindow = [];
 
 // ==========================================
 // Calzini (pressure)
@@ -115,6 +118,57 @@ var sockChartData = {
   right: [[], [], [], []]
 };
 var replayCursorSec = null;
+// --- MAP FOLLOW ultra-reattivo (Leaflet) ---
+const MAP_FOLLOW_EPS = 1e-7;
+
+function setMapTarget(lat, lng) {
+  targetMapPos = { lat, lng };
+
+  if (!currentMapPos) currentMapPos = { ...targetMapPos };
+  if (!startMapPos) startMapPos = { ...currentMapPos };
+
+  // reset animazione ad ogni nuovo fix (super reattivo)
+  startMapPos = { ...currentMapPos };
+  animationStartTime = performance.now();
+
+  if (!animationFrameId) {
+    animationFrameId = requestAnimationFrame(animateMapFollow);
+  }
+}
+
+function animateMapFollow(now) {
+  if (!map || !mapMarker || !targetMapPos) {
+    animationFrameId = null;
+    return;
+  }
+
+  const elapsed = now - (animationStartTime ?? now);
+  const t = Math.max(0, Math.min(1, elapsed / ANIMATIONDURATION));
+  // ease-out (morbido ma veloce)
+  const k = 1 - Math.pow(1 - t, 3);
+
+  currentMapPos = {
+    lat: startMapPos.lat + (targetMapPos.lat - startMapPos.lat) * k,
+    lng: startMapPos.lng + (targetMapPos.lng - startMapPos.lng) * k,
+  };
+
+  mapMarker.setLatLng(currentMapPos);
+
+  if (!isUserInteracting) {
+    // NO panTo: setView immediato, niente animazioni accodate
+    map.setView([currentMapPos.lat, currentMapPos.lng], map.getZoom(), {
+      animate: false,
+      noMoveStart: true,
+    });
+  }
+
+  const closeEnough =
+    Math.abs(currentMapPos.lat - targetMapPos.lat) < MAP_FOLLOW_EPS &&
+    Math.abs(currentMapPos.lng - targetMapPos.lng) < MAP_FOLLOW_EPS;
+
+  animationFrameId = closeEnough ? null : requestAnimationFrame(animateMapFollow);
+}
+
 
 function centerLinePlugin() {
   return {
@@ -832,7 +886,8 @@ function onGpsUpdate(data, opts) {
   if (goodFix) {
     if (stepM < GPS_MIN_STEP_M) {
       usedStepM = 0;
-      speedKmh = prevSpeed;     // invece di 0
+      speedKmh = prevSpeed * 0.85;
+      if (speedKmh < 0.3) speedKmh = 0;
     } else {
       usedStepM = stepM;
       const instantSpeed = (stepM / dtSec) * 3.6;
@@ -849,13 +904,32 @@ function onGpsUpdate(data, opts) {
   const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
   gpsSamples.push(newSample);
 
+  // aggiorna finestra B
+  speedWindow.push({ t: newSample.t, cumDistM: newSample.cumDistM });
+  const tMin = newSample.t - SPEED_WINDOW_SEC * 1000;
+  while (speedWindow.length > 2 && speedWindow[0].t < tMin) speedWindow.shift();
+
+  let speedB = newSample.speedKmh; // fallback
+  if (speedWindow.length >= 2) {
+    const first = speedWindow[0];
+    const dtB = (newSample.t - first.t) / 1000;
+    const dB = newSample.cumDistM - first.cumDistM;
+    if (dtB > 0.5 && dB >= 0) speedB = (dB / dtB) * 3.6;
+  }
+
+  // combina A+B
+  let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * speedB;
+  speedFinal = Math.min(Math.max(0, speedFinal), MAXSPEEDKMH);
+
+  newSample.speedKmh = speedFinal; // sovrascrivi per UI+replay coerenti
+
+
   if (isBulkLoading) return;
 
   if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(speedKmh, newCumDistM);
 
   if (opts.updateMap && map && mapMarker) {
-    const pos = [lat, lng];
-    mapMarker.setLatLng(pos);
+    setMapTarget(lat, lng);
 
     // FULL route (sottile) colorata BPM
     addFullColoredBetween(prevSample, newSample);
@@ -863,7 +937,6 @@ function onGpsUpdate(data, opts) {
     // PROGRESS (spessa) colorata BPM - in live coincide col "fino ad ora"
     if (!isReplayMode) addProgressColoredBetween(prevSample, newSample);
 
-    if (!isUserInteracting) map.panTo(pos);
   }
 
   updateReplayUiBounds();
