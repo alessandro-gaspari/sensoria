@@ -545,6 +545,51 @@ html, body {
   color: #ff6a3d;
   margin: 10px 0 14px 0;
 }
+/* Indicatore LIVE sulla mappa */
+.live-indicator-badge {
+    position: absolute;
+    right: 16px;
+    bottom: 24px; /* Allineato con l'overlay del tempo */
+    z-index: 30001;
+    
+    display: flex; /* Fondamentale per allineare pallino e testo */
+    align-items: center;
+    gap: 8px;
+    
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.75); /* Sfondo scuro per contrasto */
+    border: 1px solid rgba(151, 201, 62, 0.3); /* Bordino verde sottile */
+    border-radius: 20px; /* Pillola arrotondata */
+    backdrop-filter: blur(4px);
+    
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+    pointer-events: none; /* Non cliccabile */
+    user-select: none;
+}
+
+.live-indicator-badge .live-dot {
+    width: 8px;
+    height: 8px;
+    background-color: #97c93e; /* Verde Sensoria */
+    border-radius: 50%;
+    box-shadow: 0 0 8px rgba(151, 201, 62, 0.8); /* Glow effect */
+    animation: pulse-live 1.5s infinite ease-in-out;
+}
+
+.live-indicator-badge .live-text {
+    color: #97c93e;
+    font-size: 13px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    line-height: 1; /* Fix allineamento verticale */
+}
+
+@keyframes pulse-live {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.9); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
 
 /* =========================
    Responsive
