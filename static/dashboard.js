@@ -565,22 +565,20 @@ function getSessionEndMs() {
 
 function getDurationSec() {
   if (!sessionStartTimeMs) return 0;
-  
   let endMs;
-
+  
   if (isReplayMode) {
-    // REPLAY: durata fissa fino alla fine dei campioni
-    endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
+    // ✅ REPLAY: Usa sessionEndTimeMs (che contiene il massimo tra GPS e calzini)
+    endMs = sessionEndTimeMs ?? (gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs);
   } else {
     // LIVE: controlla se lo stream è attivo
     const now = Date.now();
-    // Se non arrivano dati da > 5 secondi, consideriamo l'attività FERMA
+    // Se non arrivano dati da 3 secondi, consideriamo l'attività FERMA
     if (typeof lastDataTimestamp !== 'undefined' && (now - lastDataTimestamp) > 3000) {
-      // Stream fermo -> Blocca il tempo sull'ultimo dato GPS disponibile
-      // NON resetta a 0, ma mantiene il valore raggiunto (es. 10:23)
+      // Stream fermo - Blocca il tempo sull'ultimo dato GPS disponibile
       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
     } else {
-      // Stream attivo -> Il tempo scorre fluido
+      // Stream attivo - Il tempo scorre fluido
       endMs = now;
     }
   }
