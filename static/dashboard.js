@@ -1194,20 +1194,13 @@ function updateReplayUiBounds() {
   var slider = document.getElementById("replay-slider");
   if (!slider) return;
 
-  var maxSec = getDurationSec();
-  
-  // Aggiorna limiti slider
-  slider.max = String(maxSec);
-  slider.step = "0.1";
+  const step = 0.1;
+  const maxSec = getDurationSec();
+  const maxRounded = Math.ceil(maxSec / step) * step;
 
-  // Se siamo in LIVE, il cursore (virtuale) è alla fine
-  if (!isReplayMode) {
-    slider.value = maxSec.toFixed(1);
-    updateReplayTimeLabel(maxSec);
-    
-    // Aggiorna visibilità (ad es. per mostrare che siamo LIVE)
-    showReplayOverlayIfReady();
-  }
+  slider.max = maxRounded.toFixed(1);
+  slider.step = step;
+  showReplayOverlayIfReady();
 }
 
 
@@ -1488,7 +1481,7 @@ function enterReplayAtSecond(sec) {
   if (sockCharts.left) {
     sockCharts.left.setScale('x', {min: minX, max: maxX});
   }
-  
+
   if (sockCharts.right) {
     sockCharts.right.setScale('x', {min: minX, max: maxX});
   }
@@ -2915,7 +2908,9 @@ async function loadPastActivity(logName) {
               ...lastSample,
               t: maxT
             };
-            samples.push(extendedSample);
+            if (diff > 10) {  // invece di 100
+              samples.push(extendedSample);
+            }
 
             // Aggiorna anche sockChartData
             const chartD = sockChartData[side];
