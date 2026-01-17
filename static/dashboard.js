@@ -1485,11 +1485,10 @@ function enterReplayAtSecond(sec) {
   }
   
   // Applica la finestra ai grafici
-
   if (sockCharts.left) {
     sockCharts.left.setScale('x', {min: minX, max: maxX});
   }
-
+  
   if (sockCharts.right) {
     sockCharts.right.setScale('x', {min: minX, max: maxX});
   }
@@ -2809,7 +2808,7 @@ async function loadPastActivity(logName) {
         const chartD = sockChartData[side];
 
         if (samples.length > 0) {
-          const firstSockT = samples.reduce((m,s)=>Math.min(m, Number(s.t)), Infinity);
+          const firstSockT = samples[0].t;
           const offset = firstSockT - sessionStartTimeMs; // es. +3827ms
 
           if (offset > 100) { // Se c'è un ritardo > 100ms
@@ -2904,15 +2903,14 @@ async function loadPastActivity(logName) {
         const samples = side === 'left' ? leftSockSamples : rightSockSamples;
 
         if (samples.length > 0) {
-
-          const lastSockT = Number(lastSample.t);
+          const lastSockT = samples[samples.length - 1].t;
           const diff = maxT - lastSockT;
 
           if (diff > 100) { // Se c'è un buco finale > 100ms
             console.log(`[TIME STRETCH] Allunga ${side} fino alla fine (+${(diff/1000).toFixed(3)}s)`);
 
             // Aggiungi un campione con gli stessi valori dell'ultimo ma al tempo maxT
-            const lastSample = samples.reduce((best, s) => (Number(s.t) > Number(best.t) ? s : best), samples[0]);
+            const lastSample = samples[samples.length - 1];
             const extendedSample = {
               ...lastSample,
               t: maxT
