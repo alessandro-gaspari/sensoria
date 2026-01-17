@@ -1485,12 +1485,12 @@ function enterReplayAtSecond(sec) {
   }
   
   // Applica la finestra ai grafici
-  // if (sockCharts.left) {
-  //    sockCharts.left.setScale('x', {min: minX, max: maxX});
-  // }
-  // if (sockCharts.right) {
-  //    sockCharts.right.setScale('x', {min: minX, max: maxX});
-  //}
+    if (sockCharts.left) {
+      sockCharts.left.setScale('x', {min: minX, max: maxX});
+  }
+    if (sockCharts.right) {
+      sockCharts.right.setScale('x', {min: minX, max: maxX});
+  }
 }
 
 
