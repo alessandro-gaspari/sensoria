@@ -2800,46 +2800,38 @@ async function loadPastActivity(logName) {
     // ==================================================================================
     // FIX GAP INIZIALE PER REPLAY
     // ==================================================================================
+    // ==================================================================================
+    // TIME SHIFT: Sposta i calzini indietro nel tempo per allinearli all'inizio sessione
+    // ==================================================================================
     if (sessionStartTimeMs !== null) {
       ['left', 'right'].forEach(side => {
         const samples = side === 'left' ? leftSockSamples : rightSockSamples;
         const chartD = sockChartData[side];
 
         if (samples.length > 0) {
-          const first = samples[0];
-          const diff = first.t - sessionStartTimeMs;
+          const firstSockT = samples[0].t;
+          const offset = firstSockT - sessionStartTimeMs; // es. +3827ms
 
-          if (diff > 200) {
-            console.log(`[FIX REPLAY] Riempio gap iniziale ${side}: ${diff}ms`);
+          if (offset > 100) { // Se c'è un ritardo > 100ms
+            console.log(`[TIME SHIFT] Sposto ${side} indietro di ${(offset/1000).toFixed(3)}s`);
 
-            const zeroStart = {
-              ...first,
-              t: sessionStartTimeMs,
-              p0: 0, p1: 0, p2: 0, bi: 0,
-              accelx: 0, accely: 0, accelz: 0,
-              gyrox: 0, gyroy: 0, gyroz: 0
-            };
+            // Trasla TUTTI i timestamp indietro
+            for (let i = 0; i < samples.length; i++) {
+              samples[i].t -= offset;
+            }
 
-            const zeroEnd = {
-              ...zeroStart,
-              t: first.t - 10
-            };
-
-            samples.unshift(zeroEnd);
-            samples.unshift(zeroStart);
-
+            // Ricalcola sockChartData (tempi relativi in secondi)
             if (chartD && chartD[0]) {
-              chartD[0].unshift(0); 
-              chartD[1].unshift(0); chartD[2].unshift(0); chartD[3].unshift(0);
-              
-              const tRelPre = (first.t - 10 - sessionStartTimeMs) / 1000;
-              chartD[0].splice(1, 0, tRelPre);
-              chartD[1].splice(1, 0, 0); chartD[2].splice(1, 0, 0); chartD[3].splice(1, 0, 0);
+              for (let i = 0; i < chartD[0].length; i++) {
+                chartD[0][i] -= (offset / 1000);
+              }
             }
           }
         }
       });
     }
+    // ==================================================================================
+
     // ==================================================================================
 
     isBulkLoading = false;
@@ -2893,36 +2885,43 @@ async function loadPastActivity(logName) {
     // ==================================================================================
     // FIX GAP FINALE PER REPLAY
     // ==================================================================================
+    // ==================================================================================
+    // TIME STRETCH FINALE: Allunga i calzini fino alla fine della sessione
+    // ==================================================================================
     if (sessionStartTimeMs !== null && maxT > sessionStartTimeMs) {
       ['left', 'right'].forEach(side => {
         const samples = side === 'left' ? leftSockSamples : rightSockSamples;
 
         if (samples.length > 0) {
-          const last = samples[samples.length - 1];
-          const diff = maxT - last.t;
+          const lastSockT = samples[samples.length - 1].t;
+          const diff = maxT - lastSockT;
 
-          if (diff > 200) {
-            console.log(`[FIX REPLAY] Riempio gap finale ${side}: ${diff}ms`);
+          if (diff > 100) { // Se c'è un buco finale > 100ms
+            console.log(`[TIME STRETCH] Allunga ${side} fino alla fine (+${(diff/1000).toFixed(3)}s)`);
 
-            const zeroStart = {
-              ...last,
-              t: last.t + 10,
-              p0: 0, p1: 0, p2: 0, bi: 0,
-              accelx: 0, accely: 0, accelz: 0,
-              gyrox: 0, gyroy: 0, gyroz: 0
-            };
-
-            const zeroEnd = {
-              ...zeroStart,
+            // Aggiungi un campione con gli stessi valori dell'ultimo ma al tempo maxT
+            const lastSample = samples[samples.length - 1];
+            const extendedSample = {
+              ...lastSample,
               t: maxT
             };
+            samples.push(extendedSample);
 
-            samples.push(zeroStart);
-            samples.push(zeroEnd);
+            // Aggiorna anche sockChartData
+            const chartD = sockChartData[side];
+            if (chartD && chartD[0]) {
+              const tRelSec = (maxT - sessionStartTimeMs) / 1000;
+              chartD[0].push(tRelSec);
+              chartD[1].push(lastSample.p0 || 0);
+              chartD[2].push(lastSample.p1 || 0);
+              chartD[3].push(lastSample.p2 || 0);
+            }
           }
         }
       });
     }
+    // ==================================================================================
+
     // ==================================================================================
 
     rebuildSpeedBySecFromGps();
