@@ -27,6 +27,27 @@ function getHrColor(bpm) {
   return HR_RED;
 }
 
+function hexToRgbCsv(hex) {
+  if (!hex) return "0,200,83";
+  const h = String(hex).replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if (![r,g,b].every(Number.isFinite)) return "0,200,83";
+  return `${r},${g},${b}`;
+}
+
+function setMapMarkerBpmColor(bpm) {
+  if (!mapMarker) return;
+  const el = mapMarker.getElement();
+  if (!el) return;
+  const pulse = el.querySelector(".pulsating-marker");
+  if (!pulse) return;
+
+  const hex = getHrColor(bpm);          // HRGREEN/HRYELLOW/HRRED
+  pulse.style.setProperty("--pulse-rgb", hexToRgbCsv(hex));
+}
+
 
 // ==========================================
 // SENSORI / DATI
@@ -759,6 +780,7 @@ function onBpmUpdate(payload) {
   ensureSessionStart(tMs);
 
   lastLiveBpm = bpmInt;
+  if (!isReplayMode) setMapMarkerBpmColor(bpmInt);
   bpmSamples.push({ t: tMs, bpm: bpmInt });
 
   if (!isReplayMode) updateBpmValue(bpmInt);
@@ -1383,6 +1405,7 @@ function enterReplayAtSecond(sec) {
   // --- 4. Sincronizza Metriche (BPM, Speed, Dist) ---
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
+  setMapMarkerBpmColor(bpm);
 
   const dist = getDistanceAtTime(tMs);
   const wholeSec = Math.floor(clampedSec);
