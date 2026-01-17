@@ -1901,48 +1901,40 @@ function updateSocksUI(side, data, bi) {
  * Aggiorna il grafico pressioni durante il REPLAY
  * Mostra una finestra temporale scorrevole centrata sul cursore
  */
+/**
+ * Aggiorna il grafico pressioni durante il REPLAY
+ * MOSTRA TUTTI I DATI DALL'INIZIO ALLA FINE (non una finestra scorrevole)
+ */
 function updateSockChartReplay(side, currentSec) {
   const chart = sockCharts[side];
   if (!chart) return;
-  
-  const samples = (side === "left") ? leftSockSamples : rightSockSamples;
+
+  const samples = side === 'left' ? leftSockSamples : rightSockSamples;
   if (!samples || samples.length === 0) return;
-  
-  // Finestra temporale: ±2.5 secondi attorno al cursore (totale 5 sec)
-  const WINDOW_SEC = 5;
-  const halfWin = WINDOW_SEC / 2;
-  const tMs = sessionStartTimeMs + (currentSec * 1000);
-  const tMin = tMs - (halfWin * 1000);
-  const tMax = tMs + (halfWin * 1000);
-  
-  // Filtra sample nella finestra temporale
-  const filtered = samples.filter(s => s.t >= tMin && s.t <= tMax);
-  
-  if (filtered.length === 0) return;
-  
-  // Ricostruisci i dati del grafico
+
+  // Ricostruisci TUTTI i dati del grafico (dall'inizio alla fine)
   const xData = [];
   const p0Data = [];
   const p1Data = [];
   const p2Data = [];
-  
-  for (const s of filtered) {
+
+  for (const s of samples) {
     const sec = (s.t - sessionStartTimeMs) / 1000;
     xData.push(sec);
     p0Data.push(s.p0 || 0);
     p1Data.push(s.p1 || 0);
     p2Data.push(s.p2 || 0);
   }
-  
+
   // Aggiorna dati grafico
   sockChartData[side] = [xData, p0Data, p1Data, p2Data];
   chart.setData(sockChartData[side]);
-  
-  // Imposta scala X sulla finestra
-  const xMin = Math.max(0, currentSec - halfWin);
-  const xMax = xMin + WINDOW_SEC;
-  chart.setScale("x", { min: xMin, max: xMax });
+
+  // Imposta scala X su TUTTA la durata della sessione
+  const maxDataSec = getDurationSec();
+  chart.setScale('x', { min: 0, max: maxDataSec });
 }
+
 
 
 // ==========================================
@@ -2515,7 +2507,6 @@ async function loadPastActivity(logName) {
 
   const normSensorItem = (x) => {
     if (!x || typeof x !== "object") return x;
-    // normalizza alias più comuni (minimo indispensabile per calculateBI / pressioni)
     const o = { ...x };
     if (o.accelx == null && o.accel_x != null) o.accelx = o.accel_x;
     if (o.accely == null && o.accel_y != null) o.accely = o.accel_y;
@@ -2623,20 +2614,16 @@ async function loadPastActivity(logName) {
             }
           }
 
-          // lascia respirare UI durante download+parse
           await yieldUI();
         }
 
-        // flush decoder finale (in genere buf rimane solo parziale/vuoto)
         buf += decoder.decode();
-        // (se vuoi, puoi parsare anche l'ultima riga: spesso non serve)
-
         setProgress(60);
       } else {
         throw new Error("Streaming non disponibile o endpoint non OK");
       }
     } catch (e) {
-      // fallback: vecchio endpoint JSON (nessun progresso durante download)
+      // fallback: vecchio endpoint JSON
       setStatus(`Download ${logName}...`);
       setProgress(5);
 
@@ -2653,13 +2640,12 @@ async function loadPastActivity(logName) {
     }
 
     // ============================================================
-    // 2) RESET stato replay (usa la tua funzione se esiste)
+    // 2) RESET stato replay
     // ============================================================
     setStatus("Reset stato...");
     if (typeof resetReplayState === "function") {
       resetReplayState();
     } else {
-      // fallback minimale se resetReplayState non esiste
       gpsSamples = [];
       bpmSamples = [];
       leftSockSamples = [];
@@ -2687,7 +2673,7 @@ async function loadPastActivity(logName) {
     await yieldUI();
 
     // ============================================================
-    // 3) PROFILO (aggiorna header)
+    // 3) PROFILO
     // ============================================================
     setStatus("Parsing profilo...");
     const lastProf = getLastByTime(data.profile);
@@ -2695,7 +2681,7 @@ async function loadPastActivity(logName) {
     setProgress(68);
 
     // ============================================================
-    // 4) Calcola sessionStartTimeMs (min timestamp tra streams)
+    // 4) Calcola sessionStartTimeMs
     // ============================================================
     const times = [];
     if (data.gps.length) times.push(Number(data.gps[0].t));
@@ -2707,10 +2693,11 @@ async function loadPastActivity(logName) {
     if (finiteTimes.length) sessionStartTimeMs = Math.min(...finiteTimes);
     if (sessionStartTimeMs == null) sessionStartTimeMs = Date.now();
 
-    // --- 5 SENSORI: parsing completo e corretto ---
+    // ============================================================
+    // 5) SENSORI: parsing completo
+    // ============================================================
     setStatus("Parsing sensori...");
 
-    // Reset
     allSensorSamples = {}; 
     leftSockSamples = [];
     rightSockSamples = [];
@@ -2722,9 +2709,8 @@ async function loadPastActivity(logName) {
         const tMs = (sensorItem && sensorItem.t != null) ? Number(sensorItem.t) : null;
         if (!Number.isFinite(tMs)) continue;
 
-        // --- CORREZIONE NOME: Supporta sensor_name (dal log JSON) ---
         const nameRaw = String(
-            sensorItem.sensor_name ?? // <--- FONDAMENTALE per i tuoi log
+            sensorItem.sensor_name ??
             sensorItem.sensorname ?? 
             sensorItem.sensorName ?? 
             sensorItem.name ?? 
@@ -2735,19 +2721,13 @@ async function loadPastActivity(logName) {
         const nameLower = nameRaw.toLowerCase();
         const tRelSec = (tMs - sessionStartTimeMs) / 1000;
 
-        // --- CORREZIONE PRESSIONI: Supporta pressure_0 (dal log JSON) ---
         const p0 = Number(sensorItem.pressure0 ?? sensorItem.pressure_0 ?? sensorItem.p0 ?? 0);
         const p1 = Number(sensorItem.pressure1 ?? sensorItem.pressure_1 ?? sensorItem.p1 ?? 0);
         const p2 = Number(sensorItem.pressure2 ?? sensorItem.pressure_2 ?? sensorItem.p2 ?? 0);
 
-        // Dati IMU (accelerometro ecc...)
-        // normSensorItem gestisce già accel_x -> accelx, quindi usiamo i campi normalizzati
-        // ma per sicurezza controlliamo entrambi
         const sample = {
             t: tMs,
-            sensorname: nameRaw, 
-
-            // Dati IMU completi
+            sensorname: nameRaw,
             accelx: sensorItem.accelx ?? sensorItem.accel_x, 
             accely: sensorItem.accely ?? sensorItem.accel_y, 
             accelz: sensorItem.accelz ?? sensorItem.accel_z,
@@ -2757,24 +2737,18 @@ async function loadPastActivity(logName) {
             magx: sensorItem.magx ?? sensorItem.mag_x, 
             magy: sensorItem.magy ?? sensorItem.mag_y, 
             magz: sensorItem.magz ?? sensorItem.mag_z,
-
-            // Pressioni
             pressure0: p0, pressure1: p1, pressure2: p2,
             p0: p0, p1: p1, p2: p2,
-            
             bi: (typeof calculateBI === "function") ? calculateBI(sensorItem) : 0
         };
 
-        // 1. Salviamo TUTTO nel dizionario globale
         if (!allSensorSamples[nameRaw]) {
             allSensorSamples[nameRaw] = [];
         }
         allSensorSamples[nameRaw].push(sample);
 
-        // 2. Logica specifica Calzini (per i grafici dedicati)
         const isLeft = nameLower.includes("sx") || nameLower.includes("left") || nameLower.includes("sinistro");
         const isRight = nameLower.includes("dx") || nameLower.includes("right") || nameLower.includes("destro");
-        // Escludiamo "ginocchio" o altri sensori che potrebbero avere "sx/dx" nel nome ma non sono calzini
         const isSock = nameLower.includes("calzino") || nameLower.includes("sock"); 
 
         if (isSock && isLeft) {
@@ -2792,16 +2766,13 @@ async function loadPastActivity(logName) {
         }
     }
 
-    // Ordina per tempo
     Object.values(allSensorSamples).forEach(arr => arr.sort((a, b) => a.t - b.t));
-
-
 
     setProgress(72);
     await yieldUI();
 
     // ============================================================
-    // 6) GPS bulk-load (progress 72..92)
+    // 6) GPS bulk-load
     // ============================================================
     setStatus("Parsing GPS...");
     if (!data.gps.length) {
@@ -2821,16 +2792,13 @@ async function loadPastActivity(logName) {
       setStatus(`Parsing GPS... ${end}/${data.gps.length}`);
 
       for (let j = i; j < end; j++) {
-        // onGpsUpdate nel tuo file accetta opts {updateUi, updateMap}
         onGpsUpdate(data.gps[j], { updateUi: false, updateMap: false });
       }
       await yieldUI();
     }
 
     // ==================================================================================
-      // FIX GAP INIZIALE PER REPLAY
-    // Se i calzini partono in ritardo (es. 3s dopo GPS), riempiamo il buco con ZERI
-    // direttamente nell'array dei campioni, così updateSockChartReplay trova dati.
+    // FIX GAP INIZIALE PER REPLAY
     // ==================================================================================
     if (sessionStartTimeMs !== null) {
       ['left', 'right'].forEach(side => {
@@ -2841,11 +2809,9 @@ async function loadPastActivity(logName) {
           const first = samples[0];
           const diff = first.t - sessionStartTimeMs;
 
-          // Se c'è un buco di più di 0.2 secondi all'inizio
           if (diff > 200) {
             console.log(`[FIX REPLAY] Riempio gap iniziale ${side}: ${diff}ms`);
 
-            // 1. Punto a T=0 (Inizio sessione) -> Tutto a 0
             const zeroStart = {
               ...first,
               t: sessionStartTimeMs,
@@ -2854,24 +2820,18 @@ async function loadPastActivity(logName) {
               gyrox: 0, gyroy: 0, gyroz: 0
             };
 
-            // 2. Punto un attimo prima del primo dato reale -> Tutto a 0
-            // Questo serve per mantenere la linea piatta a 0 fino all'inizio dei dati
             const zeroEnd = {
               ...zeroStart,
-              t: first.t - 10 // 10ms prima del primo dato
+              t: first.t - 10
             };
 
-            // Inseriamo i punti all'INIZIO dell'array samples
             samples.unshift(zeroEnd);
             samples.unshift(zeroStart);
 
-            // 3. Sistemiamo anche sockChartData (per sicurezza visuale statica)
             if (chartD && chartD[0]) {
-              // Aggiungi 0 a t=0
               chartD[0].unshift(0); 
               chartD[1].unshift(0); chartD[2].unshift(0); chartD[3].unshift(0);
               
-              // Aggiungi 0 appena prima del dato reale
               const tRelPre = (first.t - 10 - sessionStartTimeMs) / 1000;
               chartD[0].splice(1, 0, tRelPre);
               chartD[1].splice(1, 0, 0); chartD[2].splice(1, 0, 0); chartD[3].splice(1, 0, 0);
@@ -2882,11 +2842,10 @@ async function loadPastActivity(logName) {
     }
     // ==================================================================================
 
-
     isBulkLoading = false;
 
     // ============================================================
-    // 7) BPM -> bpmSamples
+    // 7) BPM
     // ============================================================
     setStatus("Parsing BPM...");
     for (const b of data.bpm) {
@@ -2900,7 +2859,7 @@ async function loadPastActivity(logName) {
     await yieldUI();
 
     // ============================================================
-    // 8) Rendering grafici + mappa + replay
+    // 8) Rendering grafici + mappa
     // ============================================================
     setStatus("Rendering grafici calzini...");
     if (typeof initSockCharts === "function") {
@@ -2917,17 +2876,63 @@ async function loadPastActivity(logName) {
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
 
+    // ============================================================
+    // 9) Calcola sessionEndTimeMs e FIX GAP FINALE
+    // ============================================================
     setStatus("Finalizzazione replay...");
-    sessionEndTimeMs = getSessionEndMs();
+    
+    // Calcola maxT (fine sessione reale)
+    let maxT = sessionStartTimeMs;
+    if (gpsSamples.length > 0) maxT = Math.max(maxT, gpsSamples[gpsSamples.length - 1].t);
+    if (leftSockSamples.length > 0) maxT = Math.max(maxT, leftSockSamples[leftSockSamples.length - 1].t);
+    if (rightSockSamples.length > 0) maxT = Math.max(maxT, rightSockSamples[rightSockSamples.length - 1].t);
+    
+    sessionEndTimeMs = maxT;
+    console.log(`[LOAD] Session Duration: ${((maxT - sessionStartTimeMs)/1000).toFixed(1)}s`);
+
+    // ==================================================================================
+    // FIX GAP FINALE PER REPLAY
+    // ==================================================================================
+    if (sessionStartTimeMs !== null && maxT > sessionStartTimeMs) {
+      ['left', 'right'].forEach(side => {
+        const samples = side === 'left' ? leftSockSamples : rightSockSamples;
+
+        if (samples.length > 0) {
+          const last = samples[samples.length - 1];
+          const diff = maxT - last.t;
+
+          if (diff > 200) {
+            console.log(`[FIX REPLAY] Riempio gap finale ${side}: ${diff}ms`);
+
+            const zeroStart = {
+              ...last,
+              t: last.t + 10,
+              p0: 0, p1: 0, p2: 0, bi: 0,
+              accelx: 0, accely: 0, accelz: 0,
+              gyrox: 0, gyroy: 0, gyroz: 0
+            };
+
+            const zeroEnd = {
+              ...zeroStart,
+              t: maxT
+            };
+
+            samples.push(zeroStart);
+            samples.push(zeroEnd);
+          }
+        }
+      });
+    }
+    // ==================================================================================
+
     rebuildSpeedBySecFromGps();
-    // Siamo in REPLAY (log caricato), quindi abilita modalità replay PRIMA di mostrare overlay/slider
+
+    // ABILITA REPLAY MODE
     isReplayMode = true;
 
     updateReplayUiBounds();
     showReplayOverlayIfReady();
-    enterReplayAtSecond(0);   // posiziona a inizio (o metti getDurationSec() per andare alla fine)
-    showReplayOverlayIfReady(); // ridondante ma utile se in futuro cambi enterReplayAtSecond
-
+    enterReplayAtSecond(0);
 
     setProgress(100);
     setStatus(usedStreaming ? "Caricato (stream)." : "Caricato.");
@@ -2940,39 +2945,6 @@ async function loadPastActivity(logName) {
     setProgress(0);
     if (contEl) contEl.style.display = "none";
   }
-
-    // ==================================================================================
-  // FIX DURATA REALE SESSIONE
-  // Calcola il timestamp massimo tra tutti i sensori per chiudere la sessione correttamente
-  // altrimenti la timeline si allunga fino a "adesso" e schiaccia tutto.
-  // ==================================================================================
-  isReplayMode = true;
-  let maxT = sessionStartTimeMs;
-  
-  // Controlla GPS
-  if (gpsSamples.length > 0) {
-    maxT = Math.max(maxT, gpsSamples[gpsSamples.length - 1].t);
-  }
-  
-  // Controlla Calzini
-  if (leftSockSamples.length > 0) maxT = Math.max(maxT, leftSockSamples[leftSockSamples.length - 1].t);
-  if (rightSockSamples.length > 0) maxT = Math.max(maxT, rightSockSamples[rightSockSamples.length - 1].t);
-  
-  // Controlla altri sensori
-  if (typeof allSensorSamples !== 'undefined') {
-    for (const [key, samples] of Object.entries(allSensorSamples)) {
-      if (samples.length > 0) {
-        maxT = Math.max(maxT, samples[samples.length - 1].t);
-      }
-    }
-  }
-
-  // Imposta la fine sessione REALE
-  sessionEndTimeMs = maxT;
-  updateReplayUiBounds();
-  enterReplayAtSecond(0.0);
-  console.log(`[LOAD] Session Duration Fix: ${((maxT - sessionStartTimeMs)/1000).toFixed(1)}s`);
-
 }
 
 // ==========================================
