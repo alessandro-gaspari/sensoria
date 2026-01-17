@@ -1485,12 +1485,12 @@ function enterReplayAtSecond(sec) {
   }
   
   // Applica la finestra ai grafici
-  if (sockCharts.left) {
-      sockCharts.left.setScale('x', {min: minX, max: maxX});
-  }
-  if (sockCharts.right) {
-      sockCharts.right.setScale('x', {min: minX, max: maxX});
-  }
+  // if (sockCharts.left) {
+  //    sockCharts.left.setScale('x', {min: minX, max: maxX});
+  // }
+  // if (sockCharts.right) {
+  //    sockCharts.right.setScale('x', {min: minX, max: maxX});
+  //}
 }
 
 
@@ -2866,18 +2866,29 @@ async function loadPastActivity(logName) {
       if (mapMarker) mapMarker.setLatLng([first.lat, first.lng]);
     }
 
+    gpsSamples.sort((a, b) => a.t - b.t);
+    bpmSamples.sort((a, b) => a.t - b.t);
+    leftSockSamples.sort((a, b) => a.t - b.t);
+    rightSockSamples.sort((a, b) => a.t - b.t);
+
+
     // ============================================================
     // 9) Calcola sessionEndTimeMs e FIX GAP FINALE
     // ============================================================
     setStatus("Finalizzazione replay...");
-    
-    // Calcola maxT (fine sessione reale)
+        
+    const maxTime = (arr) =>
+      (arr && arr.length)
+        ? arr.reduce((m, s) => Math.max(m, Number(s.t) || -Infinity), -Infinity)
+        : -Infinity;
+
     let maxT = sessionStartTimeMs;
-    if (gpsSamples.length > 0) maxT = Math.max(maxT, gpsSamples[gpsSamples.length - 1].t);
-    if (leftSockSamples.length > 0) maxT = Math.max(maxT, leftSockSamples[leftSockSamples.length - 1].t);
-    if (rightSockSamples.length > 0) maxT = Math.max(maxT, rightSockSamples[rightSockSamples.length - 1].t);
-    
+    maxT = Math.max(maxT, maxTime(gpsSamples));
+    maxT = Math.max(maxT, maxTime(leftSockSamples));
+    maxT = Math.max(maxT, maxTime(rightSockSamples));
+
     sessionEndTimeMs = maxT;
+
     console.log(`[LOAD] Session Duration: ${((maxT - sessionStartTimeMs)/1000).toFixed(1)}s`);
 
     // ==================================================================================
