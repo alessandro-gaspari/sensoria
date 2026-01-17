@@ -983,7 +983,6 @@ function ensureMapInitialized(lat, lng) {
   mapMarker = L.marker([lat, lng], { icon: pulseIcon, pane: "markerPane" }).addTo(map);
 
   createReplayOverlayControls();
-  createRotateControl();
   ensureMetricsCardsUI();
 
   isMapInitialized = true;
@@ -1403,7 +1402,7 @@ function enterReplayAtSecond(sec) {
   const sampleL = findSampleAtTime(leftSockSamples, tMs);
   if (sampleL) {
     // Calcola BI medio su finestra 1500ms
-    const biLavg = avgBiInWindow(leftSockSamples, tMs, BIAVGWINDOWMS);
+    const biLavg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
     
     // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("left", 
@@ -1421,7 +1420,7 @@ function enterReplayAtSecond(sec) {
   const sampleR = findSampleAtTime(rightSockSamples, tMs);
   if (sampleR) {
     // Calcola BI medio su finestra 1500ms
-    const biRavg = avgBiInWindow(rightSockSamples, tMs, BIAVGWINDOWMS);
+    const biRavg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
     
     // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("right", 
