@@ -999,44 +999,7 @@ function pushMapPoint(lat, lng) {
   if (!isUserInteracting) map.panTo(pos);
 }
 
-// ==========================================
-// ROTATE CONTROL
-// ==========================================
-function createRotateControl() {
-  const mapDiv = document.getElementById("map");
-  if (!mapDiv) return;
-  if (document.getElementById("rotate-btn")) return;
-
-  const btn = document.createElement("button");
-  btn.id = "rotate-btn";
-  btn.innerHTML = "🧭";
-  btn.title = "Ruota mappa";
-  btn.style.cssText = `
-    position:absolute;
-    top:90px;
-    left:10px;
-    width:28px;
-    height:28px;
-    border-radius:4px;
-    border:none;
-    background:rgba(0,0,0,0.7);
-    color:#fff;
-    font-size:16px;
-    line-height:1;
-    cursor:pointer;
-    z-index:20000;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-  `;
-
-  btn.addEventListener("click", () => {
-    mapRotationDeg = (mapRotationDeg + 90) % 360;
-    applyMapRotation(mapRotationDeg);
-  });
-
-  mapDiv.appendChild(btn);
-}
+//Rotazione mappa rimossa perché non nativamente supportata da leaflet
 
 function applyMapRotation(deg) {
   if (!map) return;
