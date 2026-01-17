@@ -2940,6 +2940,39 @@ async function loadPastActivity(logName) {
     setProgress(0);
     if (contEl) contEl.style.display = "none";
   }
+
+    // ==================================================================================
+  // FIX DURATA REALE SESSIONE
+  // Calcola il timestamp massimo tra tutti i sensori per chiudere la sessione correttamente
+  // altrimenti la timeline si allunga fino a "adesso" e schiaccia tutto.
+  // ==================================================================================
+  isReplayMode = true;
+  let maxT = sessionStartTimeMs;
+  
+  // Controlla GPS
+  if (gpsSamples.length > 0) {
+    maxT = Math.max(maxT, gpsSamples[gpsSamples.length - 1].t);
+  }
+  
+  // Controlla Calzini
+  if (leftSockSamples.length > 0) maxT = Math.max(maxT, leftSockSamples[leftSockSamples.length - 1].t);
+  if (rightSockSamples.length > 0) maxT = Math.max(maxT, rightSockSamples[rightSockSamples.length - 1].t);
+  
+  // Controlla altri sensori
+  if (typeof allSensorSamples !== 'undefined') {
+    for (const [key, samples] of Object.entries(allSensorSamples)) {
+      if (samples.length > 0) {
+        maxT = Math.max(maxT, samples[samples.length - 1].t);
+      }
+    }
+  }
+
+  // Imposta la fine sessione REALE
+  sessionEndTimeMs = maxT;
+  updateReplayUiBounds();
+  enterReplayAtSecond(0.0);
+  console.log(`[LOAD] Session Duration Fix: ${((maxT - sessionStartTimeMs)/1000).toFixed(1)}s`);
+
 }
 
 // ==========================================
