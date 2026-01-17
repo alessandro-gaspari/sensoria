@@ -2827,6 +2827,62 @@ async function loadPastActivity(logName) {
       await yieldUI();
     }
 
+    // ==================================================================================
+      // FIX GAP INIZIALE PER REPLAY
+    // Se i calzini partono in ritardo (es. 3s dopo GPS), riempiamo il buco con ZERI
+    // direttamente nell'array dei campioni, così updateSockChartReplay trova dati.
+    // ==================================================================================
+    if (sessionStartTimeMs !== null) {
+      ['left', 'right'].forEach(side => {
+        const samples = side === 'left' ? leftSockSamples : rightSockSamples;
+        const chartD = sockChartData[side];
+
+        if (samples.length > 0) {
+          const first = samples[0];
+          const diff = first.t - sessionStartTimeMs;
+
+          // Se c'è un buco di più di 0.2 secondi all'inizio
+          if (diff > 200) {
+            console.log(`[FIX REPLAY] Riempio gap iniziale ${side}: ${diff}ms`);
+
+            // 1. Punto a T=0 (Inizio sessione) -> Tutto a 0
+            const zeroStart = {
+              ...first,
+              t: sessionStartTimeMs,
+              p0: 0, p1: 0, p2: 0, bi: 0,
+              accelx: 0, accely: 0, accelz: 0,
+              gyrox: 0, gyroy: 0, gyroz: 0
+            };
+
+            // 2. Punto un attimo prima del primo dato reale -> Tutto a 0
+            // Questo serve per mantenere la linea piatta a 0 fino all'inizio dei dati
+            const zeroEnd = {
+              ...zeroStart,
+              t: first.t - 10 // 10ms prima del primo dato
+            };
+
+            // Inseriamo i punti all'INIZIO dell'array samples
+            samples.unshift(zeroEnd);
+            samples.unshift(zeroStart);
+
+            // 3. Sistemiamo anche sockChartData (per sicurezza visuale statica)
+            if (chartD && chartD[0]) {
+              // Aggiungi 0 a t=0
+              chartD[0].unshift(0); 
+              chartD[1].unshift(0); chartD[2].unshift(0); chartD[3].unshift(0);
+              
+              // Aggiungi 0 appena prima del dato reale
+              const tRelPre = (first.t - 10 - sessionStartTimeMs) / 1000;
+              chartD[0].splice(1, 0, tRelPre);
+              chartD[1].splice(1, 0, 0); chartD[2].splice(1, 0, 0); chartD[3].splice(1, 0, 0);
+            }
+          }
+        }
+      });
+    }
+    // ==================================================================================
+
+
     isBulkLoading = false;
 
     // ============================================================
