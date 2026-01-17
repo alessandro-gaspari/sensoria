@@ -1403,20 +1403,39 @@ function enterReplayAtSecond(sec) {
   const sampleL = findSampleAtTime(leftSockSamples, tMs);
   if (sampleL) {
     // Calcola BI medio su finestra 1500ms
-    const biLavg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
-    // Grafico BI+Pressioni
-    updateSocksUI('left', { p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2 }, biLavg);
+    const biLavg = avgBiInWindow(leftSockSamples, tMs, BIAVGWINDOWMS);
+    
+    // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
+    updateSockNumbers("left", 
+      { p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2 }, 
+      biLavg
+    );
+    
+    // Aggiorna grafico calzino SX (finestra scorrevole replay)
+    updateSockChartReplay("left", clampedSec);
+    
     // Dati RAW (Accel, Gyro, Mag)
-    updateSensorCardUI(sampleL.sensorname || 'Calzino SX', sampleL);
+    updateSensorCardUI(sampleL.sensorname || "Calzino SX", sampleL);
   }
 
   const sampleR = findSampleAtTime(rightSockSamples, tMs);
   if (sampleR) {
     // Calcola BI medio su finestra 1500ms
-    const biRavg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
-    updateSocksUI('right', { p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2 }, biRavg);
-    updateSensorCardUI(sampleR.sensorname || 'Calzino DX', sampleR);
+    const biRavg = avgBiInWindow(rightSockSamples, tMs, BIAVGWINDOWMS);
+    
+    // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
+    updateSockNumbers("right", 
+      { p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2 }, 
+      biRavg
+    );
+    
+    // Aggiorna grafico calzino DX (finestra scorrevole replay)
+    updateSockChartReplay("right", clampedSec);
+    
+    // Dati RAW
+    updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
   }
+
 
 
   // --- AGGIORNAMENTO GLOBALE SENSORI ---
@@ -1877,6 +1896,53 @@ function updateSocksUI(side, data, bi) {
 
   chart.setData(d);
   scheduleSockRender(side);
+}
+
+/**
+ * Aggiorna il grafico pressioni durante il REPLAY
+ * Mostra una finestra temporale scorrevole centrata sul cursore
+ */
+function updateSockChartReplay(side, currentSec) {
+  const chart = sockCharts[side];
+  if (!chart) return;
+  
+  const samples = (side === "left") ? leftSockSamples : rightSockSamples;
+  if (!samples || samples.length === 0) return;
+  
+  // Finestra temporale: ±2.5 secondi attorno al cursore (totale 5 sec)
+  const WINDOW_SEC = 5;
+  const halfWin = WINDOW_SEC / 2;
+  const tMs = sessionStartTimeMs + (currentSec * 1000);
+  const tMin = tMs - (halfWin * 1000);
+  const tMax = tMs + (halfWin * 1000);
+  
+  // Filtra sample nella finestra temporale
+  const filtered = samples.filter(s => s.t >= tMin && s.t <= tMax);
+  
+  if (filtered.length === 0) return;
+  
+  // Ricostruisci i dati del grafico
+  const xData = [];
+  const p0Data = [];
+  const p1Data = [];
+  const p2Data = [];
+  
+  for (const s of filtered) {
+    const sec = (s.t - sessionStartTimeMs) / 1000;
+    xData.push(sec);
+    p0Data.push(s.p0 || 0);
+    p1Data.push(s.p1 || 0);
+    p2Data.push(s.p2 || 0);
+  }
+  
+  // Aggiorna dati grafico
+  sockChartData[side] = [xData, p0Data, p1Data, p2Data];
+  chart.setData(sockChartData[side]);
+  
+  // Imposta scala X sulla finestra
+  const xMin = Math.max(0, currentSec - halfWin);
+  const xMax = xMin + WINDOW_SEC;
+  chart.setScale("x", { min: xMin, max: xMax });
 }
 
 
