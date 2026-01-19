@@ -6,9 +6,40 @@ import 'package:apple_maps_flutter/apple_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
-import '../streaming_manager.dart'; // Contiene l'enum GpsSignalQuality
+import '../streaming_manager.dart';
 import '../providers/connected_devices_provider.dart';
 import '../providers/profile_provider.dart';
+
+// ✅ Widget separato per la durata - si aggiorna SOLO quando cambia _sessionDuration
+class _DurationDisplay extends StatelessWidget {
+  final Duration duration;
+  
+  const _DurationDisplay({required this.duration});
+  
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return "$hours:$minutes:$seconds";
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    final formatted = _formatDuration(duration);
+    debugPrint('🔄 _DurationDisplay.build() chiamato: ${duration.inSeconds}s → "$formatted"');  // ✅ AGGIUNGI QUESTO
+    
+    return Text(
+      formatted, 
+      style: GoogleFonts.barlowCondensed(
+        color: Colors.white, 
+        fontSize: 28, 
+        fontWeight: FontWeight.w600
+      )
+    );
+  }
+}
+
 
 class TrackingScreen extends StatefulWidget {
   const TrackingScreen({Key? key}) : super(key: key);
@@ -23,7 +54,6 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
   Position? _lastKnownPosition;
 
   AppleMapController? _mapController;
-  // Stream dedicato per l'aggiornamento ultra-rapido della mappa locale
   StreamSubscription<Position>? _localMapStream;
   
   CameraPosition _cameraPosition = const CameraPosition(
@@ -34,15 +64,17 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
   bool _hasRealPosition = false; 
   String _gpsStatus = "In attesa GPS...";
   
-  // Marker pulsante (animazione solo estetica)
   late AnimationController _markerAnimController;
   late Animation<double> _markerAnimation;
 
   @override
   void initState() {
     super.initState();
+    
+    debugPrint('🚀 TrackingScreen initState');
+    
     _startTimer();
-    _initHighPrecisionMap(); // Logica Coospo: Stream diretto alla mappa
+    _initHighPrecisionMap();
 
     _markerAnimController = AnimationController(
       vsync: this,
@@ -54,89 +86,109 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
     );
   }
 
-  // LOGICA COOSPO: Stream Diretto e Aggressivo per la Mappa
   Future<void> _initHighPrecisionMap() async {
-    // 1. Permessi
+    debugPrint("🗺️ [GPS] Inizio inizializzazione...");
+    
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
+    if (!serviceEnabled) {
+      debugPrint("❌ [GPS] Servizi GPS disabilitati");
+      return;
+    }
 
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
+      if (permission == LocationPermission.denied) {
+        debugPrint("❌ [GPS] Permessi negati");
+        return;
+      }
     }
 
-    // 2. Posizione Iniziale (Flash)
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best, 
-        timeLimit: const Duration(seconds: 5)
-      );
+    debugPrint("✅ [GPS] Permessi OK: $permission");
 
+    try {
+      Position initialPos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 5),
+      );
+      
       if (mounted) {
         setState(() {
           _cameraPosition = CameraPosition(
-            target: LatLng(position.latitude, position.longitude),
-            zoom: 18.0, 
+            target: LatLng(initialPos.latitude, initialPos.longitude),
+            zoom: 18.0,
           );
           _hasRealPosition = true;
           _gpsStatus = "GPS Attivo";
-          _lastKnownPosition = position; 
+          _lastKnownPosition = initialPos;
         });
         
-        // Centra subito
-        if (_mapController != null) {
-          _mapController!.animateCamera(
+        _mapController?.animateCamera(
+          CameraUpdate.newLatLng(LatLng(initialPos.latitude, initialPos.longitude)),
+        );
+      }
+      
+      debugPrint("✅ [GPS] Posizione iniziale: ${initialPos.latitude}, ${initialPos.longitude}");
+    } catch (e) {
+      debugPrint("⚠️ [GPS] Errore posizione iniziale: $e");
+    }
+
+    debugPrint("🛰️ [GPS] Avvio polling (ogni 2s)...");
+    
+    Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        debugPrint("🛰️ [GPS] Timer fermato (unmounted)");
+        return;
+      }
+
+      try {
+        Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.bestForNavigation,
+        );
+        
+        debugPrint("📍 [GPS] Polling: ${position.latitude}, ${position.longitude} (acc: ${position.accuracy}m)");
+        
+        final streamingManager = Provider.of<StreamingManager>(context, listen: false);
+        if (streamingManager.isTrackingActive) {
+          streamingManager.sendGpsData(position.latitude, position.longitude, position.accuracy);
+        }
+
+        if (mounted) {
+          _lastKnownPosition = position;
+          
+          if (!_hasRealPosition) {
+            setState(() {
+              _hasRealPosition = true;
+              _gpsStatus = "GPS Agganciato";
+            });
+          }
+          
+          _mapController?.animateCamera(
             CameraUpdate.newLatLng(LatLng(position.latitude, position.longitude)),
           );
         }
+        
+      } catch (e) {
+        debugPrint("⚠️ [GPS] Errore polling: $e");
       }
-    } catch (e) {
-      debugPrint("⚠️ Errore GPS iniziale: $e");
-    }
-
-    // 3. STREAM "RAW" -> MAPPA
-    const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.bestForNavigation,
-      distanceFilter: 0, // Zero filtro = Massima fluidità reale
-    );
-    
-    _localMapStream = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
-      (Position position) {
-        if (position.latitude == 0 && position.longitude == 0) return;
-
-        if (mounted) {
-          _lastKnownPosition = position; 
-
-          if (!_hasRealPosition) {
-             setState(() {
-               _hasRealPosition = true;
-               _gpsStatus = "GPS Agganciato";
-             });
-          }
-          
-          // MUOVE LA MAPPA DIRETTAMENTE
-          if (_mapController != null) {
-            _mapController!.animateCamera(
-              CameraUpdate.newCameraPosition(
-                CameraPosition(
-                  target: LatLng(position.latitude, position.longitude),
-                  zoom: 18.0,
-                ),
-              ),
-            );
-          }
-        }
-      },
-      onError: (error) => debugPrint("❌ Errore stream mappa: $error"),
-    );
+    });
   }
 
   void _startTimer() {
+    debugPrint('🕐 Timer avviato');
+    
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
       setState(() {
         _sessionDuration += const Duration(seconds: 1);
       });
+      
+      debugPrint('⏱️ Timer tick: ${_sessionDuration.inSeconds}s');
     });
   }
 
@@ -163,21 +215,13 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
 
   @override
   void dispose() {
+    debugPrint('💀 TrackingScreen dispose');
     _durationTimer?.cancel();
     _localMapStream?.cancel();
     _markerAnimController.dispose();
     super.dispose();
   }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final hours = twoDigits(duration.inHours);
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return "$hours:$minutes:$seconds";
-  }
   
-  // Helper per colore qualità segnale
   Color _getQualityColor(GpsSignalQuality q) {
     switch(q) {
       case GpsSignalQuality.excellent: return const Color(0xFF00C853); 
@@ -188,9 +232,7 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
     }
   }
 
-  // --- NUOVO WIDGET BARRE SEGNALE ---
   Widget _buildSignalBars(GpsSignalQuality quality) {
-    // Determina quante tacche accendere (da 0 a 4)
     int barsLit = 0;
     switch (quality) {
       case GpsSignalQuality.excellent: barsLit = 4; break;
@@ -207,7 +249,6 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: List.generate(4, (index) {
-        // Altezza scalare: 6, 9, 12, 15
         double height = 6.0 + (index * 3.0);
         bool isLit = index < barsLit;
         
@@ -226,20 +267,8 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
 
   @override
   Widget build(BuildContext context) {
-    final streamingManager = Provider.of<StreamingManager>(context);
-    final devicesProvider = Provider.of<ConnectedDevicesProvider>(context);
-    final activeProfile = Provider.of<ProfileProvider>(context).activeProfile;
-    
-    final gpsQuality = streamingManager.currentGpsQuality;
-    final bpm = streamingManager.currentHeartRate;
-    final hrmName = streamingManager.hrmDeviceName ?? "Heart Rate Monitor";
-    
-    final int sensoriaCount = devicesProvider.connectedDevices.length;
-    final int hrmCount = (streamingManager.hrmDeviceName != null) ? 1 : 0; 
-    final int totalSensors = sensoriaCount + hrmCount;
-    
-    final isSaving = streamingManager.isTrackingActive; 
-    final isServerUp = streamingManager.isServerReachable;
+    final devicesProvider = Provider.of<ConnectedDevicesProvider>(context, listen: false);
+    final activeProfile = Provider.of<ProfileProvider>(context, listen: false).activeProfile;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -270,26 +299,34 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
         ),
         centerTitle: true,
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: Row(
-              children: [
-                Icon(
-                  isSaving && isServerUp ? Icons.cloud_done : Icons.cloud_off,
-                  color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red,
-                  size: 20,
-                ),
-                const SizedBox(width: 6),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          Builder(
+            builder: (context) {
+              final streamingManager = Provider.of<StreamingManager>(context);
+              final isSaving = streamingManager.isTrackingActive;
+              final isServerUp = streamingManager.isServerReachable;
+              
+              return Padding(
+                padding: const EdgeInsets.only(right: 16.0),
+                child: Row(
                   children: [
-                    Text("SALVATAGGIO", style: GoogleFonts.barlowCondensed(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w600)),
-                    Text(isSaving && isServerUp ? "ON" : "OFF", style: GoogleFonts.barlowCondensed(color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red, fontWeight: FontWeight.bold, fontSize: 14)),
+                    Icon(
+                      isSaving && isServerUp ? Icons.cloud_done : Icons.cloud_off,
+                      color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 6),
+                    Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("SALVATAGGIO", style: GoogleFonts.barlowCondensed(color: Colors.white54, fontSize: 10, fontWeight: FontWeight.w600)),
+                        Text(isSaving && isServerUp ? "ON" : "OFF", style: GoogleFonts.barlowCondensed(color: isSaving && isServerUp ? const Color.fromRGBO(151, 201, 62, 1) : Colors.red, fontWeight: FontWeight.bold, fontSize: 14)),
+                      ],
+                    ),
                   ],
                 ),
-              ],
-            ),
+              );
+            },
           )
         ],
       ),
@@ -312,36 +349,53 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       _buildLabel("DURATA"),
-                      Text(_formatDuration(_sessionDuration), style: GoogleFonts.barlowCondensed(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w600)),
+                      // ✅ USA il widget separato
+                      _DurationDisplay(duration: _sessionDuration),
                       const SizedBox(height: 16),
                       _buildLabel("SENSORI ATTIVI"),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text("$totalSensors", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 32, fontWeight: FontWeight.bold, height: 1.0)),
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 6, left: 4),
-                            child: Text("DISPOSITIVI", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 0.7), fontSize: 14, fontWeight: FontWeight.w600)),
-                          ),
-                        ],
+                      Builder(
+                        builder: (context) {
+                          final streamingManager = Provider.of<StreamingManager>(context);
+                          final int sensoriaCount = devicesProvider.connectedDevices.length;
+                          final int hrmCount = (streamingManager.hrmDeviceName != null) ? 1 : 0;
+                          final int totalSensors = sensoriaCount + hrmCount;
+                          
+                          return Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text("$totalSensors", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 32, fontWeight: FontWeight.bold, height: 1.0)),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6, left: 4),
+                                child: Text("DISPOSITIVI", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 0.7), fontSize: 14, fontWeight: FontWeight.w600)),
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ],
                   ),
                 ),
-
+                
                 // 2. BPM
                 Expanded(
                   flex: 3,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text("HEART RATE", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
-                      Text(bpm != null ? "$bpm" : "--", style: GoogleFonts.barlowCondensed(color: bpm != null ? const Color.fromRGBO(151, 201, 62, 1) : Colors.white12, fontSize: 80, fontWeight: FontWeight.bold, height: 1.0)),
-                      Text("BPM", style: GoogleFonts.barlowCondensed(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
-                    ],
+                  child: Builder(
+                    builder: (context) {
+                      final streamingManager = Provider.of<StreamingManager>(context);
+                      final bpm = streamingManager.currentHeartRate;
+                      
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text("HEART RATE", style: GoogleFonts.barlowCondensed(color: const Color.fromRGBO(151, 201, 62, 1), fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
+                          Text(bpm != null ? "$bpm" : "--", style: GoogleFonts.barlowCondensed(color: bpm != null ? const Color.fromRGBO(151, 201, 62, 1) : Colors.white12, fontSize: 80, fontWeight: FontWeight.bold, height: 1.0)),
+                          Text("BPM", style: GoogleFonts.barlowCondensed(color: Colors.white38, fontSize: 14, fontWeight: FontWeight.bold)),
+                        ],
+                      );
+                    },
                   ),
                 ),
-
+                
                 // 3. MINIMAPPA
                 Expanded(
                   flex: 3,
@@ -373,28 +427,33 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
                           
                           if (_hasRealPosition) _buildAnimatedMarker(),
 
-                          // NUOVO: INDICATORE QUALITÀ GPS A BARRE
                           if (_hasRealPosition)
-                             Positioned(
-                              top: 8, left: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withOpacity(0.7),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.white12, width: 1)
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    const Icon(Icons.gps_fixed, color: Colors.white70, size: 10),
-                                    const SizedBox(width: 6),
-                                    _buildSignalBars(gpsQuality),
-                                  ],
-                                ),
-                              ),
-                             ),
+                            Builder(
+                              builder: (context) {
+                                final gpsQuality = Provider.of<StreamingManager>(context).currentGpsQuality;
+                                
+                                return Positioned(
+                                  top: 8, left: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.7),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.white12, width: 1)
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        const Icon(Icons.gps_fixed, color: Colors.white70, size: 10),
+                                        const SizedBox(width: 6),
+                                        _buildSignalBars(gpsQuality),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
 
                           if (!_hasRealPosition)
                             Container(
@@ -427,23 +486,33 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
           ),
 
           Expanded(
-            child: totalSensors == 0
-                ? Center(child: Text("Nessun dispositivo attivo", style: GoogleFonts.barlow(color: Colors.white24)))
-                : ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      ...devicesProvider.connectedDevices.entries.map((entry) {
-                        return _buildDeviceCard(
-                          devicesProvider.deviceNames[entry.key] ?? "Sensoria Device", 
-                          entry.key, 
-                          streamingManager.allSensorData[entry.key] != null, 
-                          _getDeviceEmoji(entry.value, devicesProvider)
-                        );
-                      }),
-                      if (streamingManager.hrmDeviceName != null)
-                        _buildDeviceCard(hrmName, "HRM-SENSOR", true, _getDeviceEmoji(null, devicesProvider, isHrm: true)),
-                    ],
-                  ),
+            child: Builder(
+              builder: (context) {
+                final streamingManager = Provider.of<StreamingManager>(context);
+                final hrmName = streamingManager.hrmDeviceName ?? "Heart Rate Monitor";
+                final int sensoriaCount = devicesProvider.connectedDevices.length;
+                final int hrmCount = (streamingManager.hrmDeviceName != null) ? 1 : 0;
+                final int totalSensors = sensoriaCount + hrmCount;
+                
+                return totalSensors == 0
+                    ? Center(child: Text("Nessun dispositivo attivo", style: GoogleFonts.barlow(color: Colors.white24)))
+                    : ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          ...devicesProvider.connectedDevices.entries.map((entry) {
+                            return _buildDeviceCard(
+                              devicesProvider.deviceNames[entry.key] ?? "Sensoria Device", 
+                              entry.key, 
+                              streamingManager.allSensorData[entry.key] != null, 
+                              _getDeviceEmoji(entry.value, devicesProvider)
+                            );
+                          }),
+                          if (streamingManager.hrmDeviceName != null)
+                            _buildDeviceCard(hrmName, "HRM-SENSOR", true, _getDeviceEmoji(null, devicesProvider, isHrm: true)),
+                        ],
+                      );
+              },
+            ),
           ),
 
           Container(

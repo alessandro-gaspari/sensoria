@@ -20,13 +20,13 @@ enum GpsSignalQuality {
 class StreamingManager extends ChangeNotifier {
   static const String SERVER_URL = 'https://sensoria-dashboard.onrender.com';
   static const int TARGET_HZ = 100;
-
+  StreamSubscription<Position>? _gpsSubscription;
+  Position? _lastValidGpsPosition;
   final Map<String, StreamSubscription> _activeStreams = {};
   final Map<String, int> _packetCounts = {};
   final Map<String, Map<String, dynamic>> _latestData = {};
   final Map<String, DateTime> _lastSendTime = {};
   final Map<String, String> _deviceProtocols = {};
-  Position? _lastValidGpsPosition;
   DateTime? _lastGpsTimestamp;
   double _estimatedSpeed = 0.0; // m/s
   static const double MAX_REALISTIC_SPEED_MPS = 18.0; // ~58 km/h (pattinaggio veloce)
@@ -50,9 +50,6 @@ class StreamingManager extends ChangeNotifier {
   TCPDataSender? _tcpSender;
   bool _isTrackingActive = false;
   
-  // Stream Subscription per il GPS
-  StreamSubscription<Position>? _gpsSubscription;
-
   // --- VARIABILI QUALITÀ GPS ---
   Timer? _gpsQualityTimer;
   GpsSignalQuality _currentGpsQuality = GpsSignalQuality.noSignal;

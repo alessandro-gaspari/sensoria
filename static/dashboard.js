@@ -372,7 +372,7 @@ const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanz
 const GPS_MIN_DT_S = 0.30; // se dt < 0.30s ignora fix (timestamp duplicati)
 const GPS_MAX_DT_S = 10.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
 const GPS_MIN_STEP_M = 0.20; // sotto 20cm = jitter (non sommare, non dare speed)
-const MAX_SPEED_KMH = 100; // cap (alzabile per pattinaggio veloce)
+const MAX_SPEED_KMH = 60; // cap (alzabile per pattinaggio veloce)
 
 // ==========================================
 // INIZIALIZZAZIONE
@@ -386,8 +386,13 @@ document.addEventListener("DOMContentLoaded", function () {
   setInterval(() => {
     if (!isReplayMode && sessionStartTimeMs) {
       updateReplayUiBounds();
+      
+      // ✅ AGGIUNGI QUESTO: Aggiorna il display del tempo in LIVE
+      const currentSec = getDurationSec();
+      updateReplayTimeLabel(currentSec);
     }
   }, 1000);
+
 
   var sel = document.getElementById("chart-sensor-select");
   if (sel) {
