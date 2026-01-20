@@ -164,7 +164,7 @@ function animateMapFollow(now) {
   }
 
   const elapsed = now - (animationStartTime ?? now);
-  const t = Math.max(0, Math.min(1, elapsed / ANIMATIONDURATION));
+  const t = Math.max(0, Math.min(1, elapsed / ANIMATION_DURATION));
   // ease-out (morbido ma veloce)
   const k = 1 - Math.pow(1 - t, 3);
 
@@ -369,9 +369,9 @@ function rebuildColoredProgressRouteToTime(tMs, minStepM = 0) {
 // GPS SPEED config (anti picchi)
 // ==========================================
 const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanza
-const GPS_MIN_DT_S = 0.30; // se dt < 0.30s ignora fix (timestamp duplicati)
-const GPS_MAX_DT_S = 10.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
-const GPS_MIN_STEP_M = 0.20; // sotto 20cm = jitter (non sommare, non dare speed)
+const GPS_MIN_DT_S = 0.50; // se dt < 0.30s ignora fix (timestamp duplicati)
+const GPS_MAX_DT_S = 20.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
+const GPS_MIN_STEP_M = 0; // sotto 20cm = jitter (non sommare, non dare speed)
 const MAX_SPEED_KMH = 60; // cap (alzabile per pattinaggio veloce)
 
 // ==========================================
