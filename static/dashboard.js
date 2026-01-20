@@ -91,6 +91,9 @@ var animationStartTime = null;
 var animationFrameId = null;
 const ANIMATION_DURATION = 700;
 var allSensorSamples = {};
+const GPSMINSTEPM = 0.20;
+const GPSMINSTEPM_DIST = 0.93;
+
 
 var mapRotationDeg = 0;
 
@@ -372,6 +375,7 @@ const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanz
 const GPS_MIN_DT_S = 0.50; // se dt < 0.30s ignora fix (timestamp duplicati)
 const GPS_MAX_DT_S = 20.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
 const GPS_MIN_STEP_M = 0; // sotto 20cm = jitter (non sommare, non dare speed)
+const GPS_MIN_STEP_M_DIST = 0.93;
 const MAX_SPEED_KMH = 60; // cap (alzabile per pattinaggio veloce)
 
 // ==========================================
@@ -875,7 +879,6 @@ function onGpsUpdate(data, opts) {
   const lng = Number(data.longitude ?? data.lng ?? data.lon);
   const acc = Number(data.accuracy ?? data.acc ?? data.hdop ?? 999);
 
-
   let tMs = null;
   if (data.t != null) tMs = Number(data.t);
   else if (data.timestamp) tMs = new Date(data.timestamp).getTime();
@@ -892,9 +895,7 @@ function onGpsUpdate(data, opts) {
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
     if (!isBulkLoading) ensureMapInitialized(lat, lng);
 
-    if (!isReplayMode && map && mapMarker) {
-      setMapTarget(lat, lng);
-    }
+    if (!isReplayMode && map && mapMarker) setMapTarget(lat, lng);
 
     if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(0, 0);
     updateReplayUiBounds();
@@ -906,28 +907,37 @@ function onGpsUpdate(data, opts) {
   const dtSec = clamp(dtSecRaw, GPS_MIN_DT_S, GPS_MAX_DT_S);
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
 
-  let usedStepM = 0;
-  let speedKmh = 0;
-
-  const goodFix = dtSecRaw >= GPS_MIN_DT_S && dtSecRaw <= 5.0 && acc <= GPS_MAX_ACCURACY_FOR_DIST_M;
   const prevSpeed = prevSample.speedKmh ?? 0;
 
-  if (goodFix) {
+  // ---------------------------
+  // DISTANZA: NON dipendere da dtSecRaw
+  // ---------------------------
+  // Aggiungi questa costante tra le tue config:
+  // const GPS_MIN_STEP_M_DIST = 0.93; // tuning per tornare a ~184/185m su quel log
+  const distOk = (acc <= GPS_MAX_ACCURACY_FOR_DIST_M) && (stepM >= GPS_MIN_STEP_M_DIST);
+  const usedStepM = distOk ? stepM : 0;
+
+  // ---------------------------
+  // SPEED: qui sì usare dtSecRaw per evitare duplicati/raffiche
+  // ---------------------------
+  const speedOk =
+    dtSecRaw >= GPS_MIN_DT_S &&
+    dtSecRaw <= 5.0 &&
+    acc <= GPS_MAX_ACCURACY_FOR_DIST_M;
+
+  let speedKmh = prevSpeed;
+
+  if (speedOk) {
     if (stepM < GPS_MIN_STEP_M) {
-      usedStepM = 0;
       speedKmh = prevSpeed * 0.85;
       if (speedKmh < 0.3) speedKmh = 0;
     } else {
-      usedStepM = stepM;
       const instantSpeed = (stepM / dtSec) * 3.6;
       speedKmh = prevSpeed * 0.7 + instantSpeed * 0.3;
       if (!isFinite(speedKmh)) speedKmh = 0;
       speedKmh = Math.min(Math.max(0, speedKmh), MAX_SPEED_KMH);
     }
-  } else {
-    speedKmh = prevSpeed;
   }
-
 
   const newCumDistM = (prevSample.cumDistM ?? 0) + usedStepM;
   const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
@@ -949,9 +959,7 @@ function onGpsUpdate(data, opts) {
   // combina A+B
   let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * speedB;
   speedFinal = Math.min(Math.max(0, speedFinal), MAX_SPEED_KMH);
-
   newSample.speedKmh = speedFinal; // sovrascrivi per UI+replay coerenti
-
 
   if (isBulkLoading) return;
 
@@ -963,9 +971,8 @@ function onGpsUpdate(data, opts) {
     // FULL route (sottile) colorata BPM
     addFullColoredBetween(prevSample, newSample);
 
-    // PROGRESS (spessa) colorata BPM - in live coincide col "fino ad ora"
-    if (!isReplayMode) addProgressColoredBetween(prevSample, newSample);
-
+    // PROGRESS (spessa) colorata BPM
+    addProgressColoredBetween(prevSample, newSample);
   }
 
   updateReplayUiBounds();

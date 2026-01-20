@@ -150,9 +150,9 @@ class _TrackingScreenState extends State<TrackingScreen> with SingleTickerProvid
         debugPrint("📍 [GPS] Polling: ${position.latitude}, ${position.longitude} (acc: ${position.accuracy}m)");
         
         final streamingManager = Provider.of<StreamingManager>(context, listen: false);
-        if (streamingManager.isTrackingActive) {
-          streamingManager.sendGpsData(position.latitude, position.longitude, position.accuracy);
-        }
+        //if (streamingManager.isTrackingActive) {
+        //  streamingManager.sendGpsData(position.latitude, position.longitude, position.accuracy);
+        //}
 
         if (mounted) {
           _lastKnownPosition = position;
