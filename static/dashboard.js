@@ -892,6 +892,10 @@ function onGpsUpdate(data, opts) {
     gpsSamples.push({ t: tMs, lat, lng, acc, cumDistM: 0, speedKmh: 0 });
     if (!isBulkLoading) ensureMapInitialized(lat, lng);
 
+    if (!isReplayMode && map && mapMarker) {
+      setMapTarget(lat, lng);
+    }
+
     if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(0, 0);
     updateReplayUiBounds();
     showReplayOverlayIfReady();
@@ -953,7 +957,7 @@ function onGpsUpdate(data, opts) {
 
   if (!isReplayMode && opts.updateUi) updateSpeedDistanceUI(newSample.speedKmh, newCumDistM);
 
-  if (opts.updateMap && map && mapMarker) {
+  if (!isReplayMode && map && mapMarker) {
     setMapTarget(lat, lng);
 
     // FULL route (sottile) colorata BPM
