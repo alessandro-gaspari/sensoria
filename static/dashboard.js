@@ -125,7 +125,7 @@ var chartsInitialized = false;
 var isUserInteracting = false;
 var MIN_ZOOM_RANGE = 0.5;
 const SPEED_WINDOW_SEC = 12;
-const SPEED_A_WEIGHT = 0.6
+const SPEED_A_WEIGHT = 0.2
 let speedWindow = [];
 
 // ==========================================
@@ -978,7 +978,6 @@ function onGpsUpdate(data, opts) {
   updateReplayUiBounds();
   showReplayOverlayIfReady();
 }
-
 
 // ==========================================
 // MAP INIT + push point
