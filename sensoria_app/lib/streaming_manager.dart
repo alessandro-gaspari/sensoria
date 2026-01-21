@@ -689,81 +689,133 @@ class StreamingManager extends ChangeNotifier {
 
 }
 
+int _s10(int v) => (v & 0x200) != 0 ? v - 0x400 : v;   // 10-bit signed
+double _sd10(int v) => _s10(v).toDouble();
+
+int _s16(int v) => (v & 0x8000) != 0 ? v - 0x10000 : v; // 16-bit signed
+double _sd16(int v) => _s16(v).toDouble();
+
+
 Map<String, double> parseSensoriaPacket(List<int> data, {String protocol = "F20"}) {
   int b(int i) => data[i] & 0xFF;
-  
-   if (protocol == "F20") {
+
+  // 10-bit helpers
+  int u10(int v) => v & 0x3FF;
+  int s10(int v) {
+    v &= 0x3FF;
+    if ((v & 0x200) != 0) v -= 0x400; // two's complement 10-bit
+    return v;
+  }
+
+  // 16-bit helpers (L32 IMU)
+  int s16(int v) {
+    v &= 0xFFFF;
+    if ((v & 0x8000) != 0) v -= 0x10000; // two's complement 16-bit
+    return v;
+  }
+
+  if (protocol == "F20") {
     if (data.length != 20) return {};
     return {
-      'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-      'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-      'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-      'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-      'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-      'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-      'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
-      'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
-      'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-      'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-      'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-      'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
+      // Pressioni: lascio unsigned 10-bit
+      'pressure_0': u10((b(5) << 2) | (b(6) >> 6)).toDouble(),
+      'pressure_1': u10((b(6) << 4) | (b(7) >> 4)).toDouble(),
+      'pressure_2': u10((b(7) << 6) | (b(8) >> 2)).toDouble(),
+
+      // IMU: signed 10-bit
+      'accel_x': s10((b(12) << 6) | (b(13) >> 2)).toDouble(),
+      'accel_y': s10((b(13) << 8) | b(14)).toDouble(),
+      'accel_z': s10((b(15) << 2) | (b(16) >> 6)).toDouble(),
+
+      'gyro_x': s10((b(16) << 4) | (b(17) >> 4)).toDouble(),
+      'gyro_y': s10((b(17) << 6) | (b(18) >> 2)).toDouble(),
+      'gyro_z': s10((b(18) << 8) | b(19)).toDouble(),
+
+      'mag_x': s10((b(8) << 8) | b(9)).toDouble(),
+      'mag_y': s10((b(10) << 2) | (b(11) >> 6)).toDouble(),
+      'mag_z': s10((b(11) << 4) | (b(12) >> 4)).toDouble(),
     };
-  } else if (protocol == "G20") {
-      if (data.length != 20) return {};
-      return {
-        'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-        'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-        'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-        'pressure_3': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-        'pressure_4': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-        'pressure_5': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
-        'pressure_6': (0x3FF & ((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F))).toDouble(),
-        'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-        'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-        'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-        'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
-        'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
-        'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-        'mag_x': 0.0, 'mag_y': 0.0, 'mag_z': 0.0,
-      };
-  } else if (protocol == "L32") {
+  }
+
+  if (protocol == "G20") {
+    if (data.length != 20) return {};
+    return {
+      // Pressioni: unsigned 10-bit
+      'pressure_0': u10((b(5) << 2) | (b(6) >> 6)).toDouble(),
+      'pressure_1': u10((b(6) << 4) | (b(7) >> 4)).toDouble(),
+      'pressure_2': u10((b(7) << 6) | (b(8) >> 2)).toDouble(),
+      'pressure_3': u10((b(8) << 8) | b(9)).toDouble(),
+      'pressure_4': u10((b(10) << 2) | (b(11) >> 6)).toDouble(),
+      'pressure_5': u10((b(11) << 4) | (b(12) >> 4)).toDouble(),
+      'pressure_6': u10((b(0) << 6) | ((b(1) & 0xC0) >> 2) | (b(4) & 0x0F)).toDouble(),
+
+      // IMU: signed 10-bit
+      'accel_x': s10((b(12) << 6) | (b(13) >> 2)).toDouble(),
+      'accel_y': s10((b(13) << 8) | b(14)).toDouble(),
+      'accel_z': s10((b(15) << 2) | (b(16) >> 6)).toDouble(),
+
+      'gyro_x': s10((b(16) << 4) | (b(17) >> 4)).toDouble(),
+      'gyro_y': s10((b(17) << 6) | (b(18) >> 2)).toDouble(),
+      'gyro_z': s10((b(18) << 8) | b(19)).toDouble(),
+
+      // Nel tuo codice era già così: niente mag su G20
+      'mag_x': 0.0,
+      'mag_y': 0.0,
+      'mag_z': 0.0,
+    };
+  }
+
+  if (protocol == "L32") {
     if (data.length != 32) return {};
     return {
-      'pressure_0': (0x3FF & ((b(21) << 2) | (b(22) >> 6))).toDouble(),
-      'pressure_1': (0x3FF & ((b(22) << 4) | (b(23) >> 4))).toDouble(),
-      'pressure_2': (0x3FF & ((b(23) << 6) | (b(24) >> 2))).toDouble(),
-      'pressure_3': (0x3FF & (((b(24) & 0x03) << 8) | b(25))).toDouble(),
-      'pressure_4': (0x3FF & ((b(26) << 2) | (b(27) >> 6))).toDouble(),
-      'pressure_5': (0x3FF & ((b(27) << 4) | (b(28) >> 4))).toDouble(),
-      'pressure_6': (0x3FF & ((b(28) << 6) | (b(29) >> 2))).toDouble(),
-      'pressure_7': (0x3FF & (((b(29) & 0x03) << 8) | b(30))).toDouble(),
-      'accel_x': (b(3) | (b(4) << 8)).toDouble(),
-      'accel_y': (b(5) | (b(6) << 8)).toDouble(),
-      'accel_z': (b(7) | (b(8) << 8)).toDouble(),
-      'gyro_x': (b(9) | (b(10) << 8)).toDouble(),
-      'gyro_y': (b(11) | (b(12) << 8)).toDouble(),
-      'gyro_z': (b(13) | (b(14) << 8)).toDouble(),
-      'mag_x': (b(15) | (b(16) << 8)).toDouble(),
-      'mag_y': (b(17) | (b(18) << 8)).toDouble(),
-      'mag_z': (b(19) | (b(20) << 8)).toDouble(),
+      // Pressioni: unsigned 10-bit
+      'pressure_0': u10((b(21) << 2) | (b(22) >> 6)).toDouble(),
+      'pressure_1': u10((b(22) << 4) | (b(23) >> 4)).toDouble(),
+      'pressure_2': u10((b(23) << 6) | (b(24) >> 2)).toDouble(),
+      'pressure_3': u10(((b(24) & 0x03) << 8) | b(25)).toDouble(),
+      'pressure_4': u10((b(26) << 2) | (b(27) >> 6)).toDouble(),
+      'pressure_5': u10((b(27) << 4) | (b(28) >> 4)).toDouble(),
+      'pressure_6': u10((b(28) << 6) | (b(29) >> 2)).toDouble(),
+      'pressure_7': u10(((b(29) & 0x03) << 8) | b(30)).toDouble(),
+
+      // IMU: signed 16-bit
+      'accel_x': s16(b(3) | (b(4) << 8)).toDouble(),
+      'accel_y': s16(b(5) | (b(6) << 8)).toDouble(),
+      'accel_z': s16(b(7) | (b(8) << 8)).toDouble(),
+
+      'gyro_x': s16(b(9) | (b(10) << 8)).toDouble(),
+      'gyro_y': s16(b(11) | (b(12) << 8)).toDouble(),
+      'gyro_z': s16(b(13) | (b(14) << 8)).toDouble(),
+
+      'mag_x': s16(b(15) | (b(16) << 8)).toDouble(),
+      'mag_y': s16(b(17) | (b(18) << 8)).toDouble(),
+      'mag_z': s16(b(19) | (b(20) << 8)).toDouble(),
     };
-  } else if (protocol == "H20" || protocol == "I20") {
-      if (data.length != 20) return {};
-      return {
-        'pressure_0': (0x3FF & ((b(5) << 2) | (b(6) >> 6))).toDouble(),
-        'pressure_1': (0x3FF & ((b(6) << 4) | (b(7) >> 4))).toDouble(),
-        'pressure_2': (0x3FF & ((b(7) << 6) | (b(8) >> 2))).toDouble(),
-        'pressure_3': (0x3FF & ((b(0) << 6) | (b(4) & 0x3F))).toDouble(),
-        'accel_x': (0x3FF & ((b(12) << 6) | (b(13) >> 2))).toDouble(),
-        'accel_y': (0x3FF & ((b(13) << 8) | b(14))).toDouble(),
-        'accel_z': (0x3FF & ((b(15) << 2) | (b(16) >> 6))).toDouble(),
-        'gyro_x': (0x3FF & ((b(16) << 4) | (b(17) >> 4))).toDouble(),
-        'gyro_y': (0x3FF & ((b(17) << 6) | (b(18) >> 2))).toDouble(),
-        'gyro_z': (0x3FF & ((b(18) << 8) | b(19))).toDouble(),
-        'mag_x': (0x3FF & ((b(8) << 8) | b(9))).toDouble(),
-        'mag_y': (0x3FF & ((b(10) << 2) | (b(11) >> 6))).toDouble(),
-        'mag_z': (0x3FF & ((b(11) << 4) | (b(12) >> 4))).toDouble(),
-      };
   }
+
+  if (protocol == "H20" || protocol == "I20") {
+    if (data.length != 20) return {};
+    return {
+      // Pressioni: unsigned 10-bit
+      'pressure_0': u10((b(5) << 2) | (b(6) >> 6)).toDouble(),
+      'pressure_1': u10((b(6) << 4) | (b(7) >> 4)).toDouble(),
+      'pressure_2': u10((b(7) << 6) | (b(8) >> 2)).toDouble(),
+      'pressure_3': u10((b(0) << 6) | (b(4) & 0x3F)).toDouble(),
+
+      // IMU: signed 10-bit
+      'accel_x': s10((b(12) << 6) | (b(13) >> 2)).toDouble(),
+      'accel_y': s10((b(13) << 8) | b(14)).toDouble(),
+      'accel_z': s10((b(15) << 2) | (b(16) >> 6)).toDouble(),
+
+      'gyro_x': s10((b(16) << 4) | (b(17) >> 4)).toDouble(),
+      'gyro_y': s10((b(17) << 6) | (b(18) >> 2)).toDouble(),
+      'gyro_z': s10((b(18) << 8) | b(19)).toDouble(),
+
+      'mag_x': s10((b(8) << 8) | b(9)).toDouble(),
+      'mag_y': s10((b(10) << 2) | (b(11) >> 6)).toDouble(),
+      'mag_z': s10((b(11) << 4) | (b(12) >> 4)).toDouble(),
+    };
+  }
+
   return {};
 }
