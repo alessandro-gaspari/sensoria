@@ -121,6 +121,8 @@ function updateKneeAngleUI(deg) {
   el.textContent = deg.toFixed(1) + "°";
 }
 
+
+
 function tiltDegFromAccel_YZ(p) {
   const ay = Number(p.accely);
   const az = Number(p.accelz);
@@ -1747,8 +1749,8 @@ function processIncomingData(data) {
     // serve avere entrambi e quasi sincroni
     if (kneeLast.sup && kneeLast.inf) {
       if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) < 200) {
-        const supTilt = tiltDegFromAccelYZ(kneeLast.sup.p);
-        const infTilt = tiltDegFromAccelYZ(kneeLast.inf.p);
+        const supTilt = tiltDegFromAccel_YZ(kneeLast.sup.p);
+        const infTilt = tiltDegFromAccel_YZ(kneeLast.inf.p);
 
         if (supTilt != null && infTilt != null) {
           const kneeDegRaw = wrapDeg180(supTilt - infTilt);
