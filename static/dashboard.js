@@ -2089,10 +2089,6 @@ function updateSockChartReplay(side, currentSec) {
   // Aggiorna dati grafico
   sockChartData[side] = [xData, p0Data, p1Data, p2Data];
   chart.setData(sockChartData[side]);
-
-  // Imposta scala X su TUTTA la durata della sessione
-  const maxDataSec = getDurationSec();
-  chart.setScale('x', { min: 0, max: maxDataSec });
 }
 
 
