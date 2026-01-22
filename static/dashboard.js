@@ -1903,23 +1903,9 @@ function initSockCharts() {
     height: Math.max(240, container.clientHeight),
     plugins: [centerLinePlugin()],
     scales: {
-      x: { 
-        time: false,
-        range: (u, min, max) => {
-          // Calcola la durata disponibile
-          const dur = max - min;
-          const WINSEC = 3;
-          
-          // Se hai meno di 3s, mostra tutto
-          if (dur <= WINSEC) return [min, max];
-          
-          // Altrimenti mostra solo gli ultimi 3s
-          return [Math.max(min, max - WINSEC), max];
-        }
-      },
+      x: { time: false}, // secondi dall'inizio attività
       y: { auto: false, range: [0, 1100] }
     },
-
     series: [
       {},
       { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
@@ -2089,6 +2075,10 @@ function updateSockChartReplay(side, currentSec) {
   // Aggiorna dati grafico
   sockChartData[side] = [xData, p0Data, p1Data, p2Data];
   chart.setData(sockChartData[side]);
+
+  // Imposta scala X su TUTTA la durata della sessione
+  const maxDataSec = getDurationSec();
+  chart.setScale('x', { min: 0, max: maxDataSec });
 }
 
 
