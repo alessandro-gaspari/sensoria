@@ -67,6 +67,32 @@ var lastLiveBpm = "--";
 
 var isBulkLoading = false;
 var lastValidIMU = {};
+// --- KNEE ANGLE (Ginocchio Sup/Inf) ---
+let kneeLast = { sup: null, inf: null }; // { tMs, p }
+let kneeOffsetDeg = null;                // offset in piedi (zero)
+let lastKneeDeg = null;
+
+function updateKneeAngleUI(deg) {
+  const el = document.getElementById("knee-angle-val");
+  if (!el) return;
+  if (!Number.isFinite(deg)) { el.textContent = "--"; return; }
+  el.textContent = deg.toFixed(1) + "°";
+}
+
+function tiltDegFromAccel_YZ(p) {
+  const ay = Number(p.accely);
+  const az = Number(p.accelz);
+  if (!Number.isFinite(ay) || !Number.isFinite(az)) return null;
+  return Math.atan2(az, ay) * 180 / Math.PI;
+}
+
+function wrapDeg180(a) {
+  let x = a;
+  while (x > 180) x -= 360;
+  while (x < -180) x += 360;
+  return x;
+}
+
 
 var speedBySec = [];
 var secPos = [];
@@ -1478,6 +1504,31 @@ function enterReplayAtSecond(sec) {
       }
   }
 
+    // --- KNEE REPLAY ---
+  if (typeof allSensorSamples !== "undefined" && allSensorSamples) {
+    const supArr = allSensorSamples["Ginocchio Sup"];
+    const infArr = allSensorSamples["Ginocchio Inf"];
+
+    if (supArr && infArr) {
+      const supS = findSampleAtTime(supArr, tMs);
+      const infS = findSampleAtTime(infArr, tMs);
+
+      if (supS && infS) {
+        const supTilt = tiltDegFromAccel_YZ(supS);
+        const infTilt = tiltDegFromAccel_YZ(infS);
+
+        if (supTilt != null && infTilt != null) {
+          let kneeDeg = wrapDeg180(infTilt - supTilt);
+
+          // auto-zero anche in replay all’inizio
+          if (kneeOffsetDeg == null && clampedSec < 2.5) kneeOffsetDeg = kneeDeg;
+          if (kneeOffsetDeg != null) kneeDeg = kneeDeg - kneeOffsetDeg;
+
+          updateKneeAngleUI(kneeDeg);
+        }
+      }
+    }
+  }
 
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
   // Hack per forzare redraw cursore
@@ -1679,9 +1730,36 @@ function processIncomingData(data) {
   // 3. Timeline
   const tMs = getNowMs();
   ensureSessionStart(tMs);
-
-  // 4. Calzini: aggiorna UI grafico mini + BI + RAW
+    // --- KNEE LIVE ---
   const nameLower = sensorName.toLowerCase();
+
+  if (nameLower.includes("ginocchio")) {
+    if (nameLower.includes("sup")) kneeLast.sup = { tMs, p };
+    if (nameLower.includes("inf")) kneeLast.inf = { tMs, p };
+
+    if (kneeLast.sup && kneeLast.inf) {
+      // evita usare due sample troppo lontani nel tempo
+      if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) <= 200) {
+        const supTilt = tiltDegFromAccel_YZ(kneeLast.sup.p);
+        const infTilt = tiltDegFromAccel_YZ(kneeLast.inf.p);
+
+        if (supTilt != null && infTilt != null) {
+          let kneeDeg = wrapDeg180(infTilt - supTilt);
+
+          // auto-zero nei primissimi secondi di live (in piedi)
+          if (!isReplayMode && kneeOffsetDeg == null && sessionStartTimeMs != null && (tMs - sessionStartTimeMs) < 2500) {
+            kneeOffsetDeg = kneeDeg;
+          }
+          if (kneeOffsetDeg != null) kneeDeg = kneeDeg - kneeOffsetDeg;
+
+          lastKneeDeg = kneeDeg;
+
+          if (!isReplayMode) updateKneeAngleUI(kneeDeg);
+        }
+      }
+    }
+  }
+
   const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
   const isLeft = nameLower.includes("sx") || nameLower.includes("left");
   const isRight = nameLower.includes("dx") || nameLower.includes("right");
