@@ -1903,9 +1903,23 @@ function initSockCharts() {
     height: Math.max(240, container.clientHeight),
     plugins: [centerLinePlugin()],
     scales: {
-      x: { time: false, range: [0, 3]}, // secondi dall'inizio attività
+      x: { 
+        time: false,
+        range: (u, min, max) => {
+          // Calcola la durata disponibile
+          const dur = max - min;
+          const WINSEC = 3;
+          
+          // Se hai meno di 3s, mostra tutto
+          if (dur <= WINSEC) return [min, max];
+          
+          // Altrimenti mostra solo gli ultimi 3s
+          return [Math.max(min, max - WINSEC), max];
+        }
+      },
       y: { auto: false, range: [0, 1100] }
     },
+
     series: [
       {},
       { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
