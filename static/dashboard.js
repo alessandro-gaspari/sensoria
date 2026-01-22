@@ -1704,7 +1704,6 @@ function filterVal(newVal, oldVal, maxDelta) {
 // SENSOR UPDATE (parsing calzini)
 
 function processIncomingData(data) {
-  const n = normName(sensorName);
   lastDataTimestamp = Date.now();
   lastDataTime = Date.now();
   isStreamActive = true;
@@ -1722,6 +1721,7 @@ function processIncomingData(data) {
   // 1. Trova nome sensore
   const outerName = (typeof data === 'object') ? (data.sensorname ?? data.sensorName ?? data.name) : null;
   const sensorName = String(payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? "").trim();
+  const n = normName(sensorName);
   if (!sensorName) return;
 
   // 2. Normalizza campi in un oggetto unico
