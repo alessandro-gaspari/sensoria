@@ -1903,7 +1903,7 @@ function initSockCharts() {
     height: Math.max(240, container.clientHeight),
     plugins: [centerLinePlugin()],
     scales: {
-      x: { time: false }, // secondi dall'inizio attività
+      x: { time: false, range: [0, 3]}, // secondi dall'inizio attività
       y: { auto: false, range: [0, 1100] }
     },
     series: [
