@@ -1681,10 +1681,14 @@ function filterVal(newVal, oldVal, maxDelta) {
 // SENSOR UPDATE (parsing calzini)
 
 function processIncomingData(data) {
+  const n = normName(sensorName);
   lastDataTimestamp = Date.now();
   lastDataTime = Date.now();
   isStreamActive = true;
 
+
+  if (isKneeSup(n)) kneeLast.sup = { tMs, p };
+  if (isKneeInf(n)) kneeLast.inf = { tMs, p };
   // 0. Unwrap: a volte arriva {sensorname: "...",  {...}}
   let payload = data;
   if (typeof data === 'object' && data.data && typeof data.data === 'object') {
