@@ -1007,13 +1007,7 @@ function onGpsUpdate(data, opts) {
       if (!isFinite(speedKmh)) speedKmh = 0;
       speedKmh = Math.min(Math.max(0, speedKmh), MAX_SPEED_KMH);
     }
-  } else {
-    speedKmh = prevSpeed * 0.85;
-    if (speedKmh < 0.3) speedKmh = 0;
   }
-
-  if (!isFinite(speedKmh)) speedKmh = 0;
-  speedKmh = Math.min(Math.max(0, speedKmh), MAX_SPEED_KMH);
 
   const newCumDistM = (prevSample.cumDistM ?? 0) + usedStepM;
   const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
