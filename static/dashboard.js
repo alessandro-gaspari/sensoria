@@ -48,6 +48,25 @@ function setMapMarkerBpmColor(bpm) {
   pulse.style.setProperty("--pulse-rgb", hexToRgbCsv(hex));
 }
 
+function normName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[_\-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isKnee(name) {
+  return /\bginocchio\b/.test(name);
+}
+
+function isKneeSup(name) {
+  return isKnee(name) && /\b(sup|super|superiore|upper|up|alto)\b/.test(name);
+}
+
+function isKneeInf(name) {
+  return isKnee(name) && /\b(inf|infer|inferiore|lower|down|basso)\b/.test(name);
+}
 
 // ==========================================
 // SENSORI / DATI
@@ -1518,7 +1537,7 @@ function enterReplayAtSecond(sec) {
         const infTilt = tiltDegFromAccel_YZ(infS);
 
         if (supTilt != null && infTilt != null) {
-          let kneeDeg = wrapDeg180(infTilt - supTilt);
+          let kneeDeg = wrapDeg180(supTilt - infTilt);
 
           // auto-zero anche in replay all’inizio
           if (kneeOffsetDeg == null && clampedSec < 2.5) kneeOffsetDeg = kneeDeg;
@@ -1744,7 +1763,7 @@ function processIncomingData(data) {
         const infTilt = tiltDegFromAccel_YZ(kneeLast.inf.p);
 
         if (supTilt != null && infTilt != null) {
-          let kneeDeg = wrapDeg180(infTilt - supTilt);
+          let kneeDeg = wrapDeg180(supTilt - infTilt);
 
           // auto-zero nei primissimi secondi di live (in piedi)
           if (!isReplayMode && kneeOffsetDeg == null && sessionStartTimeMs != null && (tMs - sessionStartTimeMs) < 2500) {
