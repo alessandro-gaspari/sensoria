@@ -1639,7 +1639,7 @@ function goLive() {
     const d  = sockChartData[side];
     if (!ch || !d || !d[0]?.length) return;
 
-    const WINSEC = 4;
+    const WINSEC = 3;
     const xMax = d[0][d[0].length - 1];
     const xMin = Math.max(0, xMax - WINSEC);
     ch.setScale("x", { min: xMin, max: xMax + 0.1 });
@@ -1940,7 +1940,7 @@ function scheduleSockRender(side) {
     chart.setData(d);
 
     // Finestra visibile in live (secondi)
-    const WINSEC = 4;
+    const WINSEC = 3;
     // Prendi l'ultimo X valido
     const xMax = (d[0].length > 0) ? d[0][d[0].length - 1] : 0;
     
