@@ -90,6 +90,29 @@ var lastValidIMU = {};
 let kneeLast = { sup: null, inf: null }; // { tMs, p }
 let kneeOffsetDeg = null;                // offset in piedi (zero)
 let lastKneeDeg = null;
+// --- KNEE CALIB (median) ---
+const KNEE_CALIB_MS = 2500;
+const KNEE_SYNC_MAX_DT_MS = 200;   // già usato come criterio live
+const KNEE_MIN_CALIB_SAMPLES = 5;
+
+let kneeCalibVals = []; // valori kneeDeg grezzi (supTilt - infTilt) durante calib
+
+function medianDeg(vals) {
+  const a = (vals || []).filter(Number.isFinite).slice().sort((x, y) => x - y);
+  if (!a.length) return null;
+  const m = Math.floor(a.length / 2);
+  return (a.length % 2) ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+
+function resetKneeState() {
+  kneeLast.sup = null;
+  kneeLast.inf = null;
+  kneeOffsetDeg = null;
+  kneeCalibVals = [];
+  lastKneeDeg = null;
+  updateKneeAngleUI(null);
+}
+
 
 function updateKneeAngleUI(deg) {
   const el = document.getElementById("knee-angle-val");
@@ -1753,35 +1776,66 @@ function processIncomingData(data) {
   // 3. Timeline
   const tMs = getNowMs();
   ensureSessionStart(tMs);
-    // --- KNEE LIVE ---
+  
+  // --- KNEE LIVE ---
   const nameLower = sensorName.toLowerCase();
 
   if (nameLower.includes("ginocchio")) {
+    // aggiorna ultimo sample sup/inf
     if (nameLower.includes("sup")) kneeLast.sup = { tMs, p };
     if (nameLower.includes("inf")) kneeLast.inf = { tMs, p };
 
+    // serve avere entrambi e quasi sincroni
     if (kneeLast.sup && kneeLast.inf) {
-      // evita usare due sample troppo lontani nel tempo
-      if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) <= 200) {
-        const supTilt = tiltDegFromAccel_YZ(kneeLast.sup.p);
-        const infTilt = tiltDegFromAccel_YZ(kneeLast.inf.p);
+      if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) < 200) {
+        const supTilt = tiltDegFromAccelYZ(kneeLast.sup.p);
+        const infTilt = tiltDegFromAccelYZ(kneeLast.inf.p);
 
         if (supTilt != null && infTilt != null) {
-          let kneeDeg = wrapDeg180(supTilt - infTilt);
+          const kneeDegRaw = wrapDeg180(supTilt - infTilt);
 
-          // auto-zero nei primissimi secondi di live (in piedi)
-          if (!isReplayMode && kneeOffsetDeg == null && sessionStartTimeMs != null && (tMs - sessionStartTimeMs) < 2500) {
-            kneeOffsetDeg = kneeDeg;
+          // Applica solo in LIVE (in replay lo fai in enterReplayAtSecond)
+          if (!isReplayMode) {
+            // calibrazione offset = mediana dei primi 2.5s
+            if (sessionStartTimeMs != null && kneeOffsetDeg == null) {
+              const dtFromStart = tMs - sessionStartTimeMs;
+
+              // raccogli campioni solo dentro la finestra
+              if (dtFromStart >= 0 && dtFromStart <= KNEE_CALIB_MS) {
+                kneeCalibVals.push(kneeDegRaw);
+              }
+
+              const med = medianDeg(kneeCalibVals);
+
+              // quando finisce la finestra e abbiamo abbastanza campioni, fissa offset definitivo
+              if (dtFromStart >= KNEE_CALIB_MS &&
+                  kneeCalibVals.length >= KNEE_MIN_CALIB_SAMPLES &&
+                  med != null) {
+                kneeOffsetDeg = med;
+              }
+
+              // UI: usa offset definitivo se esiste, altrimenti la mediana “corrente”
+              const ref = (kneeOffsetDeg != null) ? kneeOffsetDeg : med;
+
+              if (ref != null) {
+                const kneeDeg = kneeDegRaw - ref;
+                lastKneeDeg = kneeDeg;
+                updateKneeAngleUI(kneeDeg);
+              } else {
+                updateKneeAngleUI(null);
+              }
+            } else {
+              // offset già fissato (o non abbiamo sessionStartTimeMs): applicalo se esiste
+              const kneeDeg = (kneeOffsetDeg != null) ? (kneeDegRaw - kneeOffsetDeg) : kneeDegRaw;
+              lastKneeDeg = kneeDeg;
+              updateKneeAngleUI(kneeDeg);
+            }
           }
-          if (kneeOffsetDeg != null) kneeDeg = kneeDeg - kneeOffsetDeg;
-
-          lastKneeDeg = kneeDeg;
-
-          if (!isReplayMode) updateKneeAngleUI(kneeDeg);
         }
       }
     }
   }
+
 
   const isSock = nameLower.includes("calzino") || nameLower.includes("sock");
   const isLeft = nameLower.includes("sx") || nameLower.includes("left");
