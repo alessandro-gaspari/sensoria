@@ -1708,74 +1708,33 @@ function processIncomingData(data) {
   lastDataTime = Date.now();
   isStreamActive = true;
 
-
-  if (isKneeSup(n)) kneeLast.sup = { tMs, p };
-  if (isKneeInf(n)) kneeLast.inf = { tMs, p };
-  // 0. Unwrap: a volte arriva {sensorname: "...",  {...}}
+  // 0. Unwrap (a volte arriva {  {...} })
   let payload = data;
-  if (typeof data === 'object' && data.data && typeof data.data === 'object') {
-    payload = data.data; // unwrap
+  if (data && typeof data === "object" && data.data && typeof data.data === "object") {
+    payload = data.data;
   }
-  if (!payload || typeof payload !== 'object') return;
+  if (!payload || typeof payload !== "object") return;
 
   // 1. Trova nome sensore
-  const outerName = (typeof data === 'object') ? (data.sensorname ?? data.sensorName ?? data.name) : null;
-  const sensorName = String(payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? "").trim();
-  const n = normName(sensorName);
+  const outerName = (data && typeof data === "object")
+    ? (data.sensorname ?? data.sensorName ?? data.name)
+    : null;
+
+  const sensorName = String(
+    payload.sensorname ?? payload.sensorName ?? payload.name ?? outerName ?? ""
+  ).trim();
+
   if (!sensorName) return;
 
   // 2. Normalizza campi in un oggetto unico
   const p = { ...payload, sensorname: sensorName, name: sensorName };
-  
-  // Timestamp: non forziamo conversioni qui, il resto del codice usa Date.now() se manca
-  p.timestamp = p.timestamp ?? p.ts ?? p.time ?? p.t;
-
-  // --- IMU: normalizzazione base ---
-  let ax = p.accelx ?? p.accelx ?? p.accelX ?? p.AccelX;
-  let ay = p.accely ?? p.accely ?? p.accelY ?? p.AccelY;
-  let az = p.accelz ?? p.accelz ?? p.accelZ ?? p.AccelZ;
-  
-  let gx = p.gyrox ?? p.gyrox ?? p.gyroX ?? p.GyroX;
-  let gy = p.gyroy ?? p.gyroy ?? p.gyroY ?? p.GyroY;
-  let gz = p.gyroz ?? p.gyroz ?? p.gyroZ ?? p.GyroZ;
-  
-  let mx = p.magx ?? p.magx ?? p.magX ?? p.MagX;
-  let my = p.magy ?? p.magy ?? p.magY ?? p.MagY;
-  let mz = p.magz ?? p.magz ?? p.magZ ?? p.MagZ;
-
-  // FILTRO DELTA (ANTI-SPIKE) - Opzionale ma consigliato
-  if (!lastValidIMU[sensorName]) {
-    lastValidIMU[sensorName] = { ax: 0, ay: 0, az: 0, gx: 0, gy: 0, gz: 0, mx: 0, my: 0, mz: 0 };
-  }
-  const last = lastValidIMU[sensorName];
-  const MAX_DELTA_ACCEL = 500; 
-  const MAX_DELTA_GYRO = 800;
-  const MAX_DELTA_MAG = 500;
-
-  p.accelx = last.ax = filterVal(ax, last.ax, MAX_DELTA_ACCEL);
-  p.accely = last.ay = filterVal(ay, last.ay, MAX_DELTA_ACCEL);
-  p.accelz = last.az = filterVal(az, last.az, MAX_DELTA_ACCEL);
-  
-  p.gyrox = last.gx = filterVal(gx, last.gx, MAX_DELTA_GYRO);
-  p.gyroy = last.gy = filterVal(gy, last.gy, MAX_DELTA_GYRO);
-  p.gyroz = last.gz = filterVal(gz, last.gz, MAX_DELTA_GYRO);
-  
-  p.magx = last.mx = filterVal(mx, last.mx, MAX_DELTA_MAG);
-  p.magy = last.my = filterVal(my, last.my, MAX_DELTA_MAG);
-  p.magz = last.mz = filterVal(mz, last.mz, MAX_DELTA_MAG);
-
-  // --- Pressioni ---
-  p.pressure0 = p.pressure0 ?? p.pressure0 ?? p.p0;
-  p.pressure1 = p.pressure1 ?? p.pressure1 ?? p.p1;
-  p.pressure2 = p.pressure2 ?? p.pressure2 ?? p.p2;
-  // Alias p0/p1/p2
-  p.p0 = p.p0 ?? p.pressure0;
-  p.p1 = p.p1 ?? p.pressure1;
-  p.p2 = p.p2 ?? p.pressure2;
 
   // 3. Timeline
   const tMs = getNowMs();
   ensureSessionStart(tMs);
+
+  // 4. Normalized name (ORA è sicuro)
+  const n = normName(sensorName);
   
   // --- KNEE LIVE ---
   const nameLower = sensorName.toLowerCase();
