@@ -109,6 +109,21 @@ function updateTibiaAngleUI(side, deg) {
   el.textContent = Number.isFinite(deg) ? deg.toFixed(1) : '--';
 }
 
+function tibiaLatDegFromAccelXY(p, side) {
+  const ax = Number(p.accelx);
+  const ay = Number(p.accely);
+  if (!Number.isFinite(ax) || !Number.isFinite(ay)) return null;
+
+  // segno “naturale” = SX e DX opposti (come nel tuo disegno)
+  let deg = Math.atan2(ax, ay) * 180 / Math.PI;
+
+  // Se invece un giorno vuoi “stesso segno per entrambi”, abilita:
+  // if (side === "right") deg = -deg;
+
+  return deg;
+}
+
+
 function tiltDegFromAccelXZ(p) {
   const ax = Number(p.accelx);
   const az = Number(p.accelz);
@@ -1641,7 +1656,7 @@ function enterReplayAtSecond(sec) {
       return;
     }
 
-    const raw = tiltDegFromAccelXZSide(sample, side);
+    const raw = tibiaLatDegFromAccelXY(sample, side);
     if (raw == null) {
       updateTibiaAngleUI(side, null);
       return;
@@ -1944,7 +1959,7 @@ function processIncomingData(data) {
 
     // --- TIBIA LIVE ACC-only calib mediana ---
     const side = isLeft ? "left" : "right";
-    const raw = tiltDegFromAccelXZSide(fullSample, side);
+    const raw = tibiaLatDegFromAccelXY(fullSample, side);
 
     if (raw == null) {
       updateTibiaAngleUI(side, null);
