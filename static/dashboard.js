@@ -86,6 +86,37 @@ var lastLiveBpm = "--";
 
 var isBulkLoading = false;
 var lastValidIMU = {};
+
+
+// --- TIBIA ANGLE (per calzino SX/DX) ---
+const TIBIACALIBMS = 5000;
+const TIBIAMINCALIBSAMPLES = 8;
+
+let tibiaOffsetDeg = { left: null, right: null };
+let tibiaCalibVals = { left: [], right: [] };
+
+function resetTibiaState() {
+  tibiaOffsetDeg.left = null; tibiaOffsetDeg.right = null;
+  tibiaCalibVals.left = []; tibiaCalibVals.right = [];
+  updateTibiaAngleUI('left', null);
+  updateTibiaAngleUI('right', null);
+}
+
+function updateTibiaAngleUI(side, deg) {
+  const id = side === 'left' ? 'tibia-angle-left-val' : 'tibia-angle-right-val';
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = Number.isFinite(deg) ? deg.toFixed(1) : '--';
+}
+
+function tiltDegFromAccelXZ(p) {
+  const ax = Number(p.accelx);
+  const az = Number(p.accelz);
+  if (!Number.isFinite(ax) || !Number.isFinite(az)) return null;
+  return Math.atan2(az, ax) * 180 / Math.PI;
+}
+
+
 // --- KNEE ANGLE (Ginocchio Sup/Inf) ---
 let kneeLast = { sup: null, inf: null }; // { tMs, p }
 let kneeOffsetDeg = null;                // offset in piedi (zero)
@@ -591,6 +622,8 @@ function initSocket() {
   socket.on("datacleared", () => {
     isReplayMode = false;
     showReplayOverlayIfReady();
+    resetKneeState();
+    resetTibiaState();
     leftSockSamples = [];
     rightSockSamples = [];
     sockChartData.left  = [[], [], [], []];
@@ -1574,6 +1607,47 @@ function enterReplayAtSecond(sec) {
     }
   }
 
+  // --- TIBIA REPLAY (Calzino SX/DX) ---
+  ['left', 'right'].forEach(side => {
+    const sample = (side === 'left')
+      ? findSampleAtTime(leftSockSamples, tMs)
+      : findSampleAtTime(rightSockSamples, tMs);
+
+    if (!sample) {
+      updateTibiaAngleUI(side, null);
+      return;
+    }
+
+    const raw = tiltDegFromAccelXZ(sample);
+    if (raw == null) {
+      updateTibiaAngleUI(side, null);
+      return;
+    }
+
+    const tibiaDegRaw = wrapDeg180(raw);
+
+    // Auto-zero nei primi 5s di REPLAY: raccogli e fissa offset a fine finestra.
+    if (tibiaOffsetDeg[side] == null) {
+      if (clampedSec >= 0 && clampedSec <= (TIBIACALIBMS / 1000)) {
+        tibiaCalibVals[side].push(tibiaDegRaw);
+      }
+
+      const med = medianDeg(tibiaCalibVals[side]);
+
+      if (clampedSec >= (TIBIACALIBMS / 1000) &&
+          tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
+          med != null) {
+        tibiaOffsetDeg[side] = med;
+      }
+
+      const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
+      updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
+    } else {
+      updateTibiaAngleUI(side, wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]));
+    }
+  });
+
+
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
   // Hack per forzare redraw cursore
   if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10});
@@ -1827,6 +1901,38 @@ function processIncomingData(data) {
       ...p
     };
 
+    const side = isLeft ? 'left' : 'right';
+
+    const tibiaRaw = tiltDegFromAccelXZ(fullSample);
+    if (tibiaRaw != null) {
+      const tibiaDegRaw = wrapDeg180(tibiaRaw);
+
+      if (!isReplayMode && sessionStartTimeMs != null && tibiaOffsetDeg[side] == null) {
+        const dtFromStart = tMs - sessionStartTimeMs;
+
+        if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
+          tibiaCalibVals[side].push(tibiaDegRaw);
+        }
+
+        const med = medianDeg(tibiaCalibVals[side]);
+
+        if (dtFromStart >= TIBIACALIBMS &&
+            tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
+            med != null) {
+          tibiaOffsetDeg[side] = med;
+        }
+
+        const ref = tibiaOffsetDeg[side] != null ? tibiaOffsetDeg[side] : med;
+        updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
+      } else {
+        const ref = tibiaOffsetDeg[side];
+        updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : tibiaDegRaw);
+      }
+    } else {
+      updateTibiaAngleUI(side, null);
+    }
+
+
     if (isLeft) {
       leftSockSamples.push(fullSample);
       if (!isReplayMode) {
@@ -1908,8 +2014,8 @@ function initSockCharts() {
     },
     series: [
       {},
-      { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
-      { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
+      { label: "Lat Est",    spreroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
+      { label: "Lat Int",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
       { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
     ],
     axes: [{ show: false }, { show: false }],
@@ -2525,6 +2631,9 @@ function resetLiveState() {
   sessionStartTimeMs = null;
   sessionEndTimeMs = null;
   isReplayMode = false;
+  resetKneeState();
+  resetTibiaState();
+
 
   // dati
   gpsSamples = [];
@@ -2568,6 +2677,9 @@ function resetReplayState() {
   rightSockSamples = [];
   clearFullRouteSegments();
   clearProgressRouteSegments();
+  resetKneeState();
+  resetTibiaState();
+
 
 
   sockChartData.left = [[], [], [], []];
