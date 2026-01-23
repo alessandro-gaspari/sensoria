@@ -2046,7 +2046,7 @@ function initSockCharts() {
     },
     series: [
       {},
-      { label: "Lat Int",    spreroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
+      { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
       { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
       { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
     ],
