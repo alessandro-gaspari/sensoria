@@ -1901,36 +1901,68 @@ function processIncomingData(data) {
       ...p
     };
 
-    const side = isLeft ? 'left' : 'right';
+    // --- TIBIA FUSION (gyro+acc) ---
+    let tibiaEstDeg = { left: null, right: null };
+    let tibiaLastTms = { left: null, right: null };
+    let tibiaGyroBias = { left: 0, right: 0 };
+    let tibiaGyroBiasVals = { left: [], right: [] };
+    let tibiaGRef = { left: null, right: null };
+    let tibiaGRefVals = { left: [], right: [] };
 
-    const tibiaRaw = tiltDegFromAccelXZ(fullSample);
-    if (tibiaRaw != null) {
-      const tibiaDegRaw = wrapDeg180(tibiaRaw);
-
-      if (!isReplayMode && sessionStartTimeMs != null && tibiaOffsetDeg[side] == null) {
-        const dtFromStart = tMs - sessionStartTimeMs;
-
-        if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
-          tibiaCalibVals[side].push(tibiaDegRaw);
-        }
-
-        const med = medianDeg(tibiaCalibVals[side]);
-
-        if (dtFromStart >= TIBIACALIBMS &&
-            tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
-            med != null) {
-          tibiaOffsetDeg[side] = med;
-        }
-
-        const ref = tibiaOffsetDeg[side] != null ? tibiaOffsetDeg[side] : med;
-        updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
-      } else {
-        const ref = tibiaOffsetDeg[side];
-        updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : tibiaDegRaw);
-      }
-    } else {
-      updateTibiaAngleUI(side, null);
+    function norm3(ax, ay, az) {
+      ax = Number(ax); ay = Number(ay); az = Number(az);
+      if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(az)) return null;
+      return Math.sqrt(ax*ax + ay*ay + az*az);
     }
+    
+    const side = isLeft ? 'left' : 'right';
+    const accAngle = (() => {
+      const a = tiltDegFromAccelXZ(fullSample);
+      return a == null ? null : wrapDeg180(a);
+    })();
+
+    // scegli asse gyro coerente col tuo atan2(accZ, accX)
+    // (se non è questo, cambia in gyrox/gyroz dopo un test)
+    const gyroRate = Number(fullSample.gyroy); // deg/s attesi
+
+    const dt = (tibiaLastTms[side] != null) ? (tMs - tibiaLastTms[side]) / 1000 : null;
+    tibiaLastTms[side] = tMs;
+
+    // stima gravità e bias gyro nei primi 5s (stesso concetto della tua calib)
+    if (!isReplayMode && sessionStartTimeMs != null) {
+      const dtFromStart = tMs - sessionStartTimeMs;
+
+      const g = norm3(fullSample.accelx, fullSample.accely, fullSample.accelz);
+      if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
+        if (g != null) tibiaGRefVals[side].push(g);
+        if (Number.isFinite(gyroRate)) tibiaGyroBiasVals[side].push(gyroRate);
+      }
+      if (dtFromStart >= TIBIACALIBMS) {
+        if (tibiaGRef[side] == null) tibiaGRef[side] = medianDeg(tibiaGRefVals[side]); // “medianDeg” va bene anche per scalari
+        if (tibiaGyroBias[side] === 0 && tibiaGyroBiasVals[side].length) tibiaGyroBias[side] = medianDeg(tibiaGyroBiasVals[side]) ?? 0;
+      }
+    }
+
+    // init stima
+    if (tibiaEstDeg[side] == null && accAngle != null) tibiaEstDeg[side] = accAngle;
+
+    // predizione gyro
+    if (tibiaEstDeg[side] != null && Number.isFinite(gyroRate) && Number.isFinite(dt) && dt > 0 && dt < 0.2) {
+      tibiaEstDeg[side] = wrapDeg180(tibiaEstDeg[side] + (gyroRate - (tibiaGyroBias[side] || 0)) * dt);
+    }
+
+    // correction accel con gating su |a|
+    if (tibiaEstDeg[side] != null && accAngle != null) {
+      const g = norm3(fullSample.accelx, fullSample.accely, fullSample.accelz);
+      const gRef = tibiaGRef[side];
+      const gOk = (g != null && gRef != null) ? (g > gRef*0.75 && g < gRef*1.25) : true;
+
+      const alpha = gOk ? 0.98 : 1.0; // se impatto, non fidarti dell’acc
+      tibiaEstDeg[side] = wrapDeg180(alpha * tibiaEstDeg[side] + (1 - alpha) * accAngle);
+    }
+
+    // usa questo come “tibiaDegRaw” per il resto della tua pipeline (offset+UI)
+    const tibiaDegRaw = tibiaEstDeg[side];  // <--- sostituisce quello vecchio
 
 
     if (isLeft) {
@@ -2014,8 +2046,8 @@ function initSockCharts() {
     },
     series: [
       {},
-      { label: "Lat Est",    spreroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
-      { label: "Lat Int",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
+      { label: "Lat Int",    spreroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
+      { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
       { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
     ],
     axes: [{ show: false }, { show: false }],
