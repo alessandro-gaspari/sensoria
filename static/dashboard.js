@@ -1901,68 +1901,47 @@ function processIncomingData(data) {
       ...p
     };
 
-    // --- TIBIA FUSION (gyro+acc) ---
-    let tibiaEstDeg = { left: null, right: null };
-    let tibiaLastTms = { left: null, right: null };
-    let tibiaGyroBias = { left: 0, right: 0 };
-    let tibiaGyroBiasVals = { left: [], right: [] };
-    let tibiaGRef = { left: null, right: null };
-    let tibiaGRefVals = { left: [], right: [] };
-
-    function norm3(ax, ay, az) {
-      ax = Number(ax); ay = Number(ay); az = Number(az);
-      if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(az)) return null;
-      return Math.sqrt(ax*ax + ay*ay + az*az);
-    }
-    
+    // --- TIBIA LIVE (ACC-only + calib mediana) ---
     const side = isLeft ? 'left' : 'right';
-    const accAngle = (() => {
-      const a = tiltDegFromAccelXZ(fullSample);
-      return a == null ? null : wrapDeg180(a);
-    })();
 
-    // scegli asse gyro coerente col tuo atan2(accZ, accX)
-    // (se non è questo, cambia in gyrox/gyroz dopo un test)
-    const gyroRate = Number(fullSample.gyroy); // deg/s attesi
+    const raw = tiltDegFromAccelXZ(fullSample);
+    if (raw == null) {
+      updateTibiaAngleUI(side, null);
+    } else {
+      const tibiaDegRaw = wrapDeg180(raw);
 
-    const dt = (tibiaLastTms[side] != null) ? (tMs - tibiaLastTms[side]) / 1000 : null;
-    tibiaLastTms[side] = tMs;
+      if (!isReplayMode && sessionStartTimeMs != null) {
+        const dtFromStart = tMs - sessionStartTimeMs;
 
-    // stima gravità e bias gyro nei primi 5s (stesso concetto della tua calib)
-    if (!isReplayMode && sessionStartTimeMs != null) {
-      const dtFromStart = tMs - sessionStartTimeMs;
+        // Se offset non fissato: raccogli nei primi 5s e usa mediana progressiva
+        if (tibiaOffsetDeg[side] == null) {
+          if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
+            tibiaCalibVals[side].push(tibiaDegRaw);
+          }
 
-      const g = norm3(fullSample.accelx, fullSample.accely, fullSample.accelz);
-      if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
-        if (g != null) tibiaGRefVals[side].push(g);
-        if (Number.isFinite(gyroRate)) tibiaGyroBiasVals[side].push(gyroRate);
+          const med = medianDeg(tibiaCalibVals[side]);
+
+          // Alla fine finestra, fissa offset definitivo se abbastanza campioni
+          if (dtFromStart >= TIBIACALIBMS &&
+              tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
+              med != null) {
+            tibiaOffsetDeg[side] = med;
+          }
+
+          const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
+          updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
+        } else {
+          // Offset già fissato
+          updateTibiaAngleUI(side, wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]));
+        }
+      } else {
+        // Fallback: mostra raw (o raw-offset se già fissato)
+        updateTibiaAngleUI(
+          side,
+          tibiaOffsetDeg[side] != null ? wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]) : tibiaDegRaw
+        );
       }
-      if (dtFromStart >= TIBIACALIBMS) {
-        if (tibiaGRef[side] == null) tibiaGRef[side] = medianDeg(tibiaGRefVals[side]); // “medianDeg” va bene anche per scalari
-        if (tibiaGyroBias[side] === 0 && tibiaGyroBiasVals[side].length) tibiaGyroBias[side] = medianDeg(tibiaGyroBiasVals[side]) ?? 0;
-      }
     }
-
-    // init stima
-    if (tibiaEstDeg[side] == null && accAngle != null) tibiaEstDeg[side] = accAngle;
-
-    // predizione gyro
-    if (tibiaEstDeg[side] != null && Number.isFinite(gyroRate) && Number.isFinite(dt) && dt > 0 && dt < 0.2) {
-      tibiaEstDeg[side] = wrapDeg180(tibiaEstDeg[side] + (gyroRate - (tibiaGyroBias[side] || 0)) * dt);
-    }
-
-    // correction accel con gating su |a|
-    if (tibiaEstDeg[side] != null && accAngle != null) {
-      const g = norm3(fullSample.accelx, fullSample.accely, fullSample.accelz);
-      const gRef = tibiaGRef[side];
-      const gOk = (g != null && gRef != null) ? (g > gRef*0.75 && g < gRef*1.25) : true;
-
-      const alpha = gOk ? 0.98 : 1.0; // se impatto, non fidarti dell’acc
-      tibiaEstDeg[side] = wrapDeg180(alpha * tibiaEstDeg[side] + (1 - alpha) * accAngle);
-    }
-
-    // usa questo come “tibiaDegRaw” per il resto della tua pipeline (offset+UI)
-    const tibiaDegRaw = tibiaEstDeg[side];  // <--- sostituisce quello vecchio
 
 
     if (isLeft) {
