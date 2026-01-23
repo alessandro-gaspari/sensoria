@@ -116,6 +116,16 @@ function tiltDegFromAccelXZ(p) {
   return Math.atan2(az, ax) * 180 / Math.PI;
 }
 
+function tiltDegFromAccelXZSide(p, side) {
+  let ax = Number(p.accelx);
+  let az = Number(p.accelz);
+  if (!Number.isFinite(ax) || !Number.isFinite(az)) return null;
+
+  if (side === "left") { ax = -ax; az = -az; } // flip 180° su piano XZ (specchio)
+
+  return Math.atan2(az, ax) * 180 / Math.PI;
+}
+
 
 // --- KNEE ANGLE (Ginocchio Sup/Inf) ---
 let kneeLast = { sup: null, inf: null }; // { tMs, p }
@@ -1631,7 +1641,7 @@ function enterReplayAtSecond(sec) {
       return;
     }
 
-    const raw = tiltDegFromAccelXZ(sample);
+    const raw = tiltDegFromAccelXZSide(sample, side);
     if (raw == null) {
       updateTibiaAngleUI(side, null);
       return;
@@ -1934,7 +1944,7 @@ function processIncomingData(data) {
 
     // --- TIBIA LIVE ACC-only calib mediana ---
     const side = isLeft ? "left" : "right";
-    const raw = tiltDegFromAccelXZ(fullSample);
+    const raw = tiltDegFromAccelXZSide(fullSample, side);
 
     if (raw == null) {
       updateTibiaAngleUI(side, null);
