@@ -144,6 +144,19 @@ function resetKneeState() {
   updateKneeAngleUI(null);
 }
 
+function fixMag10(v) {
+  v = Number(v);
+  if (!Number.isFinite(v)) return null;
+
+  // se già signed, non toccare
+  if (v < 0 || v > 1023) return v;
+
+  // unsigned 10-bit -> signed
+  v = (v & 1023);
+  return (v >= 512) ? (v - 1024) : v;
+}
+
+
 
 function updateKneeAngleUI(deg) {
   const el = document.getElementById("knee-angle-val");
@@ -1607,9 +1620,9 @@ function enterReplayAtSecond(sec) {
     }
   }
 
-  // --- TIBIA REPLAY (Calzino SX/DX) ---
-  ['left', 'right'].forEach(side => {
-    const sample = (side === 'left')
+  // --- TIBIA REPLAY Calzino SX/DX ---
+  ["left", "right"].forEach(side => {
+    const sample = side === "left"
       ? findSampleAtTime(leftSockSamples, tMs)
       : findSampleAtTime(rightSockSamples, tMs);
 
@@ -1626,26 +1639,38 @@ function enterReplayAtSecond(sec) {
 
     const tibiaDegRaw = wrapDeg180(raw);
 
-    // Auto-zero nei primi 5s di REPLAY: raccogli e fissa offset a fine finestra.
     if (tibiaOffsetDeg[side] == null) {
-      if (clampedSec >= 0 && clampedSec <= (TIBIACALIBMS / 1000)) {
+      if (clampedSec >= 0 && clampedSec < TIBIACALIBMS / 1000) {
         tibiaCalibVals[side].push(tibiaDegRaw);
+        const med = medianDeg(tibiaCalibVals[side]);
+
+        if (clampedSec >= TIBIACALIBMS / 1000 &&
+            tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
+            med != null) {
+          tibiaOffsetDeg[side] = med;
+        }
+
+        const ref = tibiaOffsetDeg[side] != null ? tibiaOffsetDeg[side] : med;
+        updateTibiaAngleUI(
+          side,
+          ref != null ? wrapDeg180(tibiaDegRaw - ref) : null
+        );
+      } else {
+        updateTibiaAngleUI(
+          side,
+          tibiaOffsetDeg[side] != null
+            ? wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side])
+            : tibiaDegRaw
+        );
       }
-
-      const med = medianDeg(tibiaCalibVals[side]);
-
-      if (clampedSec >= (TIBIACALIBMS / 1000) &&
-          tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
-          med != null) {
-        tibiaOffsetDeg[side] = med;
-      }
-
-      const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
-      updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
     } else {
-      updateTibiaAngleUI(side, wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]));
+      updateTibiaAngleUI(
+        side,
+        wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side])
+      );
     }
   });
+
 
 
   // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
@@ -1811,6 +1836,12 @@ function processIncomingData(data) {
 
   // 4. Normalized name (ORA è sicuro)
   const n = normName(sensorName);
+
+  // --- MAG: forza signed 10-bit (evita wrap 1023->0) ---
+  p.magx = fixMag10(p.magx);
+  p.magy = fixMag10(p.magy);
+  p.magz = fixMag10(p.magz);
+
   
   // --- KNEE LIVE ---
   const nameLower = sensorName.toLowerCase();
@@ -1901,10 +1932,10 @@ function processIncomingData(data) {
       ...p
     };
 
-    // --- TIBIA LIVE (ACC-only + calib mediana) ---
-    const side = isLeft ? 'left' : 'right';
-
+    // --- TIBIA LIVE ACC-only calib mediana ---
+    const side = isLeft ? "left" : "right";
     const raw = tiltDegFromAccelXZ(fullSample);
+
     if (raw == null) {
       updateTibiaAngleUI(side, null);
     } else {
@@ -1913,32 +1944,39 @@ function processIncomingData(data) {
       if (!isReplayMode && sessionStartTimeMs != null) {
         const dtFromStart = tMs - sessionStartTimeMs;
 
-        // Se offset non fissato: raccogli nei primi 5s e usa mediana progressiva
         if (tibiaOffsetDeg[side] == null) {
-          if (dtFromStart >= 0 && dtFromStart <= TIBIACALIBMS) {
+          if (dtFromStart >= 0 && dtFromStart < TIBIACALIBMS) {
             tibiaCalibVals[side].push(tibiaDegRaw);
+            const med = medianDeg(tibiaCalibVals[side]);
+
+            if (dtFromStart >= TIBIACALIBMS &&
+                tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
+                med != null) {
+              tibiaOffsetDeg[side] = med;
+            }
+
+            const ref = tibiaOffsetDeg[side] != null ? tibiaOffsetDeg[side] : med;
+            updateTibiaAngleUI(
+              side,
+              ref != null ? wrapDeg180(tibiaDegRaw - ref) : null
+            );
+          } else {
+            updateTibiaAngleUI(
+              side,
+              tibiaOffsetDeg[side] != null
+                ? wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side])
+                : tibiaDegRaw
+            );
           }
-
-          const med = medianDeg(tibiaCalibVals[side]);
-
-          // Alla fine finestra, fissa offset definitivo se abbastanza campioni
-          if (dtFromStart >= TIBIACALIBMS &&
-              tibiaCalibVals[side].length >= TIBIAMINCALIBSAMPLES &&
-              med != null) {
-            tibiaOffsetDeg[side] = med;
-          }
-
-          const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
-          updateTibiaAngleUI(side, ref != null ? wrapDeg180(tibiaDegRaw - ref) : null);
         } else {
-          // Offset già fissato
           updateTibiaAngleUI(side, wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]));
         }
       } else {
-        // Fallback: mostra raw (o raw-offset se già fissato)
         updateTibiaAngleUI(
           side,
-          tibiaOffsetDeg[side] != null ? wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]) : tibiaDegRaw
+          tibiaOffsetDeg[side] != null
+            ? wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side])
+            : tibiaDegRaw
         );
       }
     }
