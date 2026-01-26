@@ -168,6 +168,30 @@ html, body {
   box-shadow: 0 0 0 rgba(var(--pulse-rgb), 0.4);
   animation: pulse-hr 2s infinite;
 }
+/* =========================
+   CARD ANGOLO GINOCCHIO (full-width)
+========================= */
+
+.knee-card {
+    grid-column: 1 / -1; /* Occupa entrambe le colonne */
+    min-height: 110px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center; /* Centra orizzontalmente */
+    justify-content: center; /* Centra verticalmente */
+}
+
+.knee-card .panel-title {
+    text-align: center;
+    margin-bottom: 6px;
+}
+
+.knee-card .panel-value {
+    margin-top: 0; /* Reset margine */
+    text-align: center;
+}
+
 
 @keyframes pulse-hr {
   0%   { box-shadow: 0 0 0 0 rgba(var(--pulse-rgb), 0.7); }

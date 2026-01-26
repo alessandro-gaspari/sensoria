@@ -1,131 +1,117 @@
 <!doctype html>
 <html lang="it">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Sensoria Dashboard</title>
-
-  <link rel="stylesheet" href="/static/dashboard.css" />
-
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- Socket.io -->
-  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-
-  <!-- uPlot -->
-  <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css" />
-  <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <title>Sensoria Dashboard</title>
+    <link rel="stylesheet" href="static/dashboard.css">
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Socket.io -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <!-- uPlot -->
+    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
+    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
 </head>
-
 <body>
-  <header class="dashboard-header" role="banner">
-    <div class="dashboard-title" aria-label="Sensoria">
-      <img src="/static/assets/logo_Clean.png" alt="Sensoria" style="height:34px;width:auto;display:block" />
-
-      <div id="profile-header">
-        <div id="profile-name-header">--</div>
-        <div id="profile-meta-header">Peso -- kg · Età --</div>
-      </div>
-    </div>
-
-    <div class="dashboard-info" role="status" aria-live="polite">
-      <div id="connection-status" aria-label="Stato connessione">
-        <span class="dot"></span>
-        <span>Disconnesso</span>
-      </div>
-
-      <div id="sensor-count" aria-label="Numero sensori">--</div>
-      <!-- Il bottone "Carica attività passata" viene aggiunto dal JS -->
-    </div>
-  </header>
-
-  <main class="dashboard-container" role="main">
-    <section class="top-layout" aria-label="Vista principale">
-      <!-- GPS -->
-      <div id="map" class="gps-panel" aria-label="Mappa GPS"></div>
-
-      <!-- Destra: 2 colonne x 3 card -->
-      <div class="right-panels" aria-label="Pannelli metriche">
-
-        <!-- Colonna sinistra -->
-        <div class="right-col">
-          <div class="panel-card sock-card">
-            <div class="panel-title">Pressioni Calzino sx</div>
-
-            <!-- Grafico uPlot (JS usa questo id) -->
-            <div id="chart-left-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede sinistro"></div>
-
-            <!-- Legenda custom (NON cliccabile) -->
-            <div class="press-legend" aria-label="Legenda pressioni piede sinistro">
-              <span class="press-lbl p0">Lat Est</span>
-              <span class="press-lbl p1">Lat Int</span>
-              <span class="press-lbl p2">Posteriore</span>
+    <header class="dashboard-header" role="banner">
+        <div class="dashboard-title" aria-label="Sensoria">
+            <img src="static/assets/logoClean.png" alt="Sensoria" style="height:34px;width:auto;display:block">
+            <div id="profile-header">
+                <div id="profile-name-header">--</div>
+                <div id="profile-meta-header">Peso -- kg · Età --</div>
             </div>
-          </div>
-
-          <div class="panel-card small-card">
-            <div class="panel-title">Angolo ginocchio</div>
-            <div class="panel-value" id="knee-angle-val" aria-label="Angolo ginocchio">--</div>
-          </div>
-
-
-          <div class="panel-card small-card">
-            <div class="panel-title">Bongiorno index sx</div>
-            <div class="panel-value" id="bi-val-left" aria-label="BI sinistro">--</div>
-          </div>
         </div>
-
-        <!-- Colonna destra -->
-        <div class="right-col">
-          <div class="panel-card sock-card">
-            <div class="panel-title">Pressioni Calzino dx</div>
-
-            <!-- Grafico uPlot (JS usa questo id) -->
-            <div id="chart-right-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede destro"></div>
-
-            <!-- Legenda custom (NON cliccabile) -->
-            <div class="press-legend" aria-label="Legenda pressioni piede destro">
-              <span class="press-lbl p0">Lat Est</span>
-              <span class="press-lbl p1">Lat Int</span>
-              <span class="press-lbl p2">Posteriore</span>
+        <div class="dashboard-info" role="status" aria-live="polite">
+            <div id="connection-status" aria-label="Stato connessione">
+                <span class="dot"></span>
+                <span>Disconnesso</span>
             </div>
-          </div>
-
-          <div class="panel-card small-card">
-            <div class="panel-title">Angolo tibia sx</div>
-            <div class="panel-value" id="tibia-angle-left-val">--</div>
-          </div>
-
-          <div class="panel-card small-card">
-            <div class="panel-title">Angolo tibia dx</div>
-            <div class="panel-value" id="tibia-angle-right-val">--</div>
-          </div>
-
-
-          <div class="panel-card small-card">
-            <div class="panel-title">Bongiorno index dx</div>
-            <div class="panel-value" id="bi-val-right" aria-label="BI destro">--</div>
-          </div>
+            <div id="sensor-count" aria-label="Numero sensori">--</div>
         </div>
+    </header>
 
-      </div>
-    </section>
+    <main class="dashboard-container" role="main">
+        <section class="top-layout" aria-label="Vista principale">
+            <!-- GPS -->
+            <div id="map" class="gps-panel" aria-label="Mappa GPS"></div>
 
-    <!-- DATI RAW -->
-    <section class="raw-section" aria-label="Dati raw sensori">
-      <div class="raw-title">DATI RAW</div>
+            <!-- Destra: 2 colonne x N righe -->
+            <div class="right-panels" aria-label="Pannelli metriche">
+                
+                <!-- Colonna sinistra -->
+                <div class="right-col">
+                    <!-- Pressioni SX -->
+                    <div class="panel-card sock-card">
+                        <div class="panel-title">Pressioni Calzino sx</div>
+                        <div id="chart-left-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede sinistro"></div>
+                        <div class="press-legend" aria-label="Legenda pressioni piede sinistro">
+                            <span class="press-lbl p0">Lat Est</span>
+                            <span class="press-lbl p1">Lat Int</span>
+                            <span class="press-lbl p2">Posteriore</span>
+                        </div>
+                    </div>
 
-      <div id="sensors-grid" aria-label="Griglia sensori"></div>
+                    <!-- Angolo Tibia SX -->
+                    <div class="panel-card small-card">
+                        <div class="panel-title">Angolo tibia sx</div>
+                        <div class="panel-value" id="tibia-angle-left-val">--</div>
+                    </div>
 
-      <div id="empty-state">
-        <h2>Nessun sensore connesso</h2>
-        <p>In attesa dei dati dai dispositivi…</p>
-      </div>
-    </section>
-  </main>
+                    <!-- Bongiorno Index SX -->
+                    <div class="panel-card small-card">
+                        <div class="panel-title">Bongiorno index sx</div>
+                        <div class="panel-value" id="bi-val-left" aria-label="BI sinistro">--</div>
+                    </div>
+                </div>
 
-  <script src="/static/dashboard.js"></script>
+                <!-- Colonna destra -->
+                <div class="right-col">
+                    <!-- Pressioni DX -->
+                    <div class="panel-card sock-card">
+                        <div class="panel-title">Pressioni Calzino dx</div>
+                        <div id="chart-right-p" class="pressure-mini-chart" aria-label="Grafico pressioni piede destro"></div>
+                        <div class="press-legend" aria-label="Legenda pressioni piede destro">
+                            <span class="press-lbl p0">Lat Est</span>
+                            <span class="press-lbl p1">Lat Int</span>
+                            <span class="press-lbl p2">Posteriore</span>
+                        </div>
+                    </div>
+
+                    <!-- Angolo Tibia DX -->
+                    <div class="panel-card small-card">
+                        <div class="panel-title">Angolo tibia dx</div>
+                        <div class="panel-value" id="tibia-angle-right-val">--</div>
+                    </div>
+
+                    <!-- Bongiorno Index DX -->
+                    <div class="panel-card small-card">
+                        <div class="panel-title">Bongiorno index dx</div>
+                        <div class="panel-value" id="bi-val-right" aria-label="BI destro">--</div>
+                    </div>
+                </div>
+
+                <!-- Angolo Ginocchio (full-width sotto le 2 colonne) -->
+                <div class="panel-card knee-card">
+                    <div class="panel-title">Angolo ginocchio</div>
+                    <div class="panel-value" id="knee-angle-val" aria-label="Angolo ginocchio">--</div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- DATI RAW -->
+        <section class="raw-section" aria-label="Dati raw sensori">
+            <div class="raw-title">DATI RAW</div>
+            <div id="sensors-grid" aria-label="Griglia sensori"></div>
+            <div id="empty-state">
+                <h2>Nessun sensore connesso</h2>
+                <p>In attesa dei dati dai dispositivi</p>
+            </div>
+        </section>
+    </main>
+
+    <script src="static/dashboard.js"></script>
 </body>
 </html>
