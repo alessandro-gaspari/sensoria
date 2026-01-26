@@ -128,7 +128,8 @@ function updateTibiaAngleUI(side, deg) {
   const id = side === 'left' ? 'tibia-angle-left-val' : 'tibia-angle-right-val';
   const el = document.getElementById(id);
   if (!el) return;
-  el.textContent = Number.isFinite(deg) ? deg.toFixed(1) : '--';
+  el.textContent = Number.isFinite(deg) ? deg.toFixed(1) + "°" : "--";
+
 }
 
 function tibiaLatDegFromAccelXY(p, side) {
@@ -2172,7 +2173,7 @@ function updateSockNumbers(side, data, bi) {
   // BI
   const biEl = document.getElementById(`bi-val-${side}`);
   if (biEl && bi != null && isFinite(bi)) {
-    biEl.textContent = `BI ${bi.toFixed(1)}%`;
+    biEl.textContent = `${bi.toFixed(1)}%`;
     biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
   }
 

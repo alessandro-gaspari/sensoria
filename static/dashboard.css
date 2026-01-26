@@ -630,7 +630,7 @@ html, body {
   .top-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .gps-panel { min-height: 420px; }
   #map { min-height: 420px; }
-  #sensors-grid { grid-template-columns: 1fr; }
+  #sensors-grid { grid-template-columns: repeat(2, 1fr); }  /* Mantieni 2 colonne */
 }
 
 @media (max-width: 768px) {
