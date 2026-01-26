@@ -601,7 +601,7 @@ function ensureProfileHeaderUI() {
 
   // trova il logo e inserisci subito dopo
   const logo =
-    header.querySelector('img[src*="logoClean"]') ||
+    header.querySelector('img[src*="logo_Clean"]') ||
     header.querySelector("img");
 
   const wrap = document.createElement("div");
