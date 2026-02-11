@@ -79,6 +79,10 @@ var sessionEndTimeMs = null;
 var isReplayMode = false;
 var lastDataTime = Date.now();
 var isStreamActive = false;
+// --- SYNC CALZINI: traccia primo timestamp per sincronia SX/DX ---
+var firstSockTimestamps = { left: null, right: null };
+var socksSynced = false;  // true quando entrambi hanno trasmesso almeno 1 campione
+
 
 var gpsSamples = []; // { t, lat, lng, acc, cumDistM, speedKmh }
 var bpmSamples = []; // { t, bpm }
@@ -689,6 +693,8 @@ function initSocket() {
   socket.on("gpsupdate", (data) => onGpsUpdate(data, { updateUi: true, updateMap: true }));
 
   socket.on("datacleared", () => {
+    firstSockTimestamps = { left: null, right: null };
+    socksSynced = false;
     isReplayMode = false;
     showReplayOverlayIfReady();
     resetKneeState();
@@ -712,8 +718,32 @@ function getNowMs() {
 }
 
 function ensureSessionStart(tMs) {
-  if (sessionStartTimeMs == null) sessionStartTimeMs = tMs;
+  // In REPLAY, usa il comportamento standard (primo timestamp disponibile)
+  if (isReplayMode) {
+    if (sessionStartTimeMs === null) sessionStartTimeMs = tMs;
+    return;
+  }
+  
+  // In LIVE, sessionStartTimeMs viene fissato SOLO dopo aver ricevuto
+  // almeno un campione da ENTRAMBI i calzini (sincronizzazione)
+  // Usiamo il timestamp del sensore più LENTO (più recente) come riferimento zero
+  if (socksSynced && sessionStartTimeMs === null) {
+    const leftT = firstSockTimestamps.left;
+    const rightT = firstSockTimestamps.right;
+    
+    if (leftT !== null && rightT !== null) {
+      // Usa il timestamp PIÙ RECENTE (sensore più lento) come inizio sessione
+      sessionStartTimeMs = Math.max(leftT, rightT);
+      console.log(`⚡ Session start sincronizzato: ${new Date(sessionStartTimeMs).toISOString()}`);
+      console.log(`   Gap SX-DX: ${Math.abs(leftT - rightT)}ms`);
+    } else if (leftT !== null) {
+      sessionStartTimeMs = leftT;
+    } else if (rightT !== null) {
+      sessionStartTimeMs = rightT;
+    }
+  }
 }
+
 
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
@@ -1961,6 +1991,22 @@ function processIncomingData(data) {
   const isRight = nameLower.includes("dx") || nameLower.includes("right");
 
   if (isSock && (isLeft || isRight)) {
+    // === SYNC CALZINI: traccia primo timestamp per ciascun lato ===
+    if (!isReplayMode) {
+      const side = isLeft ? 'left' : 'right';
+      
+      if (firstSockTimestamps[side] === null) {
+        firstSockTimestamps[side] = tMs;
+        console.log(`📍 Primo timestamp ${side.toUpperCase()}: ${new Date(tMs).toISOString()}`);
+      }
+      
+      if (!socksSynced && firstSockTimestamps.left !== null && firstSockTimestamps.right !== null) {
+        socksSynced = true;
+        console.log(`✅ Entrambi i calzini connessi - sincronizzazione attivata`);
+        ensureSessionStart(tMs);
+      }
+    }
+
     const v0 = Number(p.pressure0);
     const v1 = Number(p.pressure1);
     const v2 = Number(p.pressure2);
@@ -2735,6 +2781,8 @@ async function openLogsModal() {
 
 function resetLiveState() {
   // timeline
+  firstSockTimestamps = { left: null, right: null };
+  socksSynced = false;
   sessionStartTimeMs = null;
   sessionEndTimeMs = null;
   isReplayMode = false;
