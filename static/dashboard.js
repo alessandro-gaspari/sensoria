@@ -3109,13 +3109,16 @@ async function loadPastActivity(logName) {
     // ============================================================
     // 5) SENSORI: parsing completo
     // ============================================================
-    setStatus("Parsing sensori...");
-
-    allSensorSamples = {}; 
+    setStatus('Parsing sensori...');
+    allSensorSamples = {};
     leftSockSamples = [];
     rightSockSamples = [];
     sockChartData.left = [[], [], [], []];
     sockChartData.right = [[], [], [], []];
+
+    // === TRACCIA PRIMI TIMESTAMP SX/DX PER SINCRONIZZAZIONE ===
+    let firstLeftSockT = null;
+    let firstRightSockT = null;
 
     for (const sensorItemRaw of data.sensors) {
         const sensorItem = normSensorItem(sensorItemRaw);
@@ -3164,13 +3167,18 @@ async function loadPastActivity(logName) {
         const isRight = nameLower.includes("dx") || nameLower.includes("right") || nameLower.includes("destro");
         const isSock = nameLower.includes("calzino") || nameLower.includes("sock"); 
 
-        if (isSock && isLeft) {
+          if (isSock && isLeft) {
+            // Traccia primo timestamp SX
+            if (firstLeftSockT === null) firstLeftSockT = tMs;
             leftSockSamples.push(sample);
             sockChartData.left[0].push(tRelSec);
             sockChartData.left[1].push(p0);
             sockChartData.left[2].push(p1);
             sockChartData.left[3].push(p2);
-        } else if (isSock && isRight) {
+          } else if (isSock && isRight) {
+            // Traccia primo timestamp DX
+            if (firstRightSockT === null) firstRightSockT = tMs;
+            
             rightSockSamples.push(sample);
             sockChartData.right[0].push(tRelSec);
             sockChartData.right[1].push(p0);
@@ -3183,6 +3191,37 @@ async function loadPastActivity(logName) {
 
     setProgress(72);
     await yieldUI();
+
+      // === RICALCOLA sessionStartTimeMs USANDO SYNC CALZINI ===
+    if (firstLeftSockT !== null && firstRightSockT !== null) {
+      const prevStart = sessionStartTimeMs;
+      sessionStartTimeMs = Math.max(firstLeftSockT, firstRightSockT);
+      const offset = sessionStartTimeMs - prevStart;
+      
+      console.log(`⚡ REPLAY SYNC: Sposto session start da ${new Date(prevStart).toISOString()} a ${new Date(sessionStartTimeMs).toISOString()}`);
+      console.log(`   Gap SX-DX: ${Math.abs(firstLeftSockT - firstRightSockT)}ms, offset: ${offset}ms`);
+      
+      // RICOSTRUISCI sockChartData con tempi relativi corretti
+      sockChartData.left = [[], [], [], []];
+      sockChartData.right = [[], [], [], []];
+      
+      for (const s of leftSockSamples) {
+        const tRelSec = (s.t - sessionStartTimeMs) / 1000;
+        sockChartData.left[0].push(tRelSec);
+        sockChartData.left[1].push(s.p0);
+        sockChartData.left[2].push(s.p1);
+        sockChartData.left[3].push(s.p2);
+      }
+      
+      for (const s of rightSockSamples) {
+        const tRelSec = (s.t - sessionStartTimeMs) / 1000;
+        sockChartData.right[0].push(tRelSec);
+        sockChartData.right[1].push(s.p0);
+        sockChartData.right[2].push(s.p1);
+        sockChartData.right[3].push(s.p2);
+      }
+    }
+
 
     // ============================================================
     // 6) GPS bulk-load
