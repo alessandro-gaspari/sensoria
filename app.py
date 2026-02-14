@@ -407,8 +407,7 @@ def api_logs_load():
                 try:
                     val = int(data["bpm"])
                     if val > 0:
-                        lastbpmdata = val
-                        socketio.emit("bpmupdate", {"bpm": val, "t": tms})
+                        bpm.append({"t": tms, "bpm": val})
                 except:
                     pass
                 continue
@@ -417,8 +416,7 @@ def api_logs_load():
                 try:
                     val = int(data["heart_rate"])
                     if val > 0:
-                        lastbpmdata = val
-                        socketio.emit("bpmupdate", {"bpm": val, "t": tms})
+                        bpm.append({"t": tms, "bpm": val})
                 except:
                     pass
                 continue
@@ -486,6 +484,7 @@ def background_watcher():
 
     current_file_path = None
     last_file_size = 0
+    line_buffer = ""
 
     while True:
         try:
@@ -511,6 +510,7 @@ def background_watcher():
                         pass
 
                 current_file_path = latest_path
+                line_buffer = ""
 
                 # Reset live in-memory
                 sensors_data.clear()
@@ -540,9 +540,22 @@ def background_watcher():
                         last_file_size = stat.st_size
 
                         if isinstance(new_data, bytes):
-                            lines = new_data.decode("utf-8", errors="ignore").split("\n")
+                            chunk_text = new_data.decode("utf-8", errors="ignore")
                         else:
-                            lines = str(new_data).split("\n")
+                            chunk_text = str(new_data)
+
+                        text = line_buffer + chunk_text
+                        if text.endswith("\n") or text.endswith("\r"):
+                            lines = text.splitlines()
+                            line_buffer = ""
+                        else:
+                            parts = text.splitlines()
+                            if parts:
+                                line_buffer = parts.pop()
+                                lines = parts
+                            else:
+                                line_buffer = text
+                                lines = []
 
                         for line in lines:
                             line = line.strip()

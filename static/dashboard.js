@@ -558,6 +558,7 @@ const MAX_SPEED_KMH = 60; // cap (alzabile per pattinaggio veloce)
 document.addEventListener("DOMContentLoaded", function () {
   initSocket();
   ensureMapDomOverlay();
+  createReplayOverlayControls();
   ensureMetricsCardsUI();
   initPastActivityLoader();
 
@@ -1364,6 +1365,9 @@ function createReplayOverlayControls() {
           pointer-events: none;
           box-shadow: 0 4px 10px rgba(0,0,0,0.3);
       `;
+      btnLive.addEventListener("click", () => {
+        if (isReplayMode) goLive();
+      });
       mapDiv.appendChild(btnLive);
   }
 
@@ -1388,7 +1392,16 @@ function showReplayOverlayIfReady() {
   
   if (!overlay || !slider || !btnLive) return;
 
-  const hasSession = (typeof sessionStartTimeMs !== 'undefined' && sessionStartTimeMs != null && gpsSamples.length > 0);
+  const hasSession = (
+    typeof sessionStartTimeMs !== "undefined" &&
+    sessionStartTimeMs != null &&
+    (
+      gpsSamples.length > 0 ||
+      leftSockSamples.length > 0 ||
+      rightSockSamples.length > 0 ||
+      bpmSamples.length > 0
+    )
+  );
   
   if (hasSession) {
     overlay.style.display = "flex";
@@ -1403,8 +1416,12 @@ function showReplayOverlayIfReady() {
       // Overlay prende quasi tutta la larghezza (o adatta i margini come preferisci)
       overlay.style.right = "16px"; 
       
-      // NASCONDI IL TASTO LIVE (richiesta utente)
-      btnLive.style.display = "none";
+      // Mostra bottone per uscire dal replay
+      btnLive.style.display = "flex";
+      btnLive.style.cursor = "pointer";
+      btnLive.style.pointerEvents = "auto";
+      btnLive.style.background = "#97c93e";
+      btnLive.style.color = "#000";
       
     } else {
       // --- LIVE MODE ---
@@ -1419,6 +1436,7 @@ function showReplayOverlayIfReady() {
       // MOSTRA IL TASTO LIVE (solo indicatore)
       btnLive.style.display = "flex";
       btnLive.style.cursor = "default";
+      btnLive.style.pointerEvents = "none";
       btnLive.style.background = "#97c93e";
       btnLive.style.color = "#000";
     }
@@ -1522,18 +1540,12 @@ function getSpeedAtTime(tMs) {
   if (!gpsSamples.length) return 0;
   if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
 
+  // In live la velocità è "sample and hold" (ultimo valore ricevuto),
+  // quindi in replay usiamo lo stesso criterio per coerenza 1:1.
   var idx = upperBoundByTime(gpsSamples, tMs);
   if (idx === 0) return gpsSamples[0].speedKmh || 0;
   if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].speedKmh || 0;
-
-  var a = gpsSamples[idx - 1];
-  var b = gpsSamples[idx];
-  var dt = Math.max(1, b.t - a.t);
-  var alpha = clamp((tMs - a.t) / dt, 0, 1);
-
-  var sa = a.speedKmh || 0;
-  var sb = b.speedKmh != null ? b.speedKmh : sa;
-  return sa + (sb - sa) * alpha;
+  return gpsSamples[idx - 1].speedKmh || 0;
 }
 
 function updateProgressRouteToTime(tMs) {
@@ -2940,6 +2952,55 @@ async function loadPastActivity(logName) {
     return o;
   };
 
+  const ingestParsedObject = (rawObj, target) => {
+    if (!rawObj || typeof rawObj !== "object") return;
+
+    const obj = { ...rawObj };
+    const tMs = parseTimeMs(obj);
+    if (tMs != null) obj.t = tMs;
+
+    // BPM
+    if (obj.bpm != null || obj.heartrate != null || obj.heart_rate != null) {
+      const bpm = Number(obj.bpm ?? obj.heartrate ?? obj.heart_rate);
+      const bt = Number(obj.t);
+      if (Number.isFinite(bpm) && bpm > 0 && Number.isFinite(bt)) {
+        target.bpm.push({ t: bt, bpm });
+      }
+      return;
+    }
+
+    // GPS: normalizza subito (tempo + coordinate) per evitare differenze live/replay.
+    const g = normalizeGpsPoint(obj);
+    if (g) {
+      target.gps.push({
+        t: g.t,
+        latitude: g.lat,
+        longitude: g.lng,
+        accuracy: g.acc
+      });
+      return;
+    }
+
+    // PROFILO
+    const isProfile =
+      obj.sensor_name === "PROFILE_INFO" ||
+      (obj.name != null && (obj.age != null || obj.eta != null || obj.weight != null || obj.weightKg != null || obj.peso != null));
+    if (isProfile) {
+      target.profile.push(obj);
+      return;
+    }
+
+    // SENSORI (imu/pressure)
+    const isSensor =
+      (obj.accelx != null || obj.accel_x != null) ||
+      (obj.gyrox != null || obj.gyro_x != null) ||
+      (obj.magx != null || obj.mag_x != null) ||
+      (obj.pressure0 != null || obj.pressure_0 != null || obj.p0 != null);
+    if (isSensor) {
+      target.sensors.push(normSensorItem(obj));
+    }
+  };
+
   try {
     // mostra barra solo DURANTE load
     if (contEl) contEl.style.display = "block";
@@ -2988,49 +3049,20 @@ async function loadPastActivity(logName) {
 
           for (const line of lines) {
             const obj = extractJsonFromLine(line);
-            if (!obj) continue;
-
-            const tMs = parseTimeMs(obj);
-            if (tMs != null) obj.t = tMs;
-
-            // BPM
-            if (obj.bpm != null || obj.heartrate != null || obj.heart_rate != null) {
-              const v = Number(obj.bpm ?? obj.heartrate ?? obj.heart_rate);
-              if (Number.isFinite(v) && v > 0) data.bpm.push({ t: obj.t, bpm: v });
-              continue;
-            }
-
-            // GPS
-            if (obj.latitude != null && obj.longitude != null) {
-              data.gps.push(obj);
-              continue;
-            }
-
-            // PROFILO
-            const isProfile =
-              obj.sensor_name === "PROFILE_INFO" ||
-              (obj.name != null && (obj.age != null || obj.eta != null || obj.weight != null || obj.weightKg != null || obj.peso != null));
-            if (isProfile) {
-              data.profile.push(obj);
-              continue;
-            }
-
-            // SENSORI (imu/pressure)
-            const isSensor =
-              (obj.accelx != null || obj.accel_x != null) ||
-              (obj.gyrox != null || obj.gyro_x != null) ||
-              (obj.magx != null || obj.mag_x != null) ||
-              (obj.pressure0 != null || obj.pressure_0 != null || obj.p0 != null);
-            if (isSensor) {
-              data.sensors.push(normSensorItem(obj));
-              continue;
-            }
+            ingestParsedObject(obj, data);
           }
 
           await yieldUI();
         }
 
         buf += decoder.decode();
+        if (buf.trim()) {
+          const tailLines = buf.split(/\r?\n/);
+          for (const line of tailLines) {
+            const obj = extractJsonFromLine(line);
+            ingestParsedObject(obj, data);
+          }
+        }
         setProgress(60);
       } else {
         throw new Error("Streaming non disponibile o endpoint non OK");
@@ -3051,6 +3083,33 @@ async function loadPastActivity(logName) {
 
       setProgress(60);
     }
+
+    // Normalizzazione finale consistente per stream e fallback.
+    data.gps = data.gps
+      .map((g) => normalizeGpsPoint(g))
+      .filter(Boolean)
+      .map((g) => ({
+        t: Number(g.t),
+        latitude: Number(g.lat),
+        longitude: Number(g.lng),
+        accuracy: Number(g.acc ?? 999)
+      }))
+      .filter((g) => Number.isFinite(g.t) && Number.isFinite(g.latitude) && Number.isFinite(g.longitude))
+      .sort((a, b) => a.t - b.t);
+
+    data.bpm = data.bpm
+      .map((b) => {
+        const t = Number(b && b.t);
+        const bpm = Number(b && (b.bpm ?? b.value ?? b.heartrate ?? b.heart_rate));
+        return { t, bpm };
+      })
+      .filter((b) => Number.isFinite(b.t) && Number.isFinite(b.bpm) && b.bpm > 0)
+      .sort((a, b) => a.t - b.t);
+
+    data.sensors = data.sensors
+      .map(normSensorItem)
+      .filter((s) => s && Number.isFinite(Number(s.t)))
+      .sort((a, b) => Number(a.t) - Number(b.t));
 
     // ============================================================
     // 2) RESET stato replay
@@ -3096,13 +3155,21 @@ async function loadPastActivity(logName) {
     // ============================================================
     // 4) Calcola sessionStartTimeMs
     // ============================================================
-    const times = [];
-    if (data.gps.length) times.push(Number(data.gps[0].t));
-    if (data.bpm.length) times.push(Number(data.bpm[0].t));
-    if (data.sensors.length) times.push(Number(data.sensors[0].t));
-    if (data.profile.length) times.push(Number(data.profile[0].t));
+    const earliestTime = (arr) => {
+      if (!arr || !arr.length) return Infinity;
+      return arr.reduce((best, item) => {
+        const t = Number(item && item.t);
+        return Number.isFinite(t) ? Math.min(best, t) : best;
+      }, Infinity);
+    };
 
-    const finiteTimes = times.filter((t) => Number.isFinite(t));
+    const finiteTimes = [
+      earliestTime(data.gps),
+      earliestTime(data.bpm),
+      earliestTime(data.sensors),
+      earliestTime(data.profile),
+    ].filter((t) => Number.isFinite(t));
+
     if (finiteTimes.length) sessionStartTimeMs = Math.min(...finiteTimes);
     if (sessionStartTimeMs == null) sessionStartTimeMs = Date.now();
 
@@ -3227,26 +3294,24 @@ async function loadPastActivity(logName) {
     // 6) GPS bulk-load
     // ============================================================
     setStatus("Parsing GPS...");
-    if (!data.gps.length) {
-      setStatus("Nessun GPS nel log.");
-      setProgress(100);
-      if (contEl) contEl.style.display = "none";
-      return;
-    }
+    if (data.gps.length) {
+      isBulkLoading = true;
+      const CHUNK = 1200;
 
-    isBulkLoading = true;
-    const CHUNK = 1200;
+      for (let i = 0; i < data.gps.length; i += CHUNK) {
+        const end = Math.min(i + CHUNK, data.gps.length);
+        const frac = data.gps.length ? (end / data.gps.length) : 1;
+        setProgress(72 + frac * 20);
+        setStatus(`Parsing GPS... ${end}/${data.gps.length}`);
 
-    for (let i = 0; i < data.gps.length; i += CHUNK) {
-      const end = Math.min(i + CHUNK, data.gps.length);
-      const frac = data.gps.length ? (end / data.gps.length) : 1;
-      setProgress(72 + frac * 20);
-      setStatus(`Parsing GPS... ${end}/${data.gps.length}`);
-
-      for (let j = i; j < end; j++) {
-        onGpsUpdate(data.gps[j], { updateUi: false, updateMap: false });
+        for (let j = i; j < end; j++) {
+          onGpsUpdate(data.gps[j], { updateUi: false, updateMap: false });
+        }
+        await yieldUI();
       }
-      await yieldUI();
+    } else {
+      setStatus("Log senza GPS: replay basato su sensori/BPM.");
+      setProgress(92);
     }
 
     // ==================================================================================
@@ -3331,15 +3396,23 @@ async function loadPastActivity(logName) {
     // ============================================================
     setStatus("Finalizzazione replay...");
         
-    const maxTime = (arr) =>
-      (arr && arr.length)
-        ? arr.reduce((m, s) => Math.max(m, Number(s.t) || -Infinity), -Infinity)
-        : -Infinity;
+    const maxTime = (arr) => {
+      if (!arr || !arr.length) return -Infinity;
+      return arr.reduce((m, s) => {
+        const t = Number(s && s.t);
+        return Number.isFinite(t) ? Math.max(m, t) : m;
+      }, -Infinity);
+    };
 
     let maxT = sessionStartTimeMs;
     maxT = Math.max(maxT, maxTime(gpsSamples));
     maxT = Math.max(maxT, maxTime(leftSockSamples));
     maxT = Math.max(maxT, maxTime(rightSockSamples));
+    maxT = Math.max(maxT, maxTime(bpmSamples));
+    for (const arr of Object.values(allSensorSamples || {})) {
+      maxT = Math.max(maxT, maxTime(arr));
+    }
+    if (!Number.isFinite(maxT)) maxT = sessionStartTimeMs || Date.now();
 
     sessionEndTimeMs = maxT;
 
