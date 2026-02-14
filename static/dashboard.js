@@ -1342,36 +1342,6 @@ function createReplayOverlayControls() {
     slider.addEventListener("touchend", () => lockMap(false));
   }
 
-  // 2. BOTTONE LIVE (Destra)
-  if (!document.getElementById('btn-live')) {
-      var btnLive = document.createElement('div');
-      btnLive.id = 'btn-live';
-      btnLive.innerHTML = `
-          <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ff0000; margin-right:6px;"></span>
-          <span style="color:#000000; font-weight:900; font-size:13px; letter-spacing:0.8px;">LIVE</span>
-      `;
-      btnLive.style.cssText = `
-          position: absolute;
-          right: 16px;
-          bottom: 28px;
-          z-index: 30001;
-          display: none;
-          align-items: center;
-          padding: 6px 12px;
-          background: #97c93e;
-          border: 1px solid rgba(0,0,0,0.2);
-          border-radius: 20px;
-          cursor: default;
-          pointer-events: none;
-          box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-      `;
-      btnLive.addEventListener("click", () => {
-        if (isReplayMode) goLive();
-      });
-      mapDiv.appendChild(btnLive);
-  }
-
-
 }
 
 
@@ -1387,10 +1357,9 @@ function updateReplayTimeLabel(sec) {
 function showReplayOverlayIfReady() {
   const overlay = document.getElementById("replay-overlay");
   const slider = document.getElementById("replay-slider");
-  const btnLive = document.getElementById("btn-live");
   const liveInd = document.getElementById('live-indicator');
   
-  if (!overlay || !slider || !btnLive) return;
+  if (!overlay || !slider) return;
 
   const hasSession = (
     typeof sessionStartTimeMs !== "undefined" &&
@@ -1403,47 +1372,17 @@ function showReplayOverlayIfReady() {
     )
   );
   
-  if (hasSession) {
+  if (hasSession && isReplayMode) {
+    if (liveInd) liveInd.style.display = 'none';
     overlay.style.display = "flex";
-
-    if (isReplayMode) {
-      // --- REPLAY MODE ---
-      // Slider visibile e attivo
-      if (liveInd) liveInd.style.display = 'none';
-      slider.style.display = "block";
-      slider.disabled = false;
-      
-      // Overlay prende quasi tutta la larghezza (o adatta i margini come preferisci)
-      overlay.style.right = "16px"; 
-      
-      // Mostra bottone per uscire dal replay
-      btnLive.style.display = "flex";
-      btnLive.style.cursor = "pointer";
-      btnLive.style.pointerEvents = "auto";
-      btnLive.style.background = "#97c93e";
-      btnLive.style.color = "#000";
-      
-    } else {
-      // --- LIVE MODE ---
-      // Slider nascosto
-      if (liveInd) liveInd.style.display = 'flex';
-      slider.style.display = "none";
-      slider.disabled = true;
-      
-      // Overlay ridotto al solo tempo
-      overlay.style.right = "auto"; 
-      
-      // MOSTRA IL TASTO LIVE (solo indicatore)
-      btnLive.style.display = "flex";
-      btnLive.style.cursor = "default";
-      btnLive.style.pointerEvents = "none";
-      btnLive.style.background = "#97c93e";
-      btnLive.style.color = "#000";
-    }
+    slider.style.display = "block";
+    slider.disabled = false;
+    overlay.style.right = "16px";
   } else {
-    if(liveInd) liveInd.style.display = 'none';
+    if (liveInd) liveInd.style.display = 'none';
     overlay.style.display = "none";
-    btnLive.style.display = "none";
+    slider.style.display = "none";
+    slider.disabled = true;
   }
 }
 
