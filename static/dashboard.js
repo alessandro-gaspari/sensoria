@@ -705,6 +705,8 @@ function initSocket() {
     sockChartData.left  = [[], [], [], []];
     sockChartData.right = [[], [], [], []];
     sockLastX = { left: 0, right: 0 };
+    biUiLastUpdateMs.left = 0;
+    biUiLastUpdateMs.right = 0;
 
     if (sockCharts.left)  sockCharts.left.setData(sockChartData.left);
     if (sockCharts.right) sockCharts.right.setData(sockChartData.right);
@@ -2062,13 +2064,17 @@ function processIncomingData(data) {
 
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
 const BILATERAL_AXIS = 'z';
-const BI_AVG_WINDOW_MS = 1500;
-const BI_USE_MOVING_AVG = false;
+const BI_AVG_WINDOW_MS = 100;
+const BI_USE_MOVING_AVG = true;
+const BI_UI_HZ = 10;
+const BI_UI_MIN_UPDATE_MS = 1000 / BI_UI_HZ;
 
 const biAgg = {
   left: { sum: 0, n: 0, last: null },
   right:{ sum: 0, n: 0, last: null }
 };
+
+const biUiLastUpdateMs = { left: 0, right: 0 };
 
 let biAvgTimer = null;
 
@@ -2182,12 +2188,20 @@ function updateSockNumbers(side, data, bi) {
 
   // BI
   const biEl = document.getElementById(`bi-val-${side}`);
-  if (biEl && bi != null && isFinite(bi)) {
-    biEl.textContent = `${bi.toFixed(1)}%`;
-    biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
-  } else if (biEl) {
-    biEl.textContent = "--";
-    biEl.style.color = SENSORIA_GREEN;
+  if (biEl) {
+    const nowMs = Date.now();
+    const canRefresh = isReplayMode || (nowMs - (biUiLastUpdateMs[side] || 0) >= BI_UI_MIN_UPDATE_MS);
+
+    if (canRefresh) {
+      if (bi != null && isFinite(bi)) {
+        biEl.textContent = `${bi.toFixed(1)}%`;
+        biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
+      } else {
+        biEl.textContent = "--";
+        biEl.style.color = SENSORIA_GREEN;
+      }
+      biUiLastUpdateMs[side] = nowMs;
+    }
   }
 
   // Valori pressioni nelle label grandi
@@ -2770,6 +2784,8 @@ function resetLiveState() {
 
   sockLastX = { left: 0, right: 0 };
   sockRenderScheduled = { left: false, right: false };
+  biUiLastUpdateMs.left = 0;
+  biUiLastUpdateMs.right = 0;
 
   // mappa
   clearFullRouteSegments();
@@ -2812,6 +2828,8 @@ function resetReplayState() {
   lastSpeedSec = null;
   lastSecFix = null;
   lastLiveBpm = "--";
+  biUiLastUpdateMs.left = 0;
+  biUiLastUpdateMs.right = 0;
 
   sessionStartTimeMs = null;
   sessionEndTimeMs = null;
