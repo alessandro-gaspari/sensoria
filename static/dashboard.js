@@ -182,8 +182,8 @@ let kneeLast = { sup: null, inf: null }; // { tMs, p }
 let kneeOffsetDeg = null;                // offset in piedi (zero)
 let lastKneeDeg = null;
 // --- KNEE CALIB (median) ---
-const KNEE_CALIB_MS = 2500;
-const KNEE_SYNC_MAX_DT_MS = 200;   // già usato come criterio live
+const KNEE_CALIB_MS = 5000;
+const KNEE_SYNC_MAX_DT_MS = 80;
 const KNEE_MIN_CALIB_SAMPLES = 5;
 
 let kneeCalibVals = []; // valori kneeDeg grezzi (supTilt - infTilt) durante calib
@@ -239,6 +239,56 @@ function wrapDeg180(a) {
   while (x > 180) x -= 360;
   while (x < -180) x += 360;
   return x;
+}
+
+function normalizeKneeDeg(rawDeg, offsetDeg) {
+  if (!Number.isFinite(rawDeg)) return null;
+  const off = Number.isFinite(offsetDeg) ? offsetDeg : 0;
+  return Math.abs(wrapDeg180(rawDeg - off));
+}
+
+function computeKneeReplayOffsetFromArrays(supArr, infArr) {
+  if (!Array.isArray(supArr) || !Array.isArray(infArr)) return null;
+  if (!Number.isFinite(sessionStartTimeMs)) return null;
+
+  const calibEndT = sessionStartTimeMs + KNEE_CALIB_MS;
+  const vals = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < supArr.length && j < infArr.length) {
+    const sup = supArr[i];
+    const inf = infArr[j];
+    const tSup = Number(sup && sup.t);
+    const tInf = Number(inf && inf.t);
+
+    if (!Number.isFinite(tSup)) { i++; continue; }
+    if (!Number.isFinite(tInf)) { j++; continue; }
+
+    const dt = tSup - tInf;
+
+    if (Math.abs(dt) <= KNEE_SYNC_MAX_DT_MS) {
+      const tPair = Math.max(tSup, tInf);
+      if (tPair > calibEndT) break;
+
+      const supTilt = tiltDegFromAccel_YZ(sup);
+      const infTilt = tiltDegFromAccel_YZ(inf);
+      if (supTilt != null && infTilt != null) {
+        vals.push(wrapDeg180(supTilt - infTilt));
+      }
+
+      i++;
+      j++;
+      continue;
+    }
+
+    if (dt < 0) i++;
+    else j++;
+  }
+
+  const med = medianDeg(vals);
+  if (vals.length >= KNEE_MIN_CALIB_SAMPLES && med != null) return med;
+  return med;
 }
 
 
@@ -1637,21 +1687,29 @@ function enterReplayAtSecond(sec) {
     const infArr = allSensorSamples["Ginocchio Inf"];
 
     if (supArr && infArr) {
+      if (kneeOffsetDeg == null) {
+        kneeOffsetDeg = computeKneeReplayOffsetFromArrays(supArr, infArr);
+      }
+
       const supS = findSampleAtTime(supArr, tMs);
       const infS = findSampleAtTime(infArr, tMs);
 
       if (supS && infS) {
-        const supTilt = tiltDegFromAccel_YZ(supS);
-        const infTilt = tiltDegFromAccel_YZ(infS);
+        const dt = Math.abs(Number(supS.t) - Number(infS.t));
+        if (!Number.isFinite(dt) || dt > KNEE_SYNC_MAX_DT_MS) {
+          updateKneeAngleUI(null);
+        } else {
+          const supTilt = tiltDegFromAccel_YZ(supS);
+          const infTilt = tiltDegFromAccel_YZ(infS);
 
-        if (supTilt != null && infTilt != null) {
-          let kneeDeg = wrapDeg180(supTilt - infTilt);
+          if (supTilt != null && infTilt != null) {
+            const kneeDegRaw = wrapDeg180(supTilt - infTilt);
+            const kneeDeg = (kneeOffsetDeg != null)
+              ? normalizeKneeDeg(kneeDegRaw, kneeOffsetDeg)
+              : Math.abs(kneeDegRaw);
 
-          // auto-zero anche in replay all’inizio
-          if (kneeOffsetDeg == null && clampedSec < 2.5) kneeOffsetDeg = kneeDeg;
-          if (kneeOffsetDeg != null) kneeDeg = kneeDeg - kneeOffsetDeg;
-
-          updateKneeAngleUI(kneeDeg);
+            updateKneeAngleUI(kneeDeg);
+          }
         }
       }
     }
@@ -1887,7 +1945,7 @@ function processIncomingData(data) {
 
     // serve avere entrambi e quasi sincroni
     if (kneeLast.sup && kneeLast.inf) {
-      if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) < 200) {
+      if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) <= KNEE_SYNC_MAX_DT_MS) {
         const supTilt = tiltDegFromAccel_YZ(kneeLast.sup.p);
         const infTilt = tiltDegFromAccel_YZ(kneeLast.inf.p);
 
@@ -1896,7 +1954,7 @@ function processIncomingData(data) {
 
           // Applica solo in LIVE (in replay lo fai in enterReplayAtSecond)
           if (!isReplayMode) {
-            // calibrazione offset = mediana dei primi 2.5s
+            // calibrazione offset = mediana dei primi 5s
             if (sessionStartTimeMs != null && kneeOffsetDeg == null) {
               const dtFromStart = tMs - sessionStartTimeMs;
 
@@ -1918,7 +1976,7 @@ function processIncomingData(data) {
               const ref = (kneeOffsetDeg != null) ? kneeOffsetDeg : med;
 
               if (ref != null) {
-                const kneeDeg = kneeDegRaw - ref;
+                const kneeDeg = normalizeKneeDeg(kneeDegRaw, ref);
                 lastKneeDeg = kneeDeg;
                 updateKneeAngleUI(kneeDeg);
               } else {
@@ -1926,7 +1984,9 @@ function processIncomingData(data) {
               }
             } else {
               // offset già fissato (o non abbiamo sessionStartTimeMs): applicalo se esiste
-              const kneeDeg = (kneeOffsetDeg != null) ? (kneeDegRaw - kneeOffsetDeg) : kneeDegRaw;
+              const kneeDeg = (kneeOffsetDeg != null)
+                ? normalizeKneeDeg(kneeDegRaw, kneeOffsetDeg)
+                : Math.abs(kneeDegRaw);
               lastKneeDeg = kneeDeg;
               updateKneeAngleUI(kneeDeg);
             }
