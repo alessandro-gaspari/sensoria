@@ -1583,13 +1583,12 @@ function enterReplayAtSecond(sec) {
   // --- 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay) ---
   const sampleL = findSampleAtTime(leftSockSamples, tMs);
   if (sampleL) {
-    // Calcola BI medio su finestra 1500ms
-    const biLavg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
+    const biL = biForDisplay(leftSockSamples, sampleL, tMs);
     
     // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("left", 
       { p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2 }, 
-      biLavg
+      biL
     );
     
     // Aggiorna grafico calzino SX (finestra scorrevole replay)
@@ -1601,13 +1600,12 @@ function enterReplayAtSecond(sec) {
 
   const sampleR = findSampleAtTime(rightSockSamples, tMs);
   if (sampleR) {
-    // Calcola BI medio su finestra 1500ms
-    const biRavg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
+    const biR = biForDisplay(rightSockSamples, sampleR, tMs);
     
     // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("right", 
       { p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2 }, 
-      biRavg
+      biR
     );
     
     // Aggiorna grafico calzino DX (finestra scorrevole replay)
@@ -2040,16 +2038,14 @@ function processIncomingData(data) {
     if (isLeft) {
       leftSockSamples.push(fullSample);
       if (!isReplayMode) {
-        // LIVE UI: calcola BI medio su finestra 1500ms
-        const biAvg = avgBiInWindow(leftSockSamples, tMs, BI_AVG_WINDOW_MS);
-        updateSocksUI('left', { p0, p1, p2 }, biAvg);
+        const biShown = biForDisplay(leftSockSamples, fullSample, tMs);
+        updateSocksUI('left', { p0, p1, p2 }, biShown);
       }
     } else if (isRight) {
       rightSockSamples.push(fullSample);
       if (!isReplayMode) {
-        // LIVE UI: calcola BI medio su finestra 1500ms
-        const biAvg = avgBiInWindow(rightSockSamples, tMs, BI_AVG_WINDOW_MS);
-        updateSocksUI('right', { p0, p1, p2 }, biAvg);
+        const biShown = biForDisplay(rightSockSamples, fullSample, tMs);
+        updateSocksUI('right', { p0, p1, p2 }, biShown);
       }
     }
 
@@ -2067,6 +2063,7 @@ function processIncomingData(data) {
 // Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
 const BILATERAL_AXIS = 'z';
 const BI_AVG_WINDOW_MS = 1500;
+const BI_USE_MOVING_AVG = false;
 
 const biAgg = {
   left: { sum: 0, n: 0, last: null },
@@ -2087,7 +2084,23 @@ function calculateBI(payload) {
   if (!Number.isFinite(norm) || norm < 1e-6) return 0;
 
   const aLat = (BILATERAL_AXIS === "z") ? az : (BILATERAL_AXIS === "y") ? ay : ax;
-  return Math.abs(aLat / norm) * 100;
+  const bi = Math.abs(aLat) / norm * 100;
+  return clamp(bi, 0, 100);
+}
+
+function biForDisplay(samples, sample, tMs) {
+  if (BI_USE_MOVING_AVG && Number.isFinite(BI_AVG_WINDOW_MS) && BI_AVG_WINDOW_MS > 0) {
+    const v = avgBiInWindow(samples, tMs, BI_AVG_WINDOW_MS);
+    if (Number.isFinite(v)) return v;
+  }
+
+  if (sample) {
+    const biSample = Number(sample.bi);
+    if (Number.isFinite(biSample)) return clamp(biSample, 0, 100);
+    return calculateBI(sample);
+  }
+
+  return null;
 }
 
 function ensureSockChartSize(side) {
@@ -2172,6 +2185,9 @@ function updateSockNumbers(side, data, bi) {
   if (biEl && bi != null && isFinite(bi)) {
     biEl.textContent = `${bi.toFixed(1)}%`;
     biEl.style.color = (bi < 40) ? "#ff4444" : SENSORIA_GREEN;
+  } else if (biEl) {
+    biEl.textContent = "--";
+    biEl.style.color = SENSORIA_GREEN;
   }
 
   // Valori pressioni nelle label grandi
