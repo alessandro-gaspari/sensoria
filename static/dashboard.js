@@ -99,25 +99,20 @@ const TIBIAMINCALIBSAMPLES = 8;
 let tibiaOffsetDeg = { left: null, right: null };
 let tibiaCalibVals = { left: [], right: [] };
 
-function tibiaZOnlyRawDeg(p, gCounts = 31.3) {
+// Angolo tibia per piegamento laterale:
+// con assi sensore: Y lungo tibia, Z perpendicolare/laterale.
+// Quindi il piegamento laterale è nel piano Y-Z.
+function tibiaLateralRawDeg(p) {
+  const ay = Number(p.accely);
   const az = Number(p.accelz);
-  if (!Number.isFinite(az)) return null;
-  const x = Math.max(-1, Math.min(1, az / gCounts));
-  return Math.asin(x) * 180 / Math.PI;   // [-90..90]
+  if (!Number.isFinite(ay) || !Number.isFinite(az)) return null;
+  return Math.atan2(az, ay) * 180 / Math.PI;
 }
 
-// Numeri presi dal TUO log (file:383)
-const TIBIA_MAP = {
-  left:  { sign: +1, scalePos: 1.504, scaleNeg: 1.122 }, // Calzino SX
-  right: { sign: -1, scalePos: 1.115, scaleNeg: 1.380 }, // Calzino DX
-};
-
-function mapTibiaDeg(degZeroed, side) {
-  const cfg = TIBIA_MAP[side];
-  if (!cfg || !Number.isFinite(degZeroed)) return null;
-  const v = cfg.sign * degZeroed;               // rende “piega a destra” positiva
-  const k = (v >= 0) ? cfg.scalePos : cfg.scaleNeg;
-  return v * k;
+// Per l'uso attuale mostriamo "angolo di piegamento" (modulo, sempre >= 0).
+function mapTibiaDeg(degZeroed, _side) {
+  if (!Number.isFinite(degZeroed)) return null;
+  return Math.abs(degZeroed);
 }
 
 
@@ -1726,7 +1721,7 @@ function enterReplayAtSecond(sec) {
       return;
     }
 
-    const raw = tibiaZOnlyRawDeg(sample);
+    const raw = tibiaLateralRawDeg(sample);
     if (raw == null) {
       updateTibiaAngleUI(side, null);
       return;
@@ -2044,7 +2039,7 @@ function processIncomingData(data) {
 
     // --- TIBIA LIVE ACC-only calib mediana ---
     const side = isLeft ? "left" : "right";
-    const raw = tibiaZOnlyRawDeg(fullSample);
+    const raw = tibiaLateralRawDeg(fullSample);
 
     if (raw == null) {
       updateTibiaAngleUI(side, null);
