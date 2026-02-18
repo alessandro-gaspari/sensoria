@@ -95,9 +95,14 @@ var lastValidIMU = {};
 // --- TIBIA ANGLE (per calzino SX/DX) ---
 const TIBIACALIBMS = 5000;
 const TIBIAMINCALIBSAMPLES = 8;
+const TIBIA_AVG_WINDOW_MS = 10;
+const TIBIA_USE_MOVING_AVG = true;
+const TIBIA_UI_HZ = 100;
+const TIBIA_UI_MIN_UPDATE_MS = 1000 / TIBIA_UI_HZ;
 
 let tibiaOffsetDeg = { left: null, right: null };
 let tibiaCalibVals = { left: [], right: [] };
+const tibiaUiLastUpdateMs = { left: 0, right: 0 };
 
 // Angolo tibia per piegamento laterale:
 // con assi sensore: Y lungo tibia, Z perpendicolare/laterale.
@@ -120,10 +125,54 @@ function mapTibiaDeg(degZeroed, side) {
   return side === "right" ? -degZeroed : degZeroed;
 }
 
+function tibiaDegFromSample(sample, side, refDeg) {
+  if (!sample || !Number.isFinite(refDeg)) return null;
+  const raw = tibiaLateralRawDeg(sample);
+  if (!Number.isFinite(raw)) return null;
+  const degZeroed = wrapDeg180(raw - refDeg);
+  return mapTibiaDeg(degZeroed, side);
+}
+
+function avgTibiaInWindow(samples, tMs, windowMs, side, refDeg) {
+  if (!samples || !samples.length || !Number.isFinite(refDeg)) return null;
+  const tMin = tMs - windowMs;
+
+  let idxEnd = upperBoundByTime(samples, tMs);
+  let idxStart = upperBoundByTime(samples, tMin);
+
+  idxStart = Math.max(0, Math.min(idxStart, samples.length));
+  idxEnd = Math.max(0, Math.min(idxEnd, samples.length));
+
+  if (idxEnd <= idxStart) {
+    const s = samples[Math.max(0, idxEnd - 1)];
+    return tibiaDegFromSample(s, side, refDeg);
+  }
+
+  let sum = 0;
+  let n = 0;
+  for (let i = idxStart; i < idxEnd; i++) {
+    const v = tibiaDegFromSample(samples[i], side, refDeg);
+    if (Number.isFinite(v)) { sum += v; n++; }
+  }
+  if (!n) return null;
+  return sum / n;
+}
+
+function tibiaForDisplay(samples, sample, tMs, side, refDeg) {
+  if (TIBIA_USE_MOVING_AVG && Number.isFinite(TIBIA_AVG_WINDOW_MS) && TIBIA_AVG_WINDOW_MS > 0) {
+    const v = avgTibiaInWindow(samples, tMs, TIBIA_AVG_WINDOW_MS, side, refDeg);
+    if (Number.isFinite(v)) return v;
+  }
+
+  return tibiaDegFromSample(sample, side, refDeg);
+}
+
 
 function resetTibiaState() {
   tibiaOffsetDeg.left = null; tibiaOffsetDeg.right = null;
   tibiaCalibVals.left = []; tibiaCalibVals.right = [];
+  tibiaUiLastUpdateMs.left = 0;
+  tibiaUiLastUpdateMs.right = 0;
   updateTibiaAngleUI('left', null);
   updateTibiaAngleUI('right', null);
 }
@@ -132,8 +181,12 @@ function updateTibiaAngleUI(side, deg) {
   const id = side === 'left' ? 'tibia-angle-left-val' : 'tibia-angle-right-val';
   const el = document.getElementById(id);
   if (!el) return;
-  el.textContent = Number.isFinite(deg) ? deg.toFixed(1) + "°" : "--";
+  const nowMs = Date.now();
+  const canRefresh = isReplayMode || (nowMs - (tibiaUiLastUpdateMs[side] || 0) >= TIBIA_UI_MIN_UPDATE_MS);
+  if (!canRefresh) return;
 
+  el.textContent = Number.isFinite(deg) ? deg.toFixed(1) + "°" : "--";
+  tibiaUiLastUpdateMs[side] = nowMs;
 }
 
 function tibiaLatDegFromAccelXY(p, side) {
@@ -185,8 +238,14 @@ let lastKneeDeg = null;
 const KNEE_CALIB_MS = 5000;
 const KNEE_SYNC_MAX_DT_MS = 80;
 const KNEE_MIN_CALIB_SAMPLES = 5;
+const KNEE_AVG_WINDOW_MS = 10;
+const KNEE_USE_MOVING_AVG = true;
+const KNEE_UI_HZ = 100;
+const KNEE_UI_MIN_UPDATE_MS = 1000 / KNEE_UI_HZ;
 
 let kneeCalibVals = []; // valori kneeDeg grezzi (supTilt - infTilt) durante calib
+let kneeUiLastUpdateMs = 0;
+let kneeDisplaySamples = []; // { t, v }
 
 function medianDeg(vals) {
   const a = (vals || []).filter(Number.isFinite).slice().sort((x, y) => x - y);
@@ -201,6 +260,8 @@ function resetKneeState() {
   kneeOffsetDeg = null;
   kneeCalibVals = [];
   lastKneeDeg = null;
+  kneeUiLastUpdateMs = 0;
+  kneeDisplaySamples = [];
   updateKneeAngleUI(null);
 }
 
@@ -221,8 +282,44 @@ function fixMag10(v) {
 function updateKneeAngleUI(deg) {
   const el = document.getElementById("knee-angle-val");
   if (!el) return;
-  if (!Number.isFinite(deg)) { el.textContent = "--"; return; }
+  const nowMs = Date.now();
+  const canRefresh = isReplayMode || (nowMs - kneeUiLastUpdateMs >= KNEE_UI_MIN_UPDATE_MS);
+  if (!canRefresh) return;
+
+  if (!Number.isFinite(deg)) {
+    el.textContent = "--";
+    kneeUiLastUpdateMs = nowMs;
+    return;
+  }
   el.textContent = deg.toFixed(1) + "°";
+  kneeUiLastUpdateMs = nowMs;
+}
+
+function kneeForDisplay(tMs, kneeDeg) {
+  if (!Number.isFinite(kneeDeg)) return null;
+  if (!KNEE_USE_MOVING_AVG || !Number.isFinite(KNEE_AVG_WINDOW_MS) || KNEE_AVG_WINDOW_MS <= 0) {
+    return kneeDeg;
+  }
+  if (!Number.isFinite(tMs)) return kneeDeg;
+
+  if (kneeDisplaySamples.length && tMs < kneeDisplaySamples[kneeDisplaySamples.length - 1].t) {
+    kneeDisplaySamples = [];
+  }
+
+  kneeDisplaySamples.push({ t: tMs, v: kneeDeg });
+
+  const tMin = tMs - KNEE_AVG_WINDOW_MS;
+  while (kneeDisplaySamples.length && kneeDisplaySamples[0].t < tMin) {
+    kneeDisplaySamples.shift();
+  }
+
+  let sum = 0;
+  let n = 0;
+  for (const s of kneeDisplaySamples) {
+    if (Number.isFinite(s.v)) { sum += s.v; n++; }
+  }
+
+  return n ? (sum / n) : kneeDeg;
 }
 
 
@@ -1707,8 +1804,11 @@ function enterReplayAtSecond(sec) {
             const kneeDeg = (kneeOffsetDeg != null)
               ? normalizeKneeDeg(kneeDegRaw, kneeOffsetDeg)
               : Math.abs(kneeDegRaw);
+            const tPairMs = Number.isFinite(Number(supS.t)) && Number.isFinite(Number(infS.t))
+              ? Math.max(Number(supS.t), Number(infS.t))
+              : tMs;
 
-            updateKneeAngleUI(kneeDeg);
+            updateKneeAngleUI(kneeForDisplay(tPairMs, kneeDeg));
           }
         }
       }
@@ -1717,9 +1817,8 @@ function enterReplayAtSecond(sec) {
 
   // --- TIBIA REPLAY Calzino SXDX ---
   ["left", "right"].forEach((side) => {
-    const sample = (side === "left")
-      ? findSampleAtTime(leftSockSamples, tMs)
-      : findSampleAtTime(rightSockSamples, tMs);
+    const samples = (side === "left") ? leftSockSamples : rightSockSamples;
+    const sample = findSampleAtTime(samples, tMs);
 
     if (!sample) {
       updateTibiaAngleUI(side, null);
@@ -1753,14 +1852,14 @@ function enterReplayAtSecond(sec) {
       const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
 
       if (ref != null) {
-        const degZeroed = wrapDeg180(tibiaDegRaw - ref);
-        updateTibiaAngleUI(side, mapTibiaDeg(degZeroed, side));
+        const tibiaDeg = tibiaForDisplay(samples, sample, tMs, side, ref);
+        updateTibiaAngleUI(side, tibiaDeg);
       } else {
         updateTibiaAngleUI(side, null);
       }
     } else {
-      const degZeroed = wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]);
-      updateTibiaAngleUI(side, mapTibiaDeg(degZeroed, side));
+      const tibiaDeg = tibiaForDisplay(samples, sample, tMs, side, tibiaOffsetDeg[side]);
+      updateTibiaAngleUI(side, tibiaDeg);
     }
   });
 
@@ -1978,7 +2077,7 @@ function processIncomingData(data) {
               if (ref != null) {
                 const kneeDeg = normalizeKneeDeg(kneeDegRaw, ref);
                 lastKneeDeg = kneeDeg;
-                updateKneeAngleUI(kneeDeg);
+                updateKneeAngleUI(kneeForDisplay(tMs, kneeDeg));
               } else {
                 updateKneeAngleUI(null);
               }
@@ -1988,7 +2087,7 @@ function processIncomingData(data) {
                 ? normalizeKneeDeg(kneeDegRaw, kneeOffsetDeg)
                 : Math.abs(kneeDegRaw);
               lastKneeDeg = kneeDeg;
-              updateKneeAngleUI(kneeDeg);
+              updateKneeAngleUI(kneeForDisplay(tMs, kneeDeg));
             }
           }
         }
@@ -2044,6 +2143,8 @@ function processIncomingData(data) {
 
     // --- TIBIA LIVE ACC-only calib mediana ---
     const side = isLeft ? "left" : "right";
+    const sideSamples = side === "left" ? leftSockSamples : rightSockSamples;
+    sideSamples.push(fullSample);
     const raw = tibiaLateralRawDeg(fullSample);
 
     if (raw == null) {
@@ -2074,21 +2175,21 @@ function processIncomingData(data) {
           const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
 
           if (ref != null) {
-            const degZeroed = wrapDeg180(tibiaDegRaw - ref);
-            updateTibiaAngleUI(side, mapTibiaDeg(degZeroed, side));
+            const tibiaDeg = tibiaForDisplay(sideSamples, fullSample, tMs, side, ref);
+            updateTibiaAngleUI(side, tibiaDeg);
           } else {
             updateTibiaAngleUI(side, null);
           }
         } else {
           // offset già fissato
-          const degZeroed = wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]);
-          updateTibiaAngleUI(side, mapTibiaDeg(degZeroed, side));
+          const tibiaDeg = tibiaForDisplay(sideSamples, fullSample, tMs, side, tibiaOffsetDeg[side]);
+          updateTibiaAngleUI(side, tibiaDeg);
         }
       } else {
         // fallback (se non hai sessionStartTimeMs o sei in replay per qualche motivo)
         if (tibiaOffsetDeg[side] != null) {
-          const degZeroed = wrapDeg180(tibiaDegRaw - tibiaOffsetDeg[side]);
-          updateTibiaAngleUI(side, mapTibiaDeg(degZeroed, side));
+          const tibiaDeg = tibiaForDisplay(sideSamples, fullSample, tMs, side, tibiaOffsetDeg[side]);
+          updateTibiaAngleUI(side, tibiaDeg);
         } else {
           updateTibiaAngleUI(side, null);
         }
@@ -2098,13 +2199,11 @@ function processIncomingData(data) {
 
 
     if (isLeft) {
-      leftSockSamples.push(fullSample);
       if (!isReplayMode) {
         const biShown = biForDisplay(leftSockSamples, fullSample, tMs);
         updateSocksUI('left', { p0, p1, p2 }, biShown);
       }
     } else if (isRight) {
-      rightSockSamples.push(fullSample);
       if (!isReplayMode) {
         const biShown = biForDisplay(rightSockSamples, fullSample, tMs);
         updateSocksUI('right', { p0, p1, p2 }, biShown);
