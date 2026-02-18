@@ -112,9 +112,12 @@ function tibiaLateralRawDeg(p) {
 // Sensori tibia montati all'esterno:
 // dopo l'auto-zero (mediana primi 5s), manteniamo il segno naturale:
 // interno = positivo, esterno = negativo.
-function mapTibiaDeg(degZeroed, _side) {
+function mapTibiaDeg(degZeroed, side) {
   if (!Number.isFinite(degZeroed)) return null;
-  return degZeroed;
+  // DX e SX sono montati a specchio: inverti il segno del destro
+  // per avere convenzione biomeccanica coerente:
+  // interno (+), esterno (-) su entrambi i lati.
+  return side === "right" ? -degZeroed : degZeroed;
 }
 
 
