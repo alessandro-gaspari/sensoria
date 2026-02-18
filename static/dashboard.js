@@ -109,10 +109,12 @@ function tibiaLateralRawDeg(p) {
   return Math.atan2(az, ay) * 180 / Math.PI;
 }
 
-// Per l'uso attuale mostriamo "angolo di piegamento" (modulo, sempre >= 0).
+// Sensori tibia montati all'esterno:
+// dopo l'auto-zero (mediana primi 5s), manteniamo il segno naturale:
+// interno = positivo, esterno = negativo.
 function mapTibiaDeg(degZeroed, _side) {
   if (!Number.isFinite(degZeroed)) return null;
-  return Math.abs(degZeroed);
+  return degZeroed;
 }
 
 
