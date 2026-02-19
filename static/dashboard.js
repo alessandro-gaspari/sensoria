@@ -119,10 +119,10 @@ function tibiaLateralRawDeg(p) {
 // interno = positivo, esterno = negativo.
 function mapTibiaDeg(degZeroed, side) {
   if (!Number.isFinite(degZeroed)) return null;
-  // DX e SX sono montati a specchio: inverti il segno del destro
+  // DX e SX sono montati a specchio: inverti il segno del sinistro
   // per avere convenzione biomeccanica coerente:
   // interno (+), esterno (-) su entrambi i lati.
-  return side === "right" ? -degZeroed : degZeroed;
+  return side === "left" ? -degZeroed : degZeroed;
 }
 
 function tibiaDegFromSample(sample, side, refDeg) {
