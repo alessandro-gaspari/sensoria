@@ -5,6 +5,7 @@ Contenuto:
 - build_modified_excel.py
 - run_sensoria_excel_gui.sh
 - run_build_modified_excel.sh
+- build_mac_app_pyinstaller.sh
 
 Uso rapido (GUI):
 1) Apri Terminale
@@ -19,4 +20,10 @@ Uso rapido (CLI):
 Note:
 - Richiede Python 3 disponibile come comando "python3".
 - Se macOS blocca l'esecuzione dello script:
-  chmod +x run_sensoria_excel_gui.sh run_build_modified_excel.sh
+  chmod +x run_sensoria_excel_gui.sh run_build_modified_excel.sh build_mac_app_pyinstaller.sh
+
+Build app macOS (.app) con PyInstaller:
+1) Apri Terminale
+2) Vai nella cartella estratta
+3) Esegui: ./build_mac_app_pyinstaller.sh
+4) Trovi l'app in: dist/Sensoria Excel Processor.app
