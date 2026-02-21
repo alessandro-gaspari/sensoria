@@ -14,7 +14,7 @@ class ProfilesListScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Image.asset('assets/logo_Clean.png', height: 35),
+        title: Image.asset('assets/logo_Clean.png', height: 150),
         centerTitle: true,
         backgroundColor: Colors.black,
         elevation: 0,

@@ -662,7 +662,7 @@ class _ScannerScreenState extends State<ScannerScreen> with TickerProviderStateM
       appBar: AppBar(
         backgroundColor: Colors.black,
         elevation: 0,
-        title: Image.asset('assets/logo_Clean.png', height: 35),
+        title: Image.asset('assets/logo_Clean.png', height: 150),
         centerTitle: true,
         // ← NUOVO: Bottone HRM in alto a destra
         actions: [
