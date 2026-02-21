@@ -15,9 +15,11 @@
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
 </head>
 <body>
-    <header class="dashboard-header" role="banner">
-        <div class="dashboard-title" aria-label="Sensoria">
-            <img src="/static/assets/logo_Clean.png" alt="Sensoria" style="height:68px;width:auto;display:block">
+    <header class="dashboard-header" role="banner" style="position: relative;">
+        <div class="dashboard-title" aria-label="Sensoria" style="position: relative; padding-left: 100px;"> <!-- padding-left fa spazio al logo -->
+            <!-- Logo posizionato in modo assoluto e ingrandito -->
+            <img src="/static/assets/logo_Clean.png" alt="Sensoria" style="position: absolute; left: -10px; top: -15px; height: 90px; width: auto; z-index: 100;">
+            
             <div id="profile-header">
                 <div id="profile-name-header">--</div>
                 <div id="profile-meta-header">Peso -- kg · Età --</div>
@@ -31,6 +33,7 @@
             <div id="sensor-count" aria-label="Numero sensori">--</div>
         </div>
     </header>
+
 
     <main class="dashboard-container" role="main">
         <section class="top-layout" aria-label="Vista principale">
