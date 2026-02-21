@@ -1,4 +1,4 @@
-name: sensoria_cs
+name: skate_and_stream
 description: "App Sensoria per streaming di dati"
 publish_to: 'none'
 
@@ -37,7 +37,7 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icon/icona sensoria.png"
+  image_path: "assets/logo nero.jpg"
   adaptive_icon_background: "#000000" 
-  adaptive_icon_foreground: "assets/icon/icona sensoria.png"
+  adaptive_icon_foreground: "assets/logo nero.jpg"
   remove_alpha_ios: true
