@@ -3,21 +3,17 @@
 // GPS core: onGpsUpdate (live + replay)
 // ==========================================
 
-// ---- VERSION marker (per capire subito se il browser sta usando questo file) ----
+// VERSION marker
 console.log("dashboard.js loaded - VERSION 2025-12-19 17:20 PRESSIONI FIX");
 
-// ==========================================
 // Socket
-// ==========================================
 var socket = io({
   transports: ["websocket"],
   reconnection: true,
   reconnectionDelay: 500
 });
 
-// ==========================================
 // UI colors
-// ==========================================
 const SENSORIA_GREEN = "#97c93e";
 
 function getHrColor(bpm) {
@@ -44,7 +40,7 @@ function setMapMarkerBpmColor(bpm) {
   const pulse = el.querySelector(".pulsating-marker");
   if (!pulse) return;
 
-  const hex = getHrColor(bpm);          // HRGREEN/HRYELLOW/HRRED
+  const hex = getHrColor(bpm);          
   pulse.style.setProperty("--pulse-rgb", hexToRgbCsv(hex));
 }
 
@@ -73,13 +69,13 @@ function isKneeInf(name) {
 // ==========================================
 var sensors = {};
 
-// --- TIMELINE (time-based) ---
+// TIMELINE
 var sessionStartTimeMs = null;
 var sessionEndTimeMs = null;
 var isReplayMode = false;
 var lastDataTime = Date.now();
 var isStreamActive = false;
-// --- SYNC CALZINI: traccia primo timestamp per sincronia SX/DX ---
+// SYNC CALZINI
 var firstSockTimestamps = { left: null, right: null };
 var socksSynced = false;  // true quando entrambi hanno trasmesso almeno 1 campione
 
@@ -92,7 +88,7 @@ var isBulkLoading = false;
 var lastValidIMU = {};
 
 
-// --- TIBIA ANGLE (per calzino SX/DX) ---
+// TIBIA ANGLE (per calzino SX/DX)
 const TIBIACALIBMS = 5000;
 const TIBIAMINCALIBSAMPLES = 8;
 const TIBIA_AVG_WINDOW_MS = 10;
@@ -106,7 +102,7 @@ const tibiaUiLastUpdateMs = { left: 0, right: 0 };
 
 // Angolo tibia per piegamento laterale:
 // con assi sensore: Y lungo tibia, Z perpendicolare/laterale.
-// Quindi il piegamento laterale è nel piano Y-Z.
+// Piegamento laterale nel piano Y-Z.
 function tibiaLateralRawDeg(p) {
   const ay = Number(p.accely);
   const az = Number(p.accelz);
@@ -114,14 +110,10 @@ function tibiaLateralRawDeg(p) {
   return Math.atan2(az, ay) * 180 / Math.PI;
 }
 
-// Sensori tibia montati all'esterno:
-// dopo l'auto-zero (mediana primi 5s), manteniamo il segno naturale:
+// Sensori tibia
 // interno = positivo, esterno = negativo.
 function mapTibiaDeg(degZeroed, side) {
   if (!Number.isFinite(degZeroed)) return null;
-  // DX e SX sono montati a specchio: inverti il segno del sinistro
-  // per avere convenzione biomeccanica coerente:
-  // interno (+), esterno (-) su entrambi i lati.
   return side === "left" ? -degZeroed : degZeroed;
 }
 
@@ -194,16 +186,12 @@ function tibiaLatDegFromAccelXY(p, side) {
   const ay = Number(p.accely);
   if (!Number.isFinite(ax) || !Number.isFinite(ay)) return null;
 
-  // segno “naturale” = SX e DX opposti (come nel tuo disegno)
   let deg = Math.atan2(ax, ay) * 180 / Math.PI;
-
-  // Se invece un giorno vuoi “stesso segno per entrambi”, abilita:
-  // if (side === "right") deg = -deg;
 
   return deg;
 }
 
-function tibiaLatDegFromZonly(p, gCounts = 31.0) { // 31 = circa 1g nella tua scala
+function tibiaLatDegFromZonly(p, gCounts = 31.0) {
   const az = Number(p.accelz);
   if (!Number.isFinite(az)) return null;
 
@@ -230,11 +218,11 @@ function tiltDegFromAccelXZSide(p, side) {
 }
 
 
-// --- KNEE ANGLE (Ginocchio Sup/Inf) ---
-let kneeLast = { sup: null, inf: null }; // { tMs, p }
-let kneeOffsetDeg = null;                // offset in piedi (zero)
+// KNEE ANGLE
+let kneeLast = { sup: null, inf: null }; 
+let kneeOffsetDeg = null; // offset in piedi (zero)
 let lastKneeDeg = null;
-// --- KNEE CALIB (median) ---
+// KNEE CALIB
 const KNEE_CALIB_MS = 5000;
 const KNEE_SYNC_MAX_DT_MS = 80;
 const KNEE_MIN_CALIB_SAMPLES = 5;
@@ -243,7 +231,7 @@ const KNEE_USE_MOVING_AVG = true;
 const KNEE_UI_HZ = 100;
 const KNEE_UI_MIN_UPDATE_MS = 1000 / KNEE_UI_HZ;
 
-let kneeCalibVals = []; // valori kneeDeg grezzi (supTilt - infTilt) durante calib
+let kneeCalibVals = []; // valori kneeDeg grezzi
 let kneeUiLastUpdateMs = 0;
 let kneeDisplaySamples = []; // { t, v }
 
@@ -269,10 +257,8 @@ function fixMag10(v) {
   v = Number(v);
   if (!Number.isFinite(v)) return null;
 
-  // se già signed, non toccare
   if (v < 0 || v > 1023) return v;
 
-  // unsigned 10-bit -> signed
   v = (v & 1023);
   return (v >= 512) ? (v - 1024) : v;
 }
@@ -404,7 +390,7 @@ var mapMarker = null;
 var isMapInitialized = false;
 var fullRouteSegments = [];   // ogni elemento: { polyline, color };
 
-// (opzionale) stato marker animato / rotazione
+// stato marker animato
 var currentMapPos = null;
 var targetMapPos = null;
 var startMapPos = null;
@@ -453,7 +439,7 @@ let speedWindow = [];
 // Calzini (pressure)
 // ==========================================
 var leftSockSamples = [];
-// ---- SOCK CHART RENDER THROTTLE (LIVE) ----
+// SOCK CHART (LIVE)
 var sockRenderScheduled = { left: false, right: false };
 var sockLastX = { left: 0, right: 0 };
 var rightSockSamples = [];
@@ -463,7 +449,7 @@ var sockChartData = {
   right: [[], [], [], []]
 };
 var replayCursorSec = null;
-// --- MAP FOLLOW ultra-reattivo (Leaflet) ---
+// MAP FOLLOW (Leaflet)
 const MAP_FOLLOW_EPS = 1e-7;
 
 function setMapTarget(lat, lng) {
@@ -472,7 +458,7 @@ function setMapTarget(lat, lng) {
   if (!currentMapPos) currentMapPos = { ...targetMapPos };
   if (!startMapPos) startMapPos = { ...currentMapPos };
 
-  // reset animazione ad ogni nuovo fix (super reattivo)
+  // reset animazione ad ogni fix
   startMapPos = { ...currentMapPos };
   animationStartTime = performance.now();
 
@@ -489,7 +475,6 @@ function animateMapFollow(now) {
 
   const elapsed = now - (animationStartTime ?? now);
   const t = Math.max(0, Math.min(1, elapsed / ANIMATION_DURATION));
-  // ease-out (morbido ma veloce)
   const k = 1 - Math.pow(1 - t, 3);
 
   currentMapPos = {
@@ -500,7 +485,6 @@ function animateMapFollow(now) {
   mapMarker.setLatLng(currentMapPos);
 
   if (!isUserInteracting) {
-    // NO panTo: setView immediato, niente animazioni accodate
     map.setView([currentMapPos.lat, currentMapPos.lng], map.getZoom(), {
       animate: false,
       noMoveStart: true,
@@ -520,7 +504,7 @@ function centerLinePlugin() {
     hooks: {
       draw: [
         (u) => {
-          // Se NON siamo in replay, non disegnare nulla (exit early)
+          // Se NON è in replay non disegnare nulla
           if (!isReplayMode || replayCursorSec == null) return;
 
           const ctx = u.ctx;
@@ -544,7 +528,7 @@ function centerLinePlugin() {
 
 
 // ==========================================
-// BPM -> colore traccia
+// BPM colore traccia
 // ==========================================
 const HR_GREEN  = "#00c853";  // < 100
 const HR_YELLOW = "#ffeb3b";  // 100..140
@@ -558,14 +542,14 @@ function getHrColor(bpm) {
 }
 
 // ==========================================
-// FULL route (sempre tutta): segmenti colorati
+// FULL route segmenti colorati
 // ==========================================
 var fullRouteSegments = [];   // array di L.Polyline
 var fullActiveSeg = null;
 var fullActiveColor = null;
 
 // ==========================================
-// PROGRESS route (fino al tempo): segmenti colorati
+// PROGRESS route segmenti colorati
 // ==========================================
 var progressRouteSegments = []; // array di L.Polyline
 var progActiveSeg = null;
@@ -590,12 +574,12 @@ function clearProgressRouteSegments() {
   progActiveColor = null;
 }
 
-// helper comune: crea/estende segmenti contigui dello stesso colore
+// helper che crea/estende segmenti contigui dello stesso colore
 function appendColoredSegment(state, a, b, weight, opacity) {
   if (!map || !a || !b) return;
 
   const midT = (a.t + b.t) / 2;
-  const bpm = getBpmAtTime(midT);           // già presente nel file
+  const bpm = getBpmAtTime(midT);
   const color = getHrColor(bpm);
 
   if (!state.activeSeg || state.activeColor !== color) {
@@ -634,7 +618,7 @@ function addProgressColoredBetween(a, b) {
   progActiveColor = progActiveSeg ? progActiveSeg.options.color : null;
 }
 
-// Ricostruisce FULL route UNA volta (replay load) o incrementale (live)
+// Ricostruisce FULL route
 function rebuildColoredFullRouteFromGpsSamples(minStepM = 0) {
   clearFullRouteSegments();
   if (!map || !gpsSamples || gpsSamples.length < 2) return;
@@ -651,19 +635,19 @@ function rebuildColoredFullRouteFromGpsSamples(minStepM = 0) {
   }
 }
 
-// Ricostruisce PROGRESS route ogni seek (fino a tMs)
+// Ricostruisce PROGRESS route
 function rebuildColoredProgressRouteToTime(tMs, minStepM = 0) {
   clearProgressRouteSegments();
   if (!map || !gpsSamples || gpsSamples.length < 2) return;
 
-  let idx = upperBoundByTime(gpsSamples, tMs); // già presente nel file
+  let idx = upperBoundByTime(gpsSamples, tMs);
   idx = clamp(idx, 0, gpsSamples.length);
 
   if (idx <= 1) return;
 
   let prev = gpsSamples[0];
 
-  // segmenti fino all'ultimo punto <= tMs
+  // segmenti fino all'ultimo punto
   for (let i = 1; i < idx; i++) {
     const cur = gpsSamples[i];
     if (minStepM > 0) {
@@ -674,9 +658,9 @@ function rebuildColoredProgressRouteToTime(tMs, minStepM = 0) {
     prev = cur;
   }
 
-  // aggiungi punto interpolato finale a tMs (così la progress arriva “precisa” al tempo slider)
+  // aggiungi punto interpolato finale a tMs
   if (idx < gpsSamples.length) {
-    const interp = getInterpolatedGpsAtTime(tMs); // già presente nel file
+    const interp = getInterpolatedGpsAtTime(tMs);
     if (interp) {
       const pseudo = { t: tMs, lat: interp.lat, lng: interp.lng };
       const dm = haversineMeters(prev.lat, prev.lng, pseudo.lat, pseudo.lng);
@@ -694,10 +678,10 @@ function rebuildColoredProgressRouteToTime(tMs, minStepM = 0) {
 // ==========================================
 const GPS_MAX_ACCURACY_FOR_DIST_M = 60; // se accuracy > 60m ignora step distanza
 const GPS_MIN_DT_S = 0.50; // se dt < 0.30s ignora fix (timestamp duplicati)
-const GPS_MAX_DT_S = 20.0; // se dt troppo grande, clamp per evitare drop/impulsi strani
+const GPS_MAX_DT_S = 20.0; // se dt troppo grande, clamp per evitare impulsi strani
 const GPS_MIN_STEP_M = 0; // sotto 20cm = jitter (non sommare, non dare speed)
 const GPS_MIN_STEP_M_DIST = 0.93;
-const MAX_SPEED_KMH = 60; // cap (alzabile per pattinaggio veloce)
+const MAX_SPEED_KMH = 60;
 
 // ==========================================
 // INIZIALIZZAZIONE
@@ -713,7 +697,6 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!isReplayMode && sessionStartTimeMs) {
       updateReplayUiBounds();
       
-      // ✅ AGGIUNGI QUESTO: Aggiorna il display del tempo in LIVE
       const currentSec = getDurationSec();
       updateReplayTimeLabel(currentSec);
     }
@@ -740,7 +723,6 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function ensureProfileHeaderUI() {
-  // prova a trovare un contenitore header “ragionevole”
   const header =
     document.querySelector(".dashboard-info") ||
     document.querySelector(".dashboard-header") ||
@@ -748,10 +730,8 @@ function ensureProfileHeaderUI() {
 
   if (!header) return;
 
-  // se già esiste, fine
   if (document.getElementById("profile-name-header")) return;
 
-  // trova il logo e inserisci subito dopo
   const logo =
     header.querySelector('img[src*="logo_Clean"]') ||
     header.querySelector("img");
@@ -795,7 +775,6 @@ function updateProfileUI(data) {
   metaEl.textContent = `Peso ${Number.isFinite(w) ? Math.round(w) : "--"} kg • Età ${Number.isFinite(a) ? Math.round(a) : "--"}`;
 }
 
-// Sostituisci il placeholder che hai già:
 let lastProfile = { name: "--", weightKg: null, age: null };
 
 function updateProfileHeaderUI(p) {
@@ -868,7 +847,6 @@ function getNowMs() {
 }
 
 function ensureSessionStart(tMs) {
-  // In REPLAY, usa il comportamento standard (primo timestamp disponibile)
   if (isReplayMode) {
     if (sessionStartTimeMs === null) sessionStartTimeMs = tMs;
     return;
@@ -876,13 +854,12 @@ function ensureSessionStart(tMs) {
   
   // In LIVE, sessionStartTimeMs viene fissato SOLO dopo aver ricevuto
   // almeno un campione da ENTRAMBI i calzini (sincronizzazione)
-  // Usiamo il timestamp del sensore più LENTO (più recente) come riferimento zero
   if (socksSynced && sessionStartTimeMs === null) {
     const leftT = firstSockTimestamps.left;
     const rightT = firstSockTimestamps.right;
     
     if (leftT !== null && rightT !== null) {
-      // Usa il timestamp PIÙ RECENTE (sensore più lento) come inizio sessione
+      // Usa il timestamp PIÙ RECENTE come inizio sessione
       sessionStartTimeMs = Math.max(leftT, rightT);
       console.log(`⚡ Session start sincronizzato: ${new Date(sessionStartTimeMs).toISOString()}`);
       console.log(`   Gap SX-DX: ${Math.abs(leftT - rightT)}ms`);
@@ -904,7 +881,7 @@ function rebuildSpeedBySecFromGps() {
   secPos = [];
   if (sessionStartTimeMs == null || !gpsSamples.length) return;
 
-  // durata in secondi (ceil per coprire l'ultimo tratto)
+  // durata in secondi
   const dur = Math.max(0, Math.ceil(getDurationSec()));
   let prev = null;
 
@@ -919,7 +896,6 @@ function rebuildSpeedBySecFromGps() {
       speedBySec[s] = 0;
     } else {
       const dM = haversineMeters(prev.lat, prev.lng, pos.lat, pos.lng);
-      // scatto "1 secondo": m/s = dM / 1, km/h = m/s * 3.6
       let kmh = dM * 3.6;
       if (!isFinite(kmh) || kmh < 0) kmh = 0;
       kmh = Math.min(kmh, 100);
@@ -932,7 +908,6 @@ function rebuildSpeedBySecFromGps() {
 function getSessionEndMs() {
   if (!sessionStartTimeMs) return Date.now();
 
-  // Se lo stop tracking ha fissato una fine sessione, congela lì (LIVE fermo)
   if (!isReplayMode && sessionEndTimeMs != null) return sessionEndTimeMs;
 
   // Replay: finisce sull'ultimo campione registrato
@@ -941,7 +916,6 @@ function getSessionEndMs() {
     return gpsSamples[gpsSamples.length - 1].t;
   }
 
-  // Live attivo: fino ad adesso
   return Date.now();
 }
 
@@ -950,17 +924,16 @@ function getDurationSec() {
   let endMs;
   
   if (isReplayMode) {
-    // ✅ REPLAY: Usa sessionEndTimeMs (che contiene il massimo tra GPS e calzini)
     endMs = sessionEndTimeMs ?? (gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs);
   } else {
     // LIVE: controlla se lo stream è attivo
     const now = Date.now();
-    // Se non arrivano dati da 3 secondi, consideriamo l'attività FERMA
+    // Se non arrivano dati da 3 secondi, si considera l'attività FERMA
     if (typeof lastDataTimestamp !== 'undefined' && (now - lastDataTimestamp) > 3000) {
       // Stream fermo - Blocca il tempo sull'ultimo dato GPS disponibile
       endMs = gpsSamples.length ? gpsSamples[gpsSamples.length - 1].t : sessionStartTimeMs;
     } else {
-      // Stream attivo - Il tempo scorre fluido
+      // Stream attivo
       endMs = now;
     }
   }
@@ -1001,7 +974,6 @@ function formatKmFromMeters(m) {
 // METRIC CARDS UI
 // ==========================================
 function ensureMetricsCardsUI() {
-  // Nascondi vecchio bpm-display se esiste
   var oldBpm = document.getElementById("bpm-display");
   if (oldBpm) oldBpm.style.display = "none";
 
@@ -1125,12 +1097,10 @@ function onBpmUpdate(payload) {
   let bpmInt = null;
   let tMs = null;
 
-  // nuovo formato dal server: { bpm, t }
   if (payload && typeof payload === "object") {
     bpmInt = parseInt(payload.bpm, 10);
     tMs = Number(payload.t);
   } else {
-    // fallback vecchio formato: numero secco
     bpmInt = parseInt(payload, 10);
     tMs = getNowMs();
   }
@@ -1154,13 +1124,12 @@ function onBpmUpdate(payload) {
 // ==========================================
 // GPS NORMALIZATION (live + replay)
 // ==========================================
-let gpsTimeUnit = null; // "ms" / "s" / null
+let gpsTimeUnit = null;
 let lastGpsTRaw = null;
 
 function normalizeGpsPoint(raw) {
   if (!raw || typeof raw !== "object") return null;
 
-  // già normalizzato?
   if (raw.t != null && raw.lat != null && raw.lng != null) {
     const tMs = Number(raw.t);
     const lat = Number(raw.lat);
@@ -1191,7 +1160,7 @@ function normalizeGpsPoint(raw) {
     }
   }
 
-  // 2) fallback: t / tMs / time numerico relativo o epoch
+  // 2) fallback
   if (tMs == null) {
     const tRaw = Number(raw.tMs ?? raw.t ?? raw.time);
     if (!isFinite(tRaw)) return null;
@@ -1199,7 +1168,6 @@ function normalizeGpsPoint(raw) {
     if (tRaw > 1e12) {
       tMs = tRaw;
     } else {
-      // capisci unit dal delta
       if (gpsTimeUnit == null && lastGpsTRaw != null) {
         const d = tRaw - lastGpsTRaw;
         if (d > 0 && d < 20) {
@@ -1258,20 +1226,10 @@ function onGpsUpdate(data, opts) {
   const dtSecRaw = (tMs - prevSample.t) / 1000;
   const dtSec = clamp(dtSecRaw, GPS_MIN_DT_S, GPS_MAX_DT_S);
   const stepM = haversineMeters(prevSample.lat, prevSample.lng, lat, lng);
-
   const prevSpeed = prevSample.speedKmh ?? 0;
-
-  // ---------------------------
-  // DISTANZA: NON dipendere da dtSecRaw
-  // ---------------------------
-  // Aggiungi questa costante tra le tue config:
-  // const GPS_MIN_STEP_M_DIST = 0.93; // tuning per tornare a ~184/185m su quel log
   const distOk = (acc <= GPS_MAX_ACCURACY_FOR_DIST_M) && (stepM >= GPS_MIN_STEP_M_DIST);
   const usedStepM = distOk ? stepM : 0;
 
-  // ---------------------------
-  // SPEED: qui sì usare dtSecRaw per evitare duplicati/raffiche
-  // ---------------------------
   const speedOk =
     dtSecRaw >= GPS_MIN_DT_S &&
     dtSecRaw <= 5.0 &&
@@ -1295,7 +1253,6 @@ function onGpsUpdate(data, opts) {
   const newSample = { t: tMs, lat, lng, acc, cumDistM: newCumDistM, speedKmh };
   gpsSamples.push(newSample);
 
-  // aggiorna finestra B
   speedWindow.push({ t: newSample.t, cumDistM: newSample.cumDistM });
   const tMin = newSample.t - SPEED_WINDOW_SEC * 1000;
   while (speedWindow.length > 2 && speedWindow[0].t < tMin) speedWindow.shift();
@@ -1308,10 +1265,9 @@ function onGpsUpdate(data, opts) {
     if (dtB > 0.5 && dB >= 0) speedB = (dB / dtB) * 3.6;
   }
 
-  // combina A+B
   let speedFinal = SPEED_A_WEIGHT * newSample.speedKmh + (1 - SPEED_A_WEIGHT) * speedB;
   speedFinal = Math.min(Math.max(0, speedFinal), MAX_SPEED_KMH);
-  newSample.speedKmh = speedFinal; // sovrascrivi per UI+replay coerenti
+  newSample.speedKmh = speedFinal; // sovrascrizione per UI+replay
 
   if (isBulkLoading) return;
 
@@ -1320,10 +1276,10 @@ function onGpsUpdate(data, opts) {
   if (!isReplayMode && map && mapMarker) {
     setMapTarget(lat, lng);
 
-    // FULL route (sottile) colorata BPM
+    // FULL route colorata BPM
     addFullColoredBetween(prevSample, newSample);
 
-    // PROGRESS (spessa) colorata BPM
+    // PROGRESS colorata BPM
     addProgressColoredBetween(prevSample, newSample);
   }
 
@@ -1385,31 +1341,6 @@ function pushMapPoint(lat, lng) {
   if (!isUserInteracting) map.panTo(pos);
 }
 
-//Rotazione mappa rimossa perché non nativamente supportata da leaflet
-
-function applyMapRotation(deg) {
-  if (!map) return;
-
-  const container = map.getContainer();
-  const mapPane = container.querySelector(".leaflet-map-pane");
-  if (!mapPane) return;
-
-  const style = window.getComputedStyle(mapPane);
-  const current = style.transform !== "none" ? style.transform : "";
-  const cleaned = current.replace(/rotate\([^)]+\)/g, "").trim();
-  const next = `${cleaned} rotate(${deg}deg)`.trim();
-
-  mapPane.style.transformOrigin = "50% 50%";
-  mapPane.style.transition = "transform 0.25s ease-out";
-  mapPane.style.transform = next;
-
-  setTimeout(() => {
-    map.invalidateSize(true);
-    const c = map.getCenter();
-    map.panTo(c, { animate: false });
-  }, 260);
-}
-
 // ==========================================
 // REPLAY OVERLAY + LOOKUP
 // ==========================================
@@ -1457,22 +1388,19 @@ function createReplayOverlayControls() {
     }
     mapDiv.appendChild(overlay);
 
-    // -- LOGICA SLIDER FLUIDO --
+    // LOGICA SLIDER FLUIDO
     var slider = document.getElementById("replay-slider");
     
     // Funzione che aggiorna tutto istantaneamente
     function onSliderInput() {
       const sec = parseFloat(slider.value) || 0;
-      // Chiama la funzione di aggiornamento replay (senza ricaricare tutto se non serve)
       enterReplayAtSecond(sec); 
-      // Aggiorna label tempo manualmente per reattività immediata
       updateReplayTimeLabel(sec);
     }
 
-    // "input" scatta continuamente mentre trascini -> FLUIDITÀ
     slider.addEventListener("input", onSliderInput);
 
-    // Gestione interazioni mappa (blocca pan/zoom mentre trascini lo slider)
+    // Gestione interazioni mappa
     function lockMap(lock) {
       if (!map) return;
       if (lock) {
@@ -1548,8 +1476,6 @@ function updateReplayUiBounds() {
   showReplayOverlayIfReady();
 }
 
-
-// ---- replay search helpers ----
 function upperBoundByTime(arr, tMs) {
   var lo = 0,
     hi = arr.length;
@@ -1628,8 +1554,6 @@ function getSpeedAtTime(tMs) {
   if (!gpsSamples.length) return 0;
   if (gpsSamples.length === 1) return gpsSamples[0].speedKmh || 0;
 
-  // In live la velocità è "sample and hold" (ultimo valore ricevuto),
-  // quindi in replay usiamo lo stesso criterio per coerenza 1:1.
   var idx = upperBoundByTime(gpsSamples, tMs);
   if (idx === 0) return gpsSamples[0].speedKmh || 0;
   if (idx >= gpsSamples.length) return gpsSamples[gpsSamples.length - 1].speedKmh || 0;
@@ -1637,7 +1561,7 @@ function getSpeedAtTime(tMs) {
 }
 
 function updateProgressRouteToTime(tMs) {
-  // downsample 2m per non ammazzare il browser durante lo scrubbing
+  // downsample a 2m per non sovraccaricare il browser
   rebuildColoredProgressRouteToTime(tMs, 2.0);
 }
 
@@ -1660,16 +1584,13 @@ function avgBiInWindow(samples, tMs, windowMs) {
   if (!samples || !samples.length) return null;
   const tMin = tMs - windowMs;
 
-  // idxEnd: primo > tMs
   let idxEnd = upperBoundByTime(samples, tMs);
-  // idxStart: primo > tMin
   let idxStart = upperBoundByTime(samples, tMin);
 
   idxStart = Math.max(0, Math.min(idxStart, samples.length));
   idxEnd = Math.max(0, Math.min(idxEnd, samples.length));
 
   if (idxEnd <= idxStart) {
-    // fallback: ultimo noto
     const s = samples[Math.max(0, idxEnd - 1)];
     return s ? s.bi : null;
   }
@@ -1696,20 +1617,20 @@ function enterReplayAtSecond(sec) {
     animationFrameId = null;
   }
 
-  // --- 1. Calcola il tempo assoluto (timestamp) del cursore ---
+  // 1. Calcola il tempo assoluto del cursore
   const durationSec = getDurationSec();
   const clampedSec = Math.max(0, Math.min(sec, durationSec));
   const tMs = sessionStartTimeMs + (clampedSec * 1000);
 
-  // --- 2. Aggiorna UI Tempo e Slider ---
+  // 2. Aggiorna UI Tempo e Slider
   updateReplayTimeLabel(clampedSec);
   replayCursorSec = clampedSec; // Serve per la linea verticale sui grafici
 
-  // --- 3. Sincronizza Mappa e Percorso ---
+  // 3. Sincronizza Mappa e Percorso
   const pos = getInterpolatedGpsAtTime(tMs);
   if (pos) {
     if (!mapMarker) { 
-       // Init marker se non c'è (raro)
+       // Init marker eventualmente da sviluppare
     } else { 
        mapMarker.setLatLng([pos.lat, pos.lng]); 
     }
@@ -1719,7 +1640,7 @@ function enterReplayAtSecond(sec) {
   }
   updateProgressRouteToTime(tMs);
 
-  // --- 4. Sincronizza Metriche (BPM, Speed, Dist) ---
+  // 4. Sincronizza Metriche (BPM, Speed, Dist)
   const bpm = getBpmAtTime(tMs);
   if (bpm != null) updateBpmValue(bpm);
   setMapMarkerBpmColor(bpm);
@@ -1729,18 +1650,16 @@ function enterReplayAtSecond(sec) {
   const speed = getSpeedAtTime(tMs);
   updateSpeedDistanceUI(speed, dist);
 
-  // --- 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay) ---
+  // 5. AGGIORNAMENTO DATI RAW SENSORI (Sync Replay)
   const sampleL = findSampleAtTime(leftSockSamples, tMs);
   if (sampleL) {
     const biL = biForDisplay(leftSockSamples, sampleL, tMs);
     
-    // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("left", 
       { p0: sampleL.p0, p1: sampleL.p1, p2: sampleL.p2 }, 
       biL
     );
     
-    // Aggiorna grafico calzino SX (finestra scorrevole replay)
     updateSockChartReplay("left", clampedSec);
     
     // Dati RAW (Accel, Gyro, Mag)
@@ -1751,22 +1670,17 @@ function enterReplayAtSecond(sec) {
   if (sampleR) {
     const biR = biForDisplay(rightSockSamples, sampleR, tMs);
     
-    // CORREZIONE: Aggiorna SOLO i numeri, NON il grafico durante replay
     updateSockNumbers("right", 
       { p0: sampleR.p0, p1: sampleR.p1, p2: sampleR.p2 }, 
       biR
     );
     
-    // Aggiorna grafico calzino DX (finestra scorrevole replay)
     updateSockChartReplay("right", clampedSec);
     
     // Dati RAW
     updateSensorCardUI(sampleR.sensorname || "Calzino DX", sampleR);
   }
 
-
-
-  // --- AGGIORNAMENTO GLOBALE SENSORI ---
   if (typeof allSensorSamples !== 'undefined') {
       for (const [sName, samples] of Object.entries(allSensorSamples)) {
           // Trova il sample più vicino a tMs
@@ -1778,7 +1692,7 @@ function enterReplayAtSecond(sec) {
       }
   }
 
-    // --- KNEE REPLAY ---
+    // KNEE REPLAY
   if (typeof allSensorSamples !== "undefined" && allSensorSamples) {
     const supArr = allSensorSamples["Ginocchio Sup"];
     const infArr = allSensorSamples["Ginocchio Inf"];
@@ -1815,7 +1729,7 @@ function enterReplayAtSecond(sec) {
     }
   }
 
-  // --- TIBIA REPLAY Calzino SXDX ---
+  // TIBIA REPLAY Calzino SX/DX
   ["left", "right"].forEach((side) => {
     const samples = (side === "left") ? leftSockSamples : rightSockSamples;
     const sample = findSampleAtTime(samples, tMs);
@@ -1834,7 +1748,7 @@ function enterReplayAtSecond(sec) {
     const tibiaDegRaw = raw;
 
     if (tibiaOffsetDeg[side] == null) {
-      // usa i primi 5s di REPLAY per auto-zero come fai già
+      // primi 5s di REPLAY per calibrazione
       if (clampedSec >= 0 && clampedSec <= (TIBIACALIBMS / 1000)) {
         tibiaCalibVals[side].push(tibiaDegRaw);
       }
@@ -1864,16 +1778,14 @@ function enterReplayAtSecond(sec) {
   });
 
 
-  // --- 6. Aggiorna Grafici (Zoom/Pan e Linea verticale) ---
-  // Hack per forzare redraw cursore
+  // 6. Aggiorna Grafici (Zoom/Pan e Linea verticale)
   if (sockCharts.left) sockCharts.left.setCursor({left: -10, top: -10});
   if (sockCharts.right) sockCharts.right.setCursor({left: -10, top: -10});
-  
-  // ✅ FINESTRA ADATTIVA PER GRAFICI PRESSIONI
-  const WINDOW_SEC = 5; // Larghezza finestra (secondi)
+
+  const WINDOW_SEC = 5; // Larghezza finestra in secondi
   
   // Calcola la durata totale dei dati disponibili
-  const maxDataSec = getDurationSec(); // Funzione già presente nel tuo file
+  const maxDataSec = getDurationSec();
   
   let minX, maxX;
   
@@ -1882,7 +1794,6 @@ function enterReplayAtSecond(sec) {
       minX = 0;
       maxX = maxDataSec;
   } else {
-      // Finestra scorrevole intelligente
       const halfWin = WINDOW_SEC / 2;
       
       if (clampedSec < halfWin) {
@@ -1916,14 +1827,14 @@ function goLive() {
   isReplayMode = false;
   replayCursorSec = null;
 
-  // 2) aggiorna slider (ora updateReplayUiBounds vede isReplayMode=false
+  // 2) aggiorna slider
   updateReplayUiBounds();
 
   // 3) route progressiva e mappa
   clearProgressRouteSegments();
   rebuildColoredProgressRouteToTime(getSessionEndMs(), 2.0);
 
-  // 4) grafici calzini: finestra ultimi 4s
+  // 4) grafici calzini: finestra ultimi 3s
   ["left", "right"].forEach(side => {
     const ch = sockCharts[side];
     const d  = sockChartData[side];
@@ -1952,10 +1863,10 @@ function normalizeLivePayload(p) {
   if (!p || typeof p !== "object") return null;
   const o = { ...p };
 
-  // Nome sensore (supporta anche sensor_name come nei log)
+  // Nome sensore
   o.sensorname = o.sensorname ?? o.sensorName ?? o.sensor_name ?? o.name ?? null;
 
-  // IMU (supporta accel_x ecc)
+  // IMU 
   o.accelx = o.accelx ?? o.accelX ?? o.accel_x;
   o.accely = o.accely ?? o.accelY ?? o.accel_y;
   o.accelz = o.accelz ?? o.accelZ ?? o.accel_z;
@@ -1968,7 +1879,7 @@ function normalizeLivePayload(p) {
   o.magy = o.magy ?? o.magY ?? o.mag_y;
   o.magz = o.magz ?? o.magZ ?? o.mag_z;
 
-  // Pressioni (supporta pressure_0 ecc)
+  // Pressioni 
   o.pressure0 = o.pressure0 ?? o.pressure_0 ?? o.p0;
   o.pressure1 = o.pressure1 ?? o.pressure_1 ?? o.p1;
   o.pressure2 = o.pressure2 ?? o.pressure_2 ?? o.p2;
@@ -1976,23 +1887,20 @@ function normalizeLivePayload(p) {
   return o;
 }
 
-// --- HELPER FILTRO SEGNALE ---
+// HELPER FILTRO SEGNALE
 function filterVal(newVal, oldVal, maxDelta) {
   if (!Number.isFinite(oldVal)) return newVal;
   if (!Number.isFinite(newVal)) return oldVal;
   
   const delta = Math.abs(newVal - oldVal);
   if (delta > maxDelta) {
-    // Se il salto è troppo grande (es. errore di trasmissione), mantieni il vecchio valore
-    // oppure limita la variazione (clamping). Qui usiamo un clamping semplice.
+    // Se il salto è troppo grande, mantieni il vecchio valore oppure limita la variazione clampando
     if (newVal > oldVal) return oldVal + maxDelta;
     else return oldVal - maxDelta;
   }
   return newVal;
 }
 
-
-// ==========================================
 // SENSOR UPDATE (parsing calzini)
 
 function processIncomingData(data) {
@@ -2000,7 +1908,7 @@ function processIncomingData(data) {
   lastDataTime = Date.now();
   isStreamActive = true;
 
-  // 0. Unwrap (a volte arriva {  {...} })
+  // 0. Unwrap
   let payload = data;
   if (data && typeof data === "object" && data.data && typeof data.data === "object") {
     payload = data.data;
@@ -2025,16 +1933,16 @@ function processIncomingData(data) {
   const tMs = getNowMs();
   ensureSessionStart(tMs);
 
-  // 4. Normalized name (ORA è sicuro)
+  // 4. Normalized name
   const n = normName(sensorName);
 
-  // --- MAG: forza signed 10-bit (evita wrap 1023->0) ---
+  // MAG: forza signed 10-bit (evita wrap 1023->0)
   p.magx = fixMag10(p.magx);
   p.magy = fixMag10(p.magy);
   p.magz = fixMag10(p.magz);
 
   
-  // --- KNEE LIVE ---
+  // KNEE LIVE
   const nameLower = sensorName.toLowerCase();
 
   if (nameLower.includes("ginocchio")) {
@@ -2042,7 +1950,6 @@ function processIncomingData(data) {
     if (nameLower.includes("sup")) kneeLast.sup = { tMs, p };
     if (nameLower.includes("inf")) kneeLast.inf = { tMs, p };
 
-    // serve avere entrambi e quasi sincroni
     if (kneeLast.sup && kneeLast.inf) {
       if (Math.abs(kneeLast.sup.tMs - kneeLast.inf.tMs) <= KNEE_SYNC_MAX_DT_MS) {
         const supTilt = tiltDegFromAccel_YZ(kneeLast.sup.p);
@@ -2051,7 +1958,7 @@ function processIncomingData(data) {
         if (supTilt != null && infTilt != null) {
           const kneeDegRaw = wrapDeg180(supTilt - infTilt);
 
-          // Applica solo in LIVE (in replay lo fai in enterReplayAtSecond)
+          // Applica solo in LIVE
           if (!isReplayMode) {
             // calibrazione offset = mediana dei primi 5s
             if (sessionStartTimeMs != null && kneeOffsetDeg == null) {
@@ -2064,7 +1971,7 @@ function processIncomingData(data) {
 
               const med = medianDeg(kneeCalibVals);
 
-              // quando finisce la finestra e abbiamo abbastanza campioni, fissa offset definitivo
+              // quando finisce la finestra e ci sono abbastanza campioni, fissa offset definitivo
               if (dtFromStart >= KNEE_CALIB_MS &&
                   kneeCalibVals.length >= KNEE_MIN_CALIB_SAMPLES &&
                   med != null) {
@@ -2082,7 +1989,7 @@ function processIncomingData(data) {
                 updateKneeAngleUI(null);
               }
             } else {
-              // offset già fissato (o non abbiamo sessionStartTimeMs): applicalo se esiste
+              // se offset già fissato applicalo
               const kneeDeg = (kneeOffsetDeg != null)
                 ? normalizeKneeDeg(kneeDegRaw, kneeOffsetDeg)
                 : Math.abs(kneeDegRaw);
@@ -2101,7 +2008,7 @@ function processIncomingData(data) {
   const isRight = nameLower.includes("dx") || nameLower.includes("right");
 
   if (isSock && (isLeft || isRight)) {
-    // === SYNC CALZINI: traccia primo timestamp per ciascun lato ===
+    // SYNC CALZINI
     if (!isReplayMode) {
       const side = isLeft ? 'left' : 'right';
       
@@ -2136,12 +2043,12 @@ function processIncomingData(data) {
       accelx: p.accelx, accely: p.accely, accelz: p.accelz,
       gyrox: p.gyrox, gyroy: p.gyroy, gyroz: p.gyroz,
       magx: p.magx, magy: p.magy, magz: p.magz,
-      // Dati originali (utile per debug o altri campi)
+      // Dati originali
       sensorname: sensorName,
       ...p
     };
 
-    // --- TIBIA LIVE ACC-only calib mediana ---
+    // TIBIA LIVE
     const side = isLeft ? "left" : "right";
     const sideSamples = side === "left" ? leftSockSamples : rightSockSamples;
     sideSamples.push(fullSample);
@@ -2171,7 +2078,7 @@ function processIncomingData(data) {
             tibiaOffsetDeg[side] = med; // fissa offset definitivo
           }
 
-          // UI: usa offset definitivo se c’è, altrimenti mediana corrente
+          // UI: usa offset definitivo
           const ref = (tibiaOffsetDeg[side] != null) ? tibiaOffsetDeg[side] : med;
 
           if (ref != null) {
@@ -2186,7 +2093,7 @@ function processIncomingData(data) {
           updateTibiaAngleUI(side, tibiaDeg);
         }
       } else {
-        // fallback (se non hai sessionStartTimeMs o sei in replay per qualche motivo)
+        // fallback
         if (tibiaOffsetDeg[side] != null) {
           const tibiaDeg = tibiaForDisplay(sideSamples, fullSample, tMs, side, tibiaOffsetDeg[side]);
           updateTibiaAngleUI(side, tibiaDeg);
@@ -2213,15 +2120,15 @@ function processIncomingData(data) {
   }
 
   if (!isReplayMode) {
-    sensors[sensorName] = p; // se serve storico globale
-    updateSensorCardUI(sensorName, p); // Già chiamato sopra per i calzini
-    updateChartsUI(sensorName, p); // Se usi uPlot real-time per accel/gyro
+    sensors[sensorName] = p;
+    updateSensorCardUI(sensorName, p);
+    updateChartsUI(sensorName, p);
   }
 }
 
 
 
-// Quale asse considerare latero-laterale: 'x' | 'y' | 'z'
+// Impostazione dell'asse laterale
 const BILATERAL_AXIS = 'z';
 const BI_AVG_WINDOW_MS = 100;
 const BI_USE_MOVING_AVG = true;
@@ -2276,7 +2183,6 @@ function ensureSockChartSize(side) {
   const w = Math.max(10, el.clientWidth || el.offsetWidth || 0);
   const h = Math.max(240, el.clientHeight || 240);
 
-  // se uPlot è partito con width 0 o size vecchia, correggi
   chart.setSize({ width: w, height: h });
 }
 
@@ -2296,9 +2202,9 @@ function initSockCharts() {
     },
     series: [
       {},
-      { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, // ex P0 (giallo)
-      { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, // ex P1 (rosso)
-      { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, // ex P2 (blu)
+      { label: "Lat Int",    stroke: "#ffb74d", width: 2, points: { show: false } }, 
+      { label: "Lat Est",    stroke: "#e91e63", width: 2, points: { show: false } }, 
+      { label: "Posteriore", stroke: "#4fc3f7", width: 2, points: { show: false } }, 
     ],
     axes: [{ show: false }, { show: false }],
     legend: { show: false },
@@ -2312,8 +2218,6 @@ function initSockCharts() {
     sockCharts.right = new uPlot(makeOpts(rightEl, "DX"), sockChartData.right, rightEl);
   }
 }
-
-// --- CORREZIONE 2: Fix per grafico live che non scorre ---
 function scheduleSockRender(side) {
   if (sockRenderScheduled[side]) return;
   sockRenderScheduled[side] = true;
@@ -2327,7 +2231,6 @@ function scheduleSockRender(side) {
     ensureSockChartSize(side);
     chart.setData(d);
 
-    // Finestra visibile in live (secondi)
     const WINSEC = 3;
     // Prendi l'ultimo X valido
     const xMax = (d[0].length > 0) ? d[0][d[0].length - 1] : 0;
@@ -2337,7 +2240,7 @@ function scheduleSockRender(side) {
 
     const xMin = Math.max(0, xMax - WINSEC);
     
-    // Aggiungi +0.1 a xMax per dare un po' di "respiro" al grafico a destra
+    // +0.1 a xMax per far vedere meglio il grafico
     chart.setScale("x", { min: xMin, max: xMax + 0.1 });
   });
 }
@@ -2383,17 +2286,15 @@ function updateSockNumbers(side, data, bi) {
   }
 }
 
-// FUNZIONE AGGIORNATA: updateSocksUI
 function updateSocksUI(side, data, bi) {
   console.log("updateSocksUI called", side, bi, data);
 
-  // 1) Aggiorna solo numeri/BI (valido in live e replay)
+  // 1) Aggiorna solo numeri/BI
   updateSockNumbers(side, data, bi);
 
-  // 2) Se siamo in replay, STOP: non aggiornare grafico live
+  // 2) Se siamo in replay non aggiornare grafico live
   if (isReplayMode) return;
 
-  // --- Da qui in giù resta la logica del live che avevi ---
   const val0 = data.p0 ?? data.pressure0 ?? 0;
   const val1 = data.p1 ?? data.pressure1 ?? 0;
   const val2 = data.p2 ?? data.pressure2 ?? 0;
@@ -2405,7 +2306,7 @@ function updateSocksUI(side, data, bi) {
 
   let x = sessionStartTimeMs ? (Date.now() - sessionStartTimeMs) / 1000 : 0;
 
-  // reset se il tempo torna indietro tanto (nuova sessione)
+  // reset se il tempo torna indietro tanto (ossia nuova sessione)
   if (x < sockLastX[side] - 1.0) {
     sockChartData[side] = [[], [], [], []];
     sockLastX[side] = 0;
@@ -2442,14 +2343,6 @@ function updateSocksUI(side, data, bi) {
   scheduleSockRender(side);
 }
 
-/**
- * Aggiorna il grafico pressioni durante il REPLAY
- * Mostra una finestra temporale scorrevole centrata sul cursore
- */
-/**
- * Aggiorna il grafico pressioni durante il REPLAY
- * MOSTRA TUTTI I DATI DALL'INIZIO ALLA FINE (non una finestra scorrevole)
- */
 function updateSockChartReplay(side, currentSec) {
   const chart = sockCharts[side];
   if (!chart) return;
@@ -2475,7 +2368,7 @@ function updateSockChartReplay(side, currentSec) {
   sockChartData[side] = [xData, p0Data, p1Data, p2Data];
   chart.setData(sockChartData[side]);
 
-  // Imposta scala X su TUTTA la durata della sessione
+  // Imposta scala X
   const maxDataSec = getDurationSec();
   chart.setScale('x', { min: 0, max: maxDataSec });
 }
@@ -2559,12 +2452,11 @@ function updateSensorCardUI(sensorName, data) {
 
     const isLeft = sensorName.toLowerCase().includes("sx") || sensorName.toLowerCase().includes("left");
     const suffix = isLeft ? "sx" : "dx"; 
-    // Nota: verifica che nel tuo HTML gli ID siano tipo "accel-x-sx", "gyro-z-dx", ecc.
 
     // Helper formattazione
     const f = (n) => (n != null && Number.isFinite(Number(n))) ? Number(n).toFixed(2) : "--";
 
-    // --- ACCELEROMETRO ---
+    // ACCELEROMETRO
     const axEl = document.getElementById(`accel-x-${suffix}`);
     if (axEl) axEl.textContent = f(data.accelx);
     const ayEl = document.getElementById(`accel-y-${suffix}`);
@@ -2572,7 +2464,7 @@ function updateSensorCardUI(sensorName, data) {
     const azEl = document.getElementById(`accel-z-${suffix}`);
     if (azEl) azEl.textContent = f(data.accelz);
 
-    // --- GIROSCOPIO ---
+    // GIROSCOPIO
     const gxEl = document.getElementById(`gyro-x-${suffix}`);
     if (gxEl) gxEl.textContent = f(data.gyrox);
     const gyEl = document.getElementById(`gyro-y-${suffix}`);
@@ -2580,7 +2472,7 @@ function updateSensorCardUI(sensorName, data) {
     const gzEl = document.getElementById(`gyro-z-${suffix}`);
     if (gzEl) gzEl.textContent = f(data.gyroz);
     
-    // --- MAGNETOMETRO (Opzionale) ---
+    // MAGNETOMETRO
     const mxEl = document.getElementById(`mag-x-${suffix}`);
     if (mxEl) mxEl.textContent = f(data.magx);
     const myEl = document.getElementById(`mag-y-${suffix}`);
@@ -2622,7 +2514,7 @@ function updateSensorCardUI(name, data) {
     setVal('magy', data.magy, 3);
     setVal('magz', data.magz, 3);
 
-    // Pressioni (gestisce anche underscore)
+    // Pressioni
     const p0 = data.pressure0 ?? data.pressure_0 ?? data.p0;
     const p1 = data.pressure1 ?? data.pressure_1 ?? data.p1;
     const p2 = data.pressure2 ?? data.pressure_2 ?? data.p2;
@@ -2634,7 +2526,7 @@ function updateSensorCardUI(name, data) {
 
 
 // ==========================================
-// uPlot charts (minimal, compat)
+// uPlot charts
 // ==========================================
 function initCharts() {
   var accelDiv = document.getElementById("accel-chart");
@@ -2778,7 +2670,7 @@ function updateChartsUI(sensorName, data) {
 }
 
 // ==========================================
-// PAST ACTIVITY LOADER (modal replay build)
+// PAST ACTIVITY LOADER
 // ==========================================
 function initPastActivityLoader() {
   const header =
@@ -2817,7 +2709,6 @@ async function openLogsModal() {
     "position:fixed; inset:0; z-index:99999; background:rgba(0,0,0,0.65);" +
     "display:flex; align-items:center; justify-content:center; padding:18px;";
 
-  // NOTA: qui dentro ci DEVONO essere logs-status e logs-list
   modal.innerHTML = `
     <div style="width:min(620px,96vw); background:#111; border:1px solid #333; border-radius:14px;
                 box-shadow:0 18px 48px rgba(0,0,0,0.65); overflow:hidden;">
@@ -2853,7 +2744,6 @@ async function openLogsModal() {
 
   document.body.appendChild(modal);
 
-  // query SOLO dentro la modale (robusto)
   const closeBtn = modal.querySelector("#logs-close");
   const status = modal.querySelector("#logs-status");
   const list = modal.querySelector("#logs-list");
@@ -2861,7 +2751,6 @@ async function openLogsModal() {
 
   if (closeBtn) closeBtn.onclick = () => modal.remove();
 
-  // se manca qualcosa, evita crash
   if (!status || !list) {
     console.error("openLogsModal: logs-status o logs-list non trovati nella modale.");
     return;
@@ -2891,17 +2780,15 @@ async function openLogsModal() {
       `;
 
       row.onclick = async () => {
-        // mostra progress SOLO ora (quando clicchi)
         if (progressContainer) progressContainer.style.display = "block";
 
-        // disabilita lista per evitare multi-click
         Array.from(list.querySelectorAll("button")).forEach((b) => (b.disabled = true));
 
         status.textContent = `Caricamento ${item.name}...`;
 
         try {
-          await loadPastActivity(item.name);   // qui userai la tua progress bar dentro loadPastActivity
-          modal.remove();                      // chiudi solo a fine load
+          await loadPastActivity(item.name);
+          modal.remove();                    
         } catch (e) {
           console.error(e);
           status.textContent = "Errore nel caricamento del log.";
@@ -2954,15 +2841,15 @@ function resetLiveState() {
   updateBpmValue("--");
   updateSpeedDistanceUI(null, null);
 
-  // svuota subito i grafici calzini (così spariscono i “dati vecchi”)
+  // svuota subito i grafici calzini
   if (sockCharts.left) {
     sockCharts.left.setData(sockChartData.left);
-    sockCharts.left.setScale("x", { min: 0, max: 4 }); // finestra come prima (4s)
+    sockCharts.left.setScale("x", { min: 0, max: 4 });
     sockCharts.left.redraw();
   }
   if (sockCharts.right) {
     sockCharts.right.setData(sockChartData.right);
-    sockCharts.right.setScale("x", { min: 0, max: 4 }); // finestra come prima (4s)
+    sockCharts.right.setScale("x", { min: 0, max: 4 });
     sockCharts.right.redraw();
   }
 }
@@ -3005,7 +2892,7 @@ function resetReplayState() {
 async function loadPastActivity(logName) {
   const yieldUI = () => new Promise((r) => setTimeout(r, 0));
 
-  // --- UI progress (dentro la modale) ---
+  // UI progress
   const statusEl = document.getElementById("logs-status");
   const contEl = document.getElementById("logs-progress-container");
   const barEl = document.getElementById("logs-progress-bar");
@@ -3018,7 +2905,7 @@ async function loadPastActivity(logName) {
     if (pctEl) pctEl.textContent = Math.round(v) + "%";
   };
 
-  // --- helpers parsing (stream log) ---
+  // helpers parsing
   const extractJsonFromLine = (line) => {
     if (!line) return null;
     const a = line.indexOf("{");
@@ -3101,7 +2988,7 @@ async function loadPastActivity(logName) {
       return;
     }
 
-    // GPS: normalizza subito (tempo + coordinate) per evitare differenze live/replay.
+    // GPS
     const g = normalizeGpsPoint(obj);
     if (g) {
       target.gps.push({
@@ -3122,7 +3009,7 @@ async function loadPastActivity(logName) {
       return;
     }
 
-    // SENSORI (imu/pressure)
+    // SENSORI
     const isSensor =
       (obj.accelx != null || obj.accel_x != null) ||
       (obj.gyrox != null || obj.gyro_x != null) ||
@@ -3140,13 +3027,12 @@ async function loadPastActivity(logName) {
     setStatus(`Caricamento ${logName}...`);
 
     // ============================================================
-    // 1) DOWNLOAD + PARSE (stream se disponibile)
+    // 1) DOWNLOAD + PARSE
     // ============================================================
     const data = { name: logName, gps: [], bpm: [], profile: [], sensors: [] };
 
     let usedStreaming = false;
 
-    // prova streaming
     try {
       setStatus(`Download ${logName}...`);
       const resp = await fetch(`/api/logs/raw?name=${encodeURIComponent(logName)}`);
@@ -3200,7 +3086,6 @@ async function loadPastActivity(logName) {
         throw new Error("Streaming non disponibile o endpoint non OK");
       }
     } catch (e) {
-      // fallback: vecchio endpoint JSON
       setStatus(`Download ${logName}...`);
       setProgress(5);
 
@@ -3216,7 +3101,7 @@ async function loadPastActivity(logName) {
       setProgress(60);
     }
 
-    // Normalizzazione finale consistente per stream e fallback.
+    // Normalizzazione finale consistente per stream e fallback
     data.gps = data.gps
       .map((g) => normalizeGpsPoint(g))
       .filter(Boolean)
@@ -3315,7 +3200,7 @@ async function loadPastActivity(logName) {
     sockChartData.left = [[], [], [], []];
     sockChartData.right = [[], [], [], []];
 
-    // === TRACCIA PRIMI TIMESTAMP SX/DX PER SINCRONIZZAZIONE ===
+    // TRACCIA PRIMI TIMESTAMP SX/DX PER SINCRONIZZAZIONE
     let firstLeftSockT = null;
     let firstRightSockT = null;
 
@@ -3391,7 +3276,7 @@ async function loadPastActivity(logName) {
     setProgress(72);
     await yieldUI();
 
-      // === RICALCOLA sessionStartTimeMs USANDO SYNC CALZINI ===
+      // RICALCOLA sessionStartTimeMs USANDO SYNC CALZINI
     if (firstLeftSockT !== null && firstRightSockT !== null) {
       const prevStart = sessionStartTimeMs;
       sessionStartTimeMs = Math.max(firstLeftSockT, firstRightSockT);
@@ -3449,9 +3334,6 @@ async function loadPastActivity(logName) {
     // ==================================================================================
     // FIX GAP INIZIALE PER REPLAY
     // ==================================================================================
-    // ==================================================================================
-    // TIME SHIFT: Sposta i calzini indietro nel tempo per allinearli all'inizio sessione
-    // ==================================================================================
     if (sessionStartTimeMs !== null) {
       ['left', 'right'].forEach(side => {
         const samples = side === 'left' ? leftSockSamples : rightSockSamples;
@@ -3459,7 +3341,7 @@ async function loadPastActivity(logName) {
 
         if (samples.length > 0) {
           const firstSockT = samples[0].t;
-          const offset = firstSockT - sessionStartTimeMs; // es. +3827ms
+          const offset = firstSockT - sessionStartTimeMs;
 
           if (offset > 100) { // Se c'è un ritardo > 100ms
             console.log(`[TIME SHIFT] Sposto ${side} indietro di ${(offset/1000).toFixed(3)}s`);
@@ -3479,9 +3361,6 @@ async function loadPastActivity(logName) {
         }
       });
     }
-    // ==================================================================================
-
-    // ==================================================================================
 
     isBulkLoading = false;
 
@@ -3553,9 +3432,6 @@ async function loadPastActivity(logName) {
     // ==================================================================================
     // FIX GAP FINALE PER REPLAY
     // ==================================================================================
-    // ==================================================================================
-    // TIME STRETCH FINALE: Allunga i calzini fino alla fine della sessione
-    // ==================================================================================
     if (sessionStartTimeMs !== null && maxT > sessionStartTimeMs) {
       ['left', 'right'].forEach(side => {
         const samples = side === 'left' ? leftSockSamples : rightSockSamples;
@@ -3573,7 +3449,7 @@ async function loadPastActivity(logName) {
               ...lastSample,
               t: maxT
             };
-            if (diff > 10) {  // invece di 100
+            if (diff > 10) {
               samples.push(extendedSample);
             }
 
@@ -3590,10 +3466,6 @@ async function loadPastActivity(logName) {
         }
       });
     }
-    // ==================================================================================
-
-    // ==================================================================================
-
     rebuildSpeedBySecFromGps();
 
     // ABILITA REPLAY MODE
@@ -3617,7 +3489,7 @@ async function loadPastActivity(logName) {
 }
 
 // ==========================================
-// OPTIONAL: clear API (client)
+// clear API
 // ==========================================
 function clearAllData() {
   if (!confirm("Pulire tutto?")) return;
